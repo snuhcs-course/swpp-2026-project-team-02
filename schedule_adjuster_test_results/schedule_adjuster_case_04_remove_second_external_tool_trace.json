@@ -1,0 +1,38 @@
+{
+  "case_id": "schedule_adjuster_case_04_remove_second_external",
+  "passed": true,
+  "schedule_id": "external-102",
+  "expected_action": "cancelled_external",
+  "actual_action": "cancelled_external",
+  "expected_tool_calls": [
+    "inspect_schedule",
+    "remove_cancelled_external_schedule"
+  ],
+  "called_tools": [
+    "inspect_schedule",
+    "remove_cancelled_external_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "external-102"
+      }
+    },
+    {
+      "tool": "remove_cancelled_external_schedule",
+      "arguments": {
+        "schedule_id": "external-102"
+      }
+    }
+  ],
+  "other_rows_preserved": true,
+  "target_adjusted_as_expected": true,
+  "target_has_no_conflict": true,
+  "topic_order_preserved": true,
+  "uses_personal_availability": false,
+  "availability_respected": true,
+  "gemini_api_request_count": 3,
+  "result_csv": "schedule_adjuster_case_04_remove_second_external_result.csv",
+  "agent_summary": "The schedule for `external-102` has been successfully adjusted. \n\n**Summary:**\n- **Inspected Schedule:** `external-102` (External schedule type)\n- **Action Taken:** Removed the cancelled external schedule row using `remove_cancelled_external_schedule`.\n- **Result:** The entry was successfully removed while preserving all other rows in the certification schedule (remaining schedule count: 3)."
+}

@@ -1,0 +1,47 @@
+{
+  "case_id": "schedule_adjuster_case_05_reschedule_with_personal_availability",
+  "passed": true,
+  "schedule_id": "study-201",
+  "expected_action": "rescheduled_study",
+  "actual_action": "rescheduled_study",
+  "expected_tool_calls": [
+    "inspect_schedule",
+    "inspect_topic_schedule",
+    "reschedule_failed_study"
+  ],
+  "called_tools": [
+    "inspect_schedule",
+    "inspect_topic_schedule",
+    "reschedule_failed_study"
+  ],
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    },
+    {
+      "tool": "inspect_topic_schedule",
+      "arguments": {
+        "topic": "Charts"
+      }
+    },
+    {
+      "tool": "reschedule_failed_study",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    }
+  ],
+  "other_rows_preserved": true,
+  "target_adjusted_as_expected": true,
+  "target_has_no_conflict": true,
+  "topic_order_preserved": true,
+  "uses_personal_availability": true,
+  "availability_profile_loaded": true,
+  "availability_respected": true,
+  "gemini_api_request_count": 4,
+  "result_csv": "schedule_adjuster_case_05_reschedule_with_personal_availability_result.csv",
+  "agent_summary": "I have successfully adjusted the schedule. \n\n**Summary of Changes:**\n- **Schedule ID:** `study-201`\n- **Topic:** `Charts`\n- **Action:** Rescheduled the failed study session to respect your personal weekly availability (Wednesday evenings between 20:00 and 22:00) and placed it properly following any existing sessions on the same topic.\n- **New Time:** 2026/10/07 from 20:00 to 21:00."
+}

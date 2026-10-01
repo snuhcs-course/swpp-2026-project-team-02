@@ -1,0 +1,30 @@
+{
+  "case_id": "license_planner_case_02_self_assessment_only",
+  "passed": true,
+  "expected_level": "advanced",
+  "actual_level": "advanced",
+  "called_tools": [
+    "get_certification_profile",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "get_certification_profile",
+      "arguments": {
+        "certification_id": "computer_specialist_level_2"
+      }
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 10,
+  "result_csv": "license_planner_case_02_self_assessment_only_result.csv",
+  "agent_summary": "인증서 프로필 확인, 준비도 진단, 그리고 학습 일정 생성이 성공적으로 완료되었습니다. 잠시 후 애플리케이션에서 결과 CSV 파일이 반환될 것입니다."
+}

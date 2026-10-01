@@ -1,0 +1,60 @@
+[
+  {
+    "case_id": "license_planner_case_04_personal_availability_api",
+    "passed": true,
+    "expected_level": "advanced",
+    "actual_level": "advanced",
+    "expected_first_topic": "Core Skills",
+    "actual_first_topic": "Core Skills",
+    "expected_first_start": "2026/10/05/20/00",
+    "actual_first_start": "2026/10/05/20/00",
+    "uses_personal_availability": true,
+    "availability_respected": true,
+    "gemini_api_request_count": 5,
+    "topic_statistics": [
+      {
+        "topic": "Core Skills",
+        "possible_score": 10.0,
+        "earned_score": 10.0,
+        "score_percent": 100.0
+      }
+    ],
+    "called_tools": [
+      "get_certification_profile",
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_sessions": [
+      {
+        "schedule_id": "study-89",
+        "topic": "Core Skills",
+        "start_datetime": "2026/10/05/20/00",
+        "end_datetime": "2026/10/05/21/00"
+      }
+    ],
+    "study_block_count": 1,
+    "result_csv": "license_planner_case_04_personal_availability_api_result.csv",
+    "agent_summary": "인증서 프로필 확인, 시험 결과 분석, 준비도 평가, 그리고 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 응용 프로그램에서 CSV 형식을 기반으로 최종 학습 계획표를 제공할 것입니다."
+  }
+]

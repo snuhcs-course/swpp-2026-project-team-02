@@ -1,0 +1,7 @@
+{
+  "case_id": "availability_05_overlapping_windows_are_rejected",
+  "description": "한 요일에 겹치는 시간 구간을 입력하면 저장 전에 거부합니다.",
+  "expected_error": "cannot overlap",
+  "actual_error": "monday availability windows cannot overlap",
+  "passed": true
+}

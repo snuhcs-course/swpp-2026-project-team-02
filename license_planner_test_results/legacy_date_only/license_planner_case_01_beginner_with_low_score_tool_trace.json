@@ -1,0 +1,30 @@
+{
+  "case_id": "license_planner_case_01_beginner_with_low_score",
+  "passed": true,
+  "expected_level": "beginner",
+  "actual_level": "beginner",
+  "called_tools": [
+    "get_certification_profile",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "get_certification_profile",
+      "arguments": {
+        "certification_id": "computer_specialist_level_2"
+      }
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 20,
+  "result_csv": "license_planner_case_01_beginner_with_low_score_result.csv",
+  "agent_summary": "컴퓨터활용능력 2급 자격증 준비를 위한 학습 계획 조회가 완료되었습니다. 사용자 수준(초급)과 일정에 맞춘 맞춤형 학습 일정이 성공적으로 생성되었으며, 애플리케이션에서 CSV 결과 파일을 반환할 준비가 되었습니다."
+}

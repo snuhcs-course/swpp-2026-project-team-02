@@ -1,0 +1,51 @@
+[
+  {
+    "case_id": "availability_01_saved_window_skips_busy_event",
+    "description": "개인 가능 시간 JSON을 저장하고 기존 일정이 겹치는 시간을 건너뜁니다.",
+    "availability": {
+      "monday": [{"start": "19:00", "end": "21:00"}],
+      "wednesday": [{"start": "09:00", "end": "11:00"}]
+    },
+    "busy_csv": "schedule_id,start_date,end_date,topic\n55,2026/10/05/19/00,2026/10/05/20/00,work\n",
+    "expected_start": "2026/10/05/20/00",
+    "expect_personal_availability": true
+  },
+  {
+    "case_id": "availability_02_sunday_window_is_used",
+    "description": "개인 시간표에 등록한 주말 시간도 계획에 반영합니다.",
+    "availability": {
+      "sunday": [{"start": "09:00", "end": "11:00"}]
+    },
+    "expected_start": "2026/10/11/09/00",
+    "expect_personal_availability": true
+  },
+  {
+    "case_id": "availability_03_updated_json_is_reloaded",
+    "description": "같은 설정 파일에 새 시간표를 저장하면 다음 계획에 갱신된 값이 적용됩니다.",
+    "initial_availability": {
+      "monday": [{"start": "18:00", "end": "19:00"}]
+    },
+    "availability": {
+      "tuesday": [{"start": "10:00", "end": "12:00"}]
+    },
+    "expected_start": "2026/10/06/10/00",
+    "expect_personal_availability": true
+  },
+  {
+    "case_id": "availability_04_missing_profile_uses_default_window",
+    "description": "개인 시간표가 없으면 공통 기본 시간대를 사용합니다.",
+    "expected_start": "default_window_start",
+    "expect_personal_availability": false
+  },
+  {
+    "case_id": "availability_05_overlapping_windows_are_rejected",
+    "description": "한 요일에 겹치는 시간 구간을 입력하면 저장 전에 거부합니다.",
+    "availability": {
+      "monday": [
+        {"start": "18:00", "end": "20:00"},
+        {"start": "19:30", "end": "21:00"}
+      ]
+    },
+    "expected_error": "cannot overlap"
+  }
+]

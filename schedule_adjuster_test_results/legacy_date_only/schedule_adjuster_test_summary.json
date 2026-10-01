@@ -1,0 +1,138 @@
+[
+  {
+    "case_id": "schedule_adjuster_case_01_move_single_day_study",
+    "passed": true,
+    "schedule_id": "study-201",
+    "expected_action": "rescheduled_study",
+    "actual_action": "rescheduled_study",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "reschedule_failed_study"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "reschedule_failed_study"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      },
+      {
+        "tool": "reschedule_failed_study",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_01_move_single_day_study_result.csv",
+    "agent_summary": "I have successfully inspected and adjusted the study schedule (ID: `study-201`).\n\n- **Type:** Study schedule\n- **Previous Dates:** 2026-10-05 to 2026-10-05\n- **New Dates:** 2026-10-11 to 2026-10-11 (moved to the first free contiguous date range after the old end)\n- **Result:** The failed study entry has been successfully rescheduled using the required tool while preserving all other rows."
+  },
+  {
+    "case_id": "schedule_adjuster_case_02_move_multi_day_study",
+    "passed": true,
+    "schedule_id": "study-202",
+    "expected_action": "rescheduled_study",
+    "actual_action": "rescheduled_study",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "reschedule_failed_study"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "reschedule_failed_study"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "study-202"
+        }
+      },
+      {
+        "tool": "reschedule_failed_study",
+        "arguments": {
+          "schedule_id": "study-202"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_02_move_multi_day_study_result.csv",
+    "agent_summary": "The schedule `study-202` has been successfully inspected and adjusted. Because it was identified as a study schedule, the failed entry was moved to the first free contiguous date range after its previous end date (rescheduled from 2026-10-08–2026-10-09 to 2026-10-11–2026-10-12), while preserving all other rows."
+  },
+  {
+    "case_id": "schedule_adjuster_case_03_remove_cancelled_external",
+    "passed": true,
+    "schedule_id": "external-101",
+    "expected_action": "cancelled_external",
+    "actual_action": "cancelled_external",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "external-101"
+        }
+      },
+      {
+        "tool": "remove_cancelled_external_schedule",
+        "arguments": {
+          "schedule_id": "external-101"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_03_remove_cancelled_external_result.csv",
+    "agent_summary": "The schedule for **external-101** was successfully inspected and identified as an external schedule. \n\nFollowing the instruction for cancelled external entries, **`remove_cancelled_external_schedule`** was executed, which removed the cancelled row while preserving all other schedule entries."
+  },
+  {
+    "case_id": "schedule_adjuster_case_04_remove_second_external",
+    "passed": true,
+    "schedule_id": "external-102",
+    "expected_action": "cancelled_external",
+    "actual_action": "cancelled_external",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "external-102"
+        }
+      },
+      {
+        "tool": "remove_cancelled_external_schedule",
+        "arguments": {
+          "schedule_id": "external-102"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_04_remove_second_external_result.csv",
+    "agent_summary": "The schedule `external-102` has been successfully inspected and identified as an external schedule. Because this event was cancelled, the `remove_cancelled_external_schedule` tool was used to remove the cancelled row while preserving all other schedule entries."
+  }
+]

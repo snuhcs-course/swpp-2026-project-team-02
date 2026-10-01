@@ -1,0 +1,217 @@
+[
+  {
+    "case_id": "schedule_adjuster_case_01_move_single_day_study",
+    "passed": true,
+    "schedule_id": "study-201",
+    "expected_action": "rescheduled_study",
+    "actual_action": "rescheduled_study",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      },
+      {
+        "tool": "inspect_topic_schedule",
+        "arguments": {
+          "topic": "Charts"
+        }
+      },
+      {
+        "tool": "reschedule_failed_study",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "target_has_no_conflict": true,
+    "topic_order_preserved": true,
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "gemini_api_request_count": 4,
+    "result_csv": "schedule_adjuster_case_01_move_single_day_study_result.csv",
+    "agent_summary": "I have successfully adjusted the certification schedule.\n\n1. **Inspection**: Inspected `study-201`, which corresponds to the topic **Charts**.\n2. **Topic Review**: Checked all sessions related to **Charts** via `inspect_topic_schedule`.\n3. **Rescheduling**: Moved the failed study session (`study-201`) to a new, conflict-free time slot (`2026/10/05/20/00` to `2026/10/05/21/00`) following the appropriate ordering rules for the topic."
+  },
+  {
+    "case_id": "schedule_adjuster_case_02_move_multi_day_study",
+    "passed": true,
+    "schedule_id": "study-202",
+    "expected_action": "rescheduled_study",
+    "actual_action": "rescheduled_study",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "study-202"
+        }
+      },
+      {
+        "tool": "inspect_topic_schedule",
+        "arguments": {
+          "topic": "Functions"
+        }
+      },
+      {
+        "tool": "reschedule_failed_study",
+        "arguments": {
+          "schedule_id": "study-202"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "target_has_no_conflict": true,
+    "topic_order_preserved": true,
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "gemini_api_request_count": 4,
+    "result_csv": "schedule_adjuster_case_02_move_multi_day_study_result.csv",
+    "agent_summary": "The schedule for study-202 (topic: **Functions**) has been successfully adjusted. \n\n- **Inspection:** Verified the schedule type and topic details.\n- **Topic Analysis:** Checked all sessions under the topic \"Functions\".\n- **Rescheduling:** The failed session was successfully rescheduled to the next available conflict-free interval (**2026/10/08/20/00** to **2026/10/08/22/00**), preserving all other existing rows and schedule details."
+  },
+  {
+    "case_id": "schedule_adjuster_case_03_remove_cancelled_external",
+    "passed": true,
+    "schedule_id": "external-101",
+    "expected_action": "cancelled_external",
+    "actual_action": "cancelled_external",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "external-101"
+        }
+      },
+      {
+        "tool": "remove_cancelled_external_schedule",
+        "arguments": {
+          "schedule_id": "external-101"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "target_has_no_conflict": true,
+    "topic_order_preserved": true,
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_03_remove_cancelled_external_result.csv",
+    "agent_summary": "The schedule entry `external-101` was successfully inspected and identified as a cancelled external event. Using the `remove_cancelled_external_schedule` tool, the cancelled row has been removed from the schedule while preserving all other entries."
+  },
+  {
+    "case_id": "schedule_adjuster_case_04_remove_second_external",
+    "passed": true,
+    "schedule_id": "external-102",
+    "expected_action": "cancelled_external",
+    "actual_action": "cancelled_external",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "remove_cancelled_external_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "external-102"
+        }
+      },
+      {
+        "tool": "remove_cancelled_external_schedule",
+        "arguments": {
+          "schedule_id": "external-102"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "target_has_no_conflict": true,
+    "topic_order_preserved": true,
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "gemini_api_request_count": 3,
+    "result_csv": "schedule_adjuster_case_04_remove_second_external_result.csv",
+    "agent_summary": "The schedule for `external-102` has been successfully adjusted. \n\n**Summary:**\n- **Inspected Schedule:** `external-102` (External schedule type)\n- **Action Taken:** Removed the cancelled external schedule row using `remove_cancelled_external_schedule`.\n- **Result:** The entry was successfully removed while preserving all other rows in the certification schedule (remaining schedule count: 3)."
+  },
+  {
+    "case_id": "schedule_adjuster_case_05_reschedule_with_personal_availability",
+    "passed": true,
+    "schedule_id": "study-201",
+    "expected_action": "rescheduled_study",
+    "actual_action": "rescheduled_study",
+    "expected_tool_calls": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "called_tools": [
+      "inspect_schedule",
+      "inspect_topic_schedule",
+      "reschedule_failed_study"
+    ],
+    "tool_calls": [
+      {
+        "tool": "inspect_schedule",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      },
+      {
+        "tool": "inspect_topic_schedule",
+        "arguments": {
+          "topic": "Charts"
+        }
+      },
+      {
+        "tool": "reschedule_failed_study",
+        "arguments": {
+          "schedule_id": "study-201"
+        }
+      }
+    ],
+    "other_rows_preserved": true,
+    "target_adjusted_as_expected": true,
+    "target_has_no_conflict": true,
+    "topic_order_preserved": true,
+    "uses_personal_availability": true,
+    "availability_profile_loaded": true,
+    "availability_respected": true,
+    "gemini_api_request_count": 4,
+    "result_csv": "schedule_adjuster_case_05_reschedule_with_personal_availability_result.csv",
+    "agent_summary": "I have successfully adjusted the schedule. \n\n**Summary of Changes:**\n- **Schedule ID:** `study-201`\n- **Topic:** `Charts`\n- **Action:** Rescheduled the failed study session to respect your personal weekly availability (Wednesday evenings between 20:00 and 22:00) and placed it properly following any existing sessions on the same topic.\n- **New Time:** 2026/10/07 from 20:00 to 21:00."
+  }
+]

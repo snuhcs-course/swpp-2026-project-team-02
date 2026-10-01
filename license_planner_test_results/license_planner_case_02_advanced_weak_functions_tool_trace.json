@@ -1,0 +1,84 @@
+{
+  "case_id": "license_planner_case_02_advanced_weak_functions",
+  "passed": true,
+  "expected_level": "advanced",
+  "actual_level": "advanced",
+  "expected_first_topic": "Functions",
+  "actual_first_topic": "Functions",
+  "expected_first_start": null,
+  "actual_first_start": "2026/10/05/18/00",
+  "uses_personal_availability": false,
+  "availability_respected": true,
+  "busy_schedule_conflict_free": true,
+  "gemini_api_request_count": 5,
+  "gemini_successful_response_count": 5,
+  "topic_statistics": [
+    {
+      "topic": "Functions",
+      "possible_score": 20.0,
+      "earned_score": 17.0,
+      "score_percent": 85.0
+    },
+    {
+      "topic": "Pivot Tables",
+      "possible_score": 20.0,
+      "earned_score": 19.0,
+      "score_percent": 95.0
+    }
+  ],
+  "called_tools": [
+    "get_certification_profile",
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "get_certification_profile",
+      "arguments": {
+        "certification_id": "computer_specialist_level_2"
+      }
+    },
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_sessions": [
+    {
+      "schedule_id": "study-1",
+      "topic": "Functions",
+      "start_datetime": "2026/10/05/18/00",
+      "end_datetime": "2026/10/05/19/00"
+    },
+    {
+      "schedule_id": "study-2",
+      "topic": "Functions",
+      "start_datetime": "2026/10/06/18/00",
+      "end_datetime": "2026/10/06/19/00"
+    },
+    {
+      "schedule_id": "study-3",
+      "topic": "Pivot Tables",
+      "start_datetime": "2026/10/07/18/00",
+      "end_datetime": "2026/10/07/19/00"
+    },
+    {
+      "schedule_id": "study-4",
+      "topic": "Pivot Tables",
+      "start_datetime": "2026/10/08/18/00",
+      "end_datetime": "2026/10/08/19/00"
+    }
+  ],
+  "study_block_count": 4,
+  "result_csv": "license_planner_case_02_advanced_weak_functions_result.csv",
+  "agent_summary": "인증 프로필, 시험 결과 분석, 준비도 평가, 그리고 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 애플리케이션에서 최종 CSV 결과가 반환될 것입니다."
+}

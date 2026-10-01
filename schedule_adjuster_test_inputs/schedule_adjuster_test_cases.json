@@ -1,0 +1,38 @@
+[
+  {
+    "case_id": "schedule_adjuster_case_01_move_single_day_study",
+    "schedule_id": "study-201",
+    "schedule_csv": "schedule_adjuster_case_01_study_move.csv",
+    "expected_action": "rescheduled_study",
+    "expected_change_tool": "reschedule_failed_study"
+  },
+  {
+    "case_id": "schedule_adjuster_case_02_move_multi_day_study",
+    "schedule_id": "study-202",
+    "schedule_csv": "schedule_adjuster_case_01_study_move.csv",
+    "expected_action": "rescheduled_study",
+    "expected_change_tool": "reschedule_failed_study"
+  },
+  {
+    "case_id": "schedule_adjuster_case_03_remove_cancelled_external",
+    "schedule_id": "external-101",
+    "schedule_csv": "schedule_adjuster_case_01_study_move.csv",
+    "expected_action": "cancelled_external",
+    "expected_change_tool": "remove_cancelled_external_schedule"
+  },
+  {
+    "case_id": "schedule_adjuster_case_04_remove_second_external",
+    "schedule_id": "external-102",
+    "schedule_csv": "schedule_adjuster_case_01_study_move.csv",
+    "expected_action": "cancelled_external",
+    "expected_change_tool": "remove_cancelled_external_schedule"
+  },
+  {
+    "case_id": "schedule_adjuster_case_05_reschedule_with_personal_availability",
+    "schedule_id": "study-201",
+    "schedule_csv": "schedule_adjuster_case_01_study_move.csv",
+    "availability_file": "schedule_adjuster_case_05_weekly_availability.json",
+    "expected_action": "rescheduled_study",
+    "expected_change_tool": "reschedule_failed_study"
+  }
+]
