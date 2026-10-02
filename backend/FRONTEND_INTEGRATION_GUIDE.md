@@ -4,8 +4,8 @@
 
 ## 개발 환경
 
-1. 프로젝트 루트 `.env`에 `GEMINI_API_KEY`가 설정되어 있는지 확인합니다. 이 키는 백엔드 전용이며 프론트엔드 코드, 설정 JSON, 브라우저 저장소에 복사하지 않습니다.
-2. 프로젝트 루트에서 `python api_server.py`를 실행합니다.
+1. `backend/.env`에 `GEMINI_API_KEY`가 설정되어 있는지 확인합니다. 이 키는 백엔드 전용이며 프론트엔드 코드, 설정 JSON, 브라우저 저장소에 복사하지 않습니다.
+2. `backend/` 디렉터리에서 `python api_server.py`를 실행합니다.
 3. 기본 API 주소는 `frontend_config.json`의 `api_base_url` (`http://127.0.0.1:8000/api/v1`)입니다.
 4. `GET http://127.0.0.1:8000/api/v1/health`의 `{"status":"ok"}` 응답으로 연결을 확인합니다.
 5. 개발 서버 origin이 기본 허용 주소와 다르면 `config/api_server.json`의 `allowed_origins`에 추가합니다.
@@ -157,7 +157,9 @@ const result = await callApi("/study-plans", {
 6. 배포 전에는 HTTPS, 인증, 요청 빈도 제한, 사용자별 데이터 저장 방식을 백엔드 담당자와 결정합니다. 현재 서버는 로컬 MVP이고 가능 시간은 단일 사용자 JSON 파일에 저장됩니다.
 
 HTTP 경로·CORS·입력 오류와 개인 가능 시간 적용을 자동 확인하려면 프로젝트
-루트에서 `python run_api_availability_integration_test.py`를 실행합니다. 임시
+`backend/` 디렉터리에서 `python run_api_availability_integration_test.py`를 실행합니다. 임시
 localhost 서버와 별도 JSON 프로필을 사용해 개인 설정 파일을 변경하지 않습니다.
 일정 조정은 Gemini 실호출이므로 API 키, 네트워크, 할당량이 필요하며 결과는
 `api_test_results/`에 저장됩니다.
+
+

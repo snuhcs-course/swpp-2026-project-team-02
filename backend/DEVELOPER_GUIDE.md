@@ -1,3 +1,4 @@
+이 문서의 상대 경로와 명령은 `backend/` 디렉터리 기준입니다. 저장소 최상위의 구조 안내는 `../README.md`를 참고하세요.
 # 개발 인계 안내
 
 ## 웹 API와 프론트엔드 연결
@@ -14,7 +15,7 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 기록됩니다.
 
 현재 HTTP 계층은 외부 서버 없이 개발할 수 있도록 Python 표준 라이브러리로
-구현되어 있습니다. 프로젝트 루트에서 `python api_server.py`를 실행하면
+구현되어 있습니다. `backend/` 디렉터리에서 `python api_server.py`를 실행하면
 기본 주소 `http://127.0.0.1:8000`에서 API가 열립니다. 프론트엔드는
 `frontend_config.json`의 `api_base_url`을 읽어 호출합니다. 서버가 준비되면
 프론트엔드 코드는 그대로 두고 이 주소를 배포 API 주소로 바꿀 수 있습니다.
@@ -27,7 +28,7 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 프론트엔드 origin 허용 목록 |
-| API 비밀 키 | 루트 `.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
+| API 비밀 키 | `backend/.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
 
 로컬 프론트엔드 개발 서버가 다른 포트를 사용하면 그 origin을
 `allowed_origins`에 추가합니다. 실제 배포 시에는 HTTPS 주소를 사용하고,
@@ -444,7 +445,7 @@ CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 �
 
 ### 실행 및 테스트
 
-프로젝트 루트 `.env` 또는 OS 환경 변수에 `GEMINI_API_KEY`를 설정합니다. 설정 로더는 먼저 `schedule_adjuster/.env`를 확인하고, 값이 없으면 루트 `.env`를 확인합니다. CLI 실행 예시:
+`backend/.env` 또는 OS 환경 변수에 `GEMINI_API_KEY`를 설정합니다. 설정 로더는 먼저 `schedule_adjuster/.env`를 확인하고, 값이 없으면 `backend/.env`를 확인합니다. CLI 실행 예시:
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `
@@ -460,7 +461,7 @@ Gemini API 없이 로직과 CSV 변환 단위 테스트를 실행하려면:
 python -m unittest discover -s schedule_adjuster_tests -v
 ```
 
-실제 Gemini API 호출과 도구 선택 순서를 검사하려면 루트에서 통합 테스트 러너를 실행합니다. API 요청이 케이스마다 발생합니다.
+실제 Gemini API 호출과 도구 선택 순서를 검사하려면 `backend/`에서 통합 테스트 러너를 실행합니다. API 요청이 케이스마다 발생합니다.
 
 ```powershell
 python run_schedule_adjuster_test_cases.py
@@ -472,3 +473,7 @@ python run_schedule_adjuster_test_cases.py --case-id schedule_adjuster_case_05_r
 ### 현재 한계와 후속 개발 결정
 
 입력에 실패 사유나 취소 상태 열은 없으므로 호출자가 선택한 ID를 실패/취소 대상으로 간주합니다. 실패 일정은 같은 ID, 주제, 기간 길이로 이동됩니다. `config/user_availability.json`이 있으면 같은 주제의 다른 일정 이후부터 해당 요일·시간표 안에서만 충돌 없는 슬롯을 찾습니다. 이 파일은 License Planner와 공유하며, CLI에서는 `--availability-file`로 대체 경로를 지정할 수 있습니다. 파일이 없으면 기존 동작을 유지합니다. 가능 구간이 없거나 세션 길이를 수용할 수 없으면 `NO_AVAILABILITY_WINDOW` 오류를 반환합니다. 이후 일정의 연쇄 이동, 공휴일, 시험 시각은 아직 지원하지 않습니다.
+
+
+
+

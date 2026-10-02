@@ -1,5 +1,6 @@
-__pycache__/
+# Shared ignore rules for the frontend and backend.
+**/__pycache__/
 *.py[cod]
 .env
-config/user_availability.json
-
+**/.env
+backend/config/user_availability.json

@@ -63,7 +63,7 @@ python -m unittest discover -s schedule_adjuster_tests -v
 
 ## Gemini Agent 통합 테스트
 
-프로젝트 루트 `.env`의 `GEMINI_API_KEY`를 설정한 뒤 루트 폴더에서 테스트 러너만 실행합니다. 이 테스트는 케이스마다 Gemini API를 호출하므로 네트워크 연결과 API 사용량이 필요합니다.
+`backend/.env`의 `GEMINI_API_KEY`를 설정한 뒤 `backend/` 디렉터리에서 테스트 러너만 실행합니다. 이 테스트는 케이스마다 Gemini API를 호출하므로 네트워크 연결과 API 사용량이 필요합니다.
 
 ```powershell
 python run_schedule_adjuster_test_cases.py
@@ -81,3 +81,5 @@ python run_schedule_adjuster_test_cases.py --case-id schedule_adjuster_case_05_r
 시험일, 공휴일, 휴일 예외 목록은 아직 지원하지 않습니다. 개인 반복 시간표가 설정되면 공부 일정은 그 요일·시간 구간으로 제한되고, 미설정이면 원래 종료 시각부터 기존 충돌이 없는 동일 길이 구간을 찾습니다. 외부 일정 취소는 그 행을 출력에서 제거합니다.
 
 현재 남은 제품 결정은 실패 일정 이동 후 뒤따르는 공부 일정을 연쇄 이동할지, 취소된 외부 행을 삭제할지 취소 상태로 보존할지, 시험 시각·공휴일을 조정 가능 시간에 반영할지입니다. 개인 반복 주간 가능 시간은 `config/user_availability.json`에서 이미 반영합니다. 일정 CSV에 상태 열이 없으므로 외부 취소 여부는 사용자가 대상 ID를 선택했다는 사실로 판단합니다.
+
+
