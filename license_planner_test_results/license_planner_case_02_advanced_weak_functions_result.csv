@@ -1,0 +1,5 @@
+schedule_id,start_date,end_date,topic
+study-1,2026/10/05/18/00,2026/10/05/19/00,Functions
+study-2,2026/10/06/18/00,2026/10/06/19/00,Functions
+study-3,2026/10/07/18/00,2026/10/07/19/00,Pivot Tables
+study-4,2026/10/08/18/00,2026/10/08/19/00,Pivot Tables

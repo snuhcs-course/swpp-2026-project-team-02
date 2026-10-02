@@ -1,0 +1,51 @@
+{
+  "case_id": "availability_03_updated_json_is_reloaded",
+  "description": "같은 설정 파일에 새 시간표를 저장하면 다음 계획에 갱신된 값이 적용됩니다.",
+  "passed": true,
+  "expected_first_start": "2026/10/06/10/00",
+  "actual_first_start": "2026/10/06/10/00",
+  "expected_personal_availability": true,
+  "used_personal_availability": true,
+  "saved_availability_json": {
+    "weekly_availability": {
+      "monday": [],
+      "tuesday": [
+        {
+          "start": "10:00",
+          "end": "12:00"
+        }
+      ],
+      "wednesday": [],
+      "thursday": [],
+      "friday": [],
+      "saturday": [],
+      "sunday": []
+    }
+  },
+  "expected_tool_calls": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "called_tools": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 1,
+  "result_csv": "availability_03_updated_json_is_reloaded_result.csv"
+}

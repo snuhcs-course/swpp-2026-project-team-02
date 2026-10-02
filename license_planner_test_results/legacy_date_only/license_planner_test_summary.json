@@ -1,0 +1,92 @@
+[
+  {
+    "case_id": "license_planner_case_01_beginner_with_low_score",
+    "passed": true,
+    "expected_level": "beginner",
+    "actual_level": "beginner",
+    "called_tools": [
+      "get_certification_profile",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 20,
+    "result_csv": "license_planner_case_01_beginner_with_low_score_result.csv",
+    "agent_summary": "컴퓨터활용능력 2급 자격증 준비를 위한 학습 계획 조회가 완료되었습니다. 사용자 수준(초급)과 일정에 맞춘 맞춤형 학습 일정이 성공적으로 생성되었으며, 애플리케이션에서 CSV 결과 파일을 반환할 준비가 되었습니다."
+  },
+  {
+    "case_id": "license_planner_case_02_self_assessment_only",
+    "passed": true,
+    "expected_level": "advanced",
+    "actual_level": "advanced",
+    "called_tools": [
+      "get_certification_profile",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 10,
+    "result_csv": "license_planner_case_02_self_assessment_only_result.csv",
+    "agent_summary": "인증서 프로필 확인, 준비도 진단, 그리고 학습 일정 생성이 성공적으로 완료되었습니다. 잠시 후 애플리케이션에서 결과 CSV 파일이 반환될 것입니다."
+  },
+  {
+    "case_id": "license_planner_case_03_both_level_inputs_missing",
+    "passed": true,
+    "expected_level": "intermediate",
+    "actual_level": "intermediate",
+    "called_tools": [
+      "get_certification_profile",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 10,
+    "result_csv": "license_planner_case_03_both_level_inputs_missing_result.csv",
+    "agent_summary": "The certification profile for 컴퓨터활용능력 2급 was loaded, readiness was successfully assessed as intermediate, and the study schedule was built with 10 study blocks (excluding the busy date of October 12, 2026). The application will now return the generated CSV and plan details."
+  }
+]

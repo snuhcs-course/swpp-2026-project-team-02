@@ -1,0 +1,435 @@
+[
+  {
+    "case_id": "license_planner_case_01_beginner_weak_charts",
+    "passed": true,
+    "expected_level": "beginner",
+    "actual_level": "beginner",
+    "expected_first_topic": "Charts",
+    "actual_first_topic": "Charts",
+    "expected_first_start": null,
+    "actual_first_start": "2026/10/05/20/00",
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "busy_schedule_conflict_free": true,
+    "gemini_api_request_count": 5,
+    "gemini_successful_response_count": 5,
+    "topic_statistics": [
+      {
+        "topic": "Charts",
+        "possible_score": 20.0,
+        "earned_score": 5.0,
+        "score_percent": 25.0
+      },
+      {
+        "topic": "Data Management",
+        "possible_score": 10.0,
+        "earned_score": 4.0,
+        "score_percent": 40.0
+      },
+      {
+        "topic": "Functions",
+        "possible_score": 10.0,
+        "earned_score": 8.0,
+        "score_percent": 80.0
+      }
+    ],
+    "called_tools": [
+      "get_certification_profile",
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_sessions": [
+      {
+        "schedule_id": "study-89",
+        "topic": "Charts",
+        "start_datetime": "2026/10/05/20/00",
+        "end_datetime": "2026/10/05/21/00"
+      },
+      {
+        "schedule_id": "study-90",
+        "topic": "Charts",
+        "start_datetime": "2026/10/06/18/00",
+        "end_datetime": "2026/10/06/19/00"
+      },
+      {
+        "schedule_id": "study-91",
+        "topic": "Charts",
+        "start_datetime": "2026/10/07/18/00",
+        "end_datetime": "2026/10/07/19/00"
+      },
+      {
+        "schedule_id": "study-92",
+        "topic": "Charts",
+        "start_datetime": "2026/10/08/18/00",
+        "end_datetime": "2026/10/08/19/00"
+      },
+      {
+        "schedule_id": "study-93",
+        "topic": "Charts",
+        "start_datetime": "2026/10/09/18/00",
+        "end_datetime": "2026/10/09/19/00"
+      },
+      {
+        "schedule_id": "study-94",
+        "topic": "Charts",
+        "start_datetime": "2026/10/12/18/00",
+        "end_datetime": "2026/10/12/19/00"
+      },
+      {
+        "schedule_id": "study-95",
+        "topic": "Charts",
+        "start_datetime": "2026/10/13/18/00",
+        "end_datetime": "2026/10/13/19/00"
+      },
+      {
+        "schedule_id": "study-96",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/14/18/00",
+        "end_datetime": "2026/10/14/19/00"
+      },
+      {
+        "schedule_id": "study-97",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/15/18/00",
+        "end_datetime": "2026/10/15/19/00"
+      },
+      {
+        "schedule_id": "study-98",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/16/18/00",
+        "end_datetime": "2026/10/16/19/00"
+      },
+      {
+        "schedule_id": "study-99",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/19/18/00",
+        "end_datetime": "2026/10/19/19/00"
+      },
+      {
+        "schedule_id": "study-100",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/20/18/00",
+        "end_datetime": "2026/10/20/19/00"
+      },
+      {
+        "schedule_id": "study-101",
+        "topic": "Data Management",
+        "start_datetime": "2026/10/21/18/00",
+        "end_datetime": "2026/10/21/19/00"
+      },
+      {
+        "schedule_id": "study-102",
+        "topic": "Functions",
+        "start_datetime": "2026/10/22/18/00",
+        "end_datetime": "2026/10/22/19/00"
+      },
+      {
+        "schedule_id": "study-103",
+        "topic": "Functions",
+        "start_datetime": "2026/10/23/18/00",
+        "end_datetime": "2026/10/23/19/00"
+      },
+      {
+        "schedule_id": "study-104",
+        "topic": "Functions",
+        "start_datetime": "2026/10/26/18/00",
+        "end_datetime": "2026/10/26/19/00"
+      },
+      {
+        "schedule_id": "study-105",
+        "topic": "Functions",
+        "start_datetime": "2026/10/27/18/00",
+        "end_datetime": "2026/10/27/19/00"
+      },
+      {
+        "schedule_id": "study-106",
+        "topic": "Functions",
+        "start_datetime": "2026/10/28/18/00",
+        "end_datetime": "2026/10/28/19/00"
+      }
+    ],
+    "study_block_count": 18,
+    "result_csv": "license_planner_case_01_beginner_weak_charts_result.csv",
+    "agent_summary": "자격증 정보 조회, 시험 결과 분석, 준비도 진단, 그리고 학습 일정 생성이 성공적으로 완료되었습니다. 응용 프로그램에서 CSV 형식의 학습 일정을 반환합니다."
+  },
+  {
+    "case_id": "license_planner_case_02_advanced_weak_functions",
+    "passed": true,
+    "expected_level": "advanced",
+    "actual_level": "advanced",
+    "expected_first_topic": "Functions",
+    "actual_first_topic": "Functions",
+    "expected_first_start": null,
+    "actual_first_start": "2026/10/05/18/00",
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "busy_schedule_conflict_free": true,
+    "gemini_api_request_count": 5,
+    "gemini_successful_response_count": 5,
+    "topic_statistics": [
+      {
+        "topic": "Functions",
+        "possible_score": 20.0,
+        "earned_score": 17.0,
+        "score_percent": 85.0
+      },
+      {
+        "topic": "Pivot Tables",
+        "possible_score": 20.0,
+        "earned_score": 19.0,
+        "score_percent": 95.0
+      }
+    ],
+    "called_tools": [
+      "get_certification_profile",
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_sessions": [
+      {
+        "schedule_id": "study-1",
+        "topic": "Functions",
+        "start_datetime": "2026/10/05/18/00",
+        "end_datetime": "2026/10/05/19/00"
+      },
+      {
+        "schedule_id": "study-2",
+        "topic": "Functions",
+        "start_datetime": "2026/10/06/18/00",
+        "end_datetime": "2026/10/06/19/00"
+      },
+      {
+        "schedule_id": "study-3",
+        "topic": "Pivot Tables",
+        "start_datetime": "2026/10/07/18/00",
+        "end_datetime": "2026/10/07/19/00"
+      },
+      {
+        "schedule_id": "study-4",
+        "topic": "Pivot Tables",
+        "start_datetime": "2026/10/08/18/00",
+        "end_datetime": "2026/10/08/19/00"
+      }
+    ],
+    "study_block_count": 4,
+    "result_csv": "license_planner_case_02_advanced_weak_functions_result.csv",
+    "agent_summary": "인증 프로필, 시험 결과 분석, 준비도 평가, 그리고 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 애플리케이션에서 최종 CSV 결과가 반환될 것입니다."
+  },
+  {
+    "case_id": "license_planner_case_03_data_driven_unknown_topics",
+    "passed": true,
+    "expected_level": "beginner",
+    "actual_level": "beginner",
+    "expected_first_topic": "Custom Topic A",
+    "actual_first_topic": "Custom Topic A",
+    "expected_first_start": null,
+    "actual_first_start": "2026/10/05/18/00",
+    "uses_personal_availability": false,
+    "availability_respected": true,
+    "busy_schedule_conflict_free": true,
+    "gemini_api_request_count": 5,
+    "gemini_successful_response_count": 5,
+    "topic_statistics": [
+      {
+        "topic": "Custom Topic A",
+        "possible_score": 10.0,
+        "earned_score": 1.0,
+        "score_percent": 10.0
+      },
+      {
+        "topic": "Custom Topic C",
+        "possible_score": 10.0,
+        "earned_score": 7.0,
+        "score_percent": 70.0
+      },
+      {
+        "topic": "Custom Topic B",
+        "possible_score": 10.0,
+        "earned_score": 9.0,
+        "score_percent": 90.0
+      }
+    ],
+    "called_tools": [
+      "get_certification_profile",
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_sessions": [
+      {
+        "schedule_id": "study-1",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/05/18/00",
+        "end_datetime": "2026/10/05/19/00"
+      },
+      {
+        "schedule_id": "study-2",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/06/18/00",
+        "end_datetime": "2026/10/06/19/00"
+      },
+      {
+        "schedule_id": "study-3",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/07/18/00",
+        "end_datetime": "2026/10/07/19/00"
+      },
+      {
+        "schedule_id": "study-4",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/08/18/00",
+        "end_datetime": "2026/10/08/19/00"
+      },
+      {
+        "schedule_id": "study-5",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/09/18/00",
+        "end_datetime": "2026/10/09/19/00"
+      },
+      {
+        "schedule_id": "study-6",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/12/18/00",
+        "end_datetime": "2026/10/12/19/00"
+      },
+      {
+        "schedule_id": "study-7",
+        "topic": "Custom Topic A",
+        "start_datetime": "2026/10/13/18/00",
+        "end_datetime": "2026/10/13/19/00"
+      },
+      {
+        "schedule_id": "study-8",
+        "topic": "Custom Topic C",
+        "start_datetime": "2026/10/14/18/00",
+        "end_datetime": "2026/10/14/19/00"
+      },
+      {
+        "schedule_id": "study-9",
+        "topic": "Custom Topic C",
+        "start_datetime": "2026/10/15/18/00",
+        "end_datetime": "2026/10/15/19/00"
+      },
+      {
+        "schedule_id": "study-10",
+        "topic": "Custom Topic C",
+        "start_datetime": "2026/10/16/18/00",
+        "end_datetime": "2026/10/16/19/00"
+      },
+      {
+        "schedule_id": "study-11",
+        "topic": "Custom Topic C",
+        "start_datetime": "2026/10/19/18/00",
+        "end_datetime": "2026/10/19/19/00"
+      },
+      {
+        "schedule_id": "study-12",
+        "topic": "Custom Topic C",
+        "start_datetime": "2026/10/20/18/00",
+        "end_datetime": "2026/10/20/19/00"
+      },
+      {
+        "schedule_id": "study-13",
+        "topic": "Custom Topic B",
+        "start_datetime": "2026/10/21/18/00",
+        "end_datetime": "2026/10/21/19/00"
+      },
+      {
+        "schedule_id": "study-14",
+        "topic": "Custom Topic B",
+        "start_datetime": "2026/10/22/18/00",
+        "end_datetime": "2026/10/22/19/00"
+      },
+      {
+        "schedule_id": "study-15",
+        "topic": "Custom Topic B",
+        "start_datetime": "2026/10/23/18/00",
+        "end_datetime": "2026/10/23/19/00"
+      },
+      {
+        "schedule_id": "study-16",
+        "topic": "Custom Topic B",
+        "start_datetime": "2026/10/26/18/00",
+        "end_datetime": "2026/10/26/19/00"
+      },
+      {
+        "schedule_id": "study-17",
+        "topic": "Custom Topic B",
+        "start_datetime": "2026/10/27/18/00",
+        "end_datetime": "2026/10/27/19/00"
+      }
+    ],
+    "study_block_count": 17,
+    "result_csv": "license_planner_case_03_data_driven_unknown_topics_result.csv",
+    "agent_summary": "자격증 프로파일 조회, 시험 결과 분석, 학습 준비도 평가 및 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 응용 프로그램에서 CSV 파일 출력을 반환할 준비가 되었습니다."
+  },
+  {
+    "case_id": "license_planner_case_04_personal_availability_api",
+    "passed": false,
+    "error": "RuntimeError: Gemini request failed: HTTP 429 RESOURCE_EXHAUSTED: You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite\nPlease retry in 16.509728044s.",
+    "gemini_api_request_count": 1,
+    "gemini_successful_response_count": 0
+  }
+]

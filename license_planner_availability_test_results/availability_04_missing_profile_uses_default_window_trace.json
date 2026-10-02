@@ -1,0 +1,36 @@
+{
+  "case_id": "availability_04_missing_profile_uses_default_window",
+  "description": "개인 시간표가 없으면 공통 기본 시간대를 사용합니다.",
+  "passed": true,
+  "expected_first_start": "2026/10/05/18/00",
+  "actual_first_start": "2026/10/05/18/00",
+  "expected_personal_availability": false,
+  "used_personal_availability": false,
+  "saved_availability_json": null,
+  "expected_tool_calls": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "called_tools": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 1,
+  "result_csv": "availability_04_missing_profile_uses_default_window_result.csv"
+}

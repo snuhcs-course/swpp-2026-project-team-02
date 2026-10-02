@@ -1,0 +1,44 @@
+{
+  "passed": true,
+  "checks": {
+    "health_route": true,
+    "cors_origin": true,
+    "availability_put": true,
+    "availability_get_round_trip": true,
+    "invalid_input_422": true,
+    "adjustment_http_success": true,
+    "profile_window_respected": true,
+    "other_rows_preserved": true,
+    "agent_tools_called_in_order": true
+  },
+  "schedule_adjustment_http_status": 200,
+  "schedule_adjustment_error": null,
+  "result_csv": "api_availability_schedule_result.csv",
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    },
+    {
+      "tool": "inspect_topic_schedule",
+      "arguments": {
+        "topic": "Charts"
+      }
+    },
+    {
+      "tool": "reschedule_failed_study",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    }
+  ],
+  "action": "rescheduled_study",
+  "moved_schedule": {
+    "schedule_id": "study-201",
+    "start_date": "2026/10/07/20/00",
+    "end_date": "2026/10/07/21/00",
+    "topic": "Charts"
+  }
+}

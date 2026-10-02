@@ -1,0 +1,7 @@
+{
+  "weekly_availability": {
+    "wednesday": [
+      {"start": "20:00", "end": "22:00"}
+    ]
+  }
+}

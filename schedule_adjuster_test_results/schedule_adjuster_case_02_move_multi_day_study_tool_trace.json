@@ -1,0 +1,46 @@
+{
+  "case_id": "schedule_adjuster_case_02_move_multi_day_study",
+  "passed": true,
+  "schedule_id": "study-202",
+  "expected_action": "rescheduled_study",
+  "actual_action": "rescheduled_study",
+  "expected_tool_calls": [
+    "inspect_schedule",
+    "inspect_topic_schedule",
+    "reschedule_failed_study"
+  ],
+  "called_tools": [
+    "inspect_schedule",
+    "inspect_topic_schedule",
+    "reschedule_failed_study"
+  ],
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "study-202"
+      }
+    },
+    {
+      "tool": "inspect_topic_schedule",
+      "arguments": {
+        "topic": "Functions"
+      }
+    },
+    {
+      "tool": "reschedule_failed_study",
+      "arguments": {
+        "schedule_id": "study-202"
+      }
+    }
+  ],
+  "other_rows_preserved": true,
+  "target_adjusted_as_expected": true,
+  "target_has_no_conflict": true,
+  "topic_order_preserved": true,
+  "uses_personal_availability": false,
+  "availability_respected": true,
+  "gemini_api_request_count": 4,
+  "result_csv": "schedule_adjuster_case_02_move_multi_day_study_result.csv",
+  "agent_summary": "The schedule for study-202 (topic: **Functions**) has been successfully adjusted. \n\n- **Inspection:** Verified the schedule type and topic details.\n- **Topic Analysis:** Checked all sessions under the topic \"Functions\".\n- **Rescheduling:** The failed session was successfully rescheduled to the next available conflict-free interval (**2026/10/08/20/00** to **2026/10/08/22/00**), preserving all other existing rows and schedule details."
+}

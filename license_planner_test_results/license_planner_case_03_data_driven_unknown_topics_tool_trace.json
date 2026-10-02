@@ -1,0 +1,168 @@
+{
+  "case_id": "license_planner_case_03_data_driven_unknown_topics",
+  "passed": true,
+  "expected_level": "beginner",
+  "actual_level": "beginner",
+  "expected_first_topic": "Custom Topic A",
+  "actual_first_topic": "Custom Topic A",
+  "expected_first_start": null,
+  "actual_first_start": "2026/10/05/18/00",
+  "uses_personal_availability": false,
+  "availability_respected": true,
+  "busy_schedule_conflict_free": true,
+  "gemini_api_request_count": 5,
+  "gemini_successful_response_count": 5,
+  "topic_statistics": [
+    {
+      "topic": "Custom Topic A",
+      "possible_score": 10.0,
+      "earned_score": 1.0,
+      "score_percent": 10.0
+    },
+    {
+      "topic": "Custom Topic C",
+      "possible_score": 10.0,
+      "earned_score": 7.0,
+      "score_percent": 70.0
+    },
+    {
+      "topic": "Custom Topic B",
+      "possible_score": 10.0,
+      "earned_score": 9.0,
+      "score_percent": 90.0
+    }
+  ],
+  "called_tools": [
+    "get_certification_profile",
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "get_certification_profile",
+      "arguments": {
+        "certification_id": "computer_specialist_level_2"
+      }
+    },
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_sessions": [
+    {
+      "schedule_id": "study-1",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/05/18/00",
+      "end_datetime": "2026/10/05/19/00"
+    },
+    {
+      "schedule_id": "study-2",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/06/18/00",
+      "end_datetime": "2026/10/06/19/00"
+    },
+    {
+      "schedule_id": "study-3",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/07/18/00",
+      "end_datetime": "2026/10/07/19/00"
+    },
+    {
+      "schedule_id": "study-4",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/08/18/00",
+      "end_datetime": "2026/10/08/19/00"
+    },
+    {
+      "schedule_id": "study-5",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/09/18/00",
+      "end_datetime": "2026/10/09/19/00"
+    },
+    {
+      "schedule_id": "study-6",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/12/18/00",
+      "end_datetime": "2026/10/12/19/00"
+    },
+    {
+      "schedule_id": "study-7",
+      "topic": "Custom Topic A",
+      "start_datetime": "2026/10/13/18/00",
+      "end_datetime": "2026/10/13/19/00"
+    },
+    {
+      "schedule_id": "study-8",
+      "topic": "Custom Topic C",
+      "start_datetime": "2026/10/14/18/00",
+      "end_datetime": "2026/10/14/19/00"
+    },
+    {
+      "schedule_id": "study-9",
+      "topic": "Custom Topic C",
+      "start_datetime": "2026/10/15/18/00",
+      "end_datetime": "2026/10/15/19/00"
+    },
+    {
+      "schedule_id": "study-10",
+      "topic": "Custom Topic C",
+      "start_datetime": "2026/10/16/18/00",
+      "end_datetime": "2026/10/16/19/00"
+    },
+    {
+      "schedule_id": "study-11",
+      "topic": "Custom Topic C",
+      "start_datetime": "2026/10/19/18/00",
+      "end_datetime": "2026/10/19/19/00"
+    },
+    {
+      "schedule_id": "study-12",
+      "topic": "Custom Topic C",
+      "start_datetime": "2026/10/20/18/00",
+      "end_datetime": "2026/10/20/19/00"
+    },
+    {
+      "schedule_id": "study-13",
+      "topic": "Custom Topic B",
+      "start_datetime": "2026/10/21/18/00",
+      "end_datetime": "2026/10/21/19/00"
+    },
+    {
+      "schedule_id": "study-14",
+      "topic": "Custom Topic B",
+      "start_datetime": "2026/10/22/18/00",
+      "end_datetime": "2026/10/22/19/00"
+    },
+    {
+      "schedule_id": "study-15",
+      "topic": "Custom Topic B",
+      "start_datetime": "2026/10/23/18/00",
+      "end_datetime": "2026/10/23/19/00"
+    },
+    {
+      "schedule_id": "study-16",
+      "topic": "Custom Topic B",
+      "start_datetime": "2026/10/26/18/00",
+      "end_datetime": "2026/10/26/19/00"
+    },
+    {
+      "schedule_id": "study-17",
+      "topic": "Custom Topic B",
+      "start_datetime": "2026/10/27/18/00",
+      "end_datetime": "2026/10/27/19/00"
+    }
+  ],
+  "study_block_count": 17,
+  "result_csv": "license_planner_case_03_data_driven_unknown_topics_result.csv",
+  "agent_summary": "자격증 프로파일 조회, 시험 결과 분석, 학습 준비도 평가 및 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 응용 프로그램에서 CSV 파일 출력을 반환할 준비가 되었습니다."
+}

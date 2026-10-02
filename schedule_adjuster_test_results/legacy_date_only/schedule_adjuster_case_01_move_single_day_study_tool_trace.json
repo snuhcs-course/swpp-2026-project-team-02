@@ -1,0 +1,34 @@
+{
+  "case_id": "schedule_adjuster_case_01_move_single_day_study",
+  "passed": true,
+  "schedule_id": "study-201",
+  "expected_action": "rescheduled_study",
+  "actual_action": "rescheduled_study",
+  "expected_tool_calls": [
+    "inspect_schedule",
+    "reschedule_failed_study"
+  ],
+  "called_tools": [
+    "inspect_schedule",
+    "reschedule_failed_study"
+  ],
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    },
+    {
+      "tool": "reschedule_failed_study",
+      "arguments": {
+        "schedule_id": "study-201"
+      }
+    }
+  ],
+  "other_rows_preserved": true,
+  "target_adjusted_as_expected": true,
+  "gemini_api_request_count": 3,
+  "result_csv": "schedule_adjuster_case_01_move_single_day_study_result.csv",
+  "agent_summary": "I have successfully inspected and adjusted the study schedule (ID: `study-201`).\n\n- **Type:** Study schedule\n- **Previous Dates:** 2026-10-05 to 2026-10-05\n- **New Dates:** 2026-10-11 to 2026-10-11 (moved to the first free contiguous date range after the old end)\n- **Result:** The failed study entry has been successfully rescheduled using the required tool while preserving all other rows."
+}

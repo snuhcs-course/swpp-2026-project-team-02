@@ -1,0 +1,34 @@
+{
+  "case_id": "schedule_adjuster_case_04_remove_second_external",
+  "passed": true,
+  "schedule_id": "external-102",
+  "expected_action": "cancelled_external",
+  "actual_action": "cancelled_external",
+  "expected_tool_calls": [
+    "inspect_schedule",
+    "remove_cancelled_external_schedule"
+  ],
+  "called_tools": [
+    "inspect_schedule",
+    "remove_cancelled_external_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "inspect_schedule",
+      "arguments": {
+        "schedule_id": "external-102"
+      }
+    },
+    {
+      "tool": "remove_cancelled_external_schedule",
+      "arguments": {
+        "schedule_id": "external-102"
+      }
+    }
+  ],
+  "other_rows_preserved": true,
+  "target_adjusted_as_expected": true,
+  "gemini_api_request_count": 3,
+  "result_csv": "schedule_adjuster_case_04_remove_second_external_result.csv",
+  "agent_summary": "The schedule `external-102` has been successfully inspected and identified as an external schedule. Because this event was cancelled, the `remove_cancelled_external_schedule` tool was used to remove the cancelled row while preserving all other schedule entries."
+}

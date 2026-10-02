@@ -1,0 +1,203 @@
+[
+  {
+    "case_id": "availability_01_saved_window_skips_busy_event",
+    "description": "개인 가능 시간 JSON을 저장하고 기존 일정이 겹치는 시간을 건너뜁니다.",
+    "passed": true,
+    "expected_first_start": "2026/10/05/20/00",
+    "actual_first_start": "2026/10/05/20/00",
+    "expected_personal_availability": true,
+    "used_personal_availability": true,
+    "saved_availability_json": {
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "19:00",
+            "end": "21:00"
+          }
+        ],
+        "tuesday": [],
+        "wednesday": [
+          {
+            "start": "09:00",
+            "end": "11:00"
+          }
+        ],
+        "thursday": [],
+        "friday": [],
+        "saturday": [],
+        "sunday": []
+      }
+    },
+    "expected_tool_calls": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "called_tools": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 1,
+    "result_csv": "availability_01_saved_window_skips_busy_event_result.csv"
+  },
+  {
+    "case_id": "availability_02_sunday_window_is_used",
+    "description": "개인 시간표에 등록한 주말 시간도 계획에 반영합니다.",
+    "passed": true,
+    "expected_first_start": "2026/10/11/09/00",
+    "actual_first_start": "2026/10/11/09/00",
+    "expected_personal_availability": true,
+    "used_personal_availability": true,
+    "saved_availability_json": {
+      "weekly_availability": {
+        "monday": [],
+        "tuesday": [],
+        "wednesday": [],
+        "thursday": [],
+        "friday": [],
+        "saturday": [],
+        "sunday": [
+          {
+            "start": "09:00",
+            "end": "11:00"
+          }
+        ]
+      }
+    },
+    "expected_tool_calls": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "called_tools": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 1,
+    "result_csv": "availability_02_sunday_window_is_used_result.csv"
+  },
+  {
+    "case_id": "availability_03_updated_json_is_reloaded",
+    "description": "같은 설정 파일에 새 시간표를 저장하면 다음 계획에 갱신된 값이 적용됩니다.",
+    "passed": true,
+    "expected_first_start": "2026/10/06/10/00",
+    "actual_first_start": "2026/10/06/10/00",
+    "expected_personal_availability": true,
+    "used_personal_availability": true,
+    "saved_availability_json": {
+      "weekly_availability": {
+        "monday": [],
+        "tuesday": [
+          {
+            "start": "10:00",
+            "end": "12:00"
+          }
+        ],
+        "wednesday": [],
+        "thursday": [],
+        "friday": [],
+        "saturday": [],
+        "sunday": []
+      }
+    },
+    "expected_tool_calls": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "called_tools": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 1,
+    "result_csv": "availability_03_updated_json_is_reloaded_result.csv"
+  },
+  {
+    "case_id": "availability_04_missing_profile_uses_default_window",
+    "description": "개인 시간표가 없으면 공통 기본 시간대를 사용합니다.",
+    "passed": true,
+    "expected_first_start": "2026/10/05/18/00",
+    "actual_first_start": "2026/10/05/18/00",
+    "expected_personal_availability": false,
+    "used_personal_availability": false,
+    "saved_availability_json": null,
+    "expected_tool_calls": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "called_tools": [
+      "analyze_exam_results",
+      "assess_readiness",
+      "build_study_schedule"
+    ],
+    "tool_calls": [
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {}
+      },
+      {
+        "tool": "assess_readiness",
+        "arguments": {}
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "study_block_count": 1,
+    "result_csv": "availability_04_missing_profile_uses_default_window_result.csv"
+  },
+  {
+    "case_id": "availability_05_overlapping_windows_are_rejected",
+    "description": "한 요일에 겹치는 시간 구간을 입력하면 저장 전에 거부합니다.",
+    "expected_error": "cannot overlap",
+    "actual_error": "monday availability windows cannot overlap",
+    "passed": true
+  }
+]

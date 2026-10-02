@@ -1,0 +1,51 @@
+{
+  "case_id": "availability_02_sunday_window_is_used",
+  "description": "개인 시간표에 등록한 주말 시간도 계획에 반영합니다.",
+  "passed": true,
+  "expected_first_start": "2026/10/11/09/00",
+  "actual_first_start": "2026/10/11/09/00",
+  "expected_personal_availability": true,
+  "used_personal_availability": true,
+  "saved_availability_json": {
+    "weekly_availability": {
+      "monday": [],
+      "tuesday": [],
+      "wednesday": [],
+      "thursday": [],
+      "friday": [],
+      "saturday": [],
+      "sunday": [
+        {
+          "start": "09:00",
+          "end": "11:00"
+        }
+      ]
+    }
+  },
+  "expected_tool_calls": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "called_tools": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 1,
+  "result_csv": "availability_02_sunday_window_is_used_result.csv"
+}

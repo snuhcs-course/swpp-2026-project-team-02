@@ -1,0 +1,29 @@
+{
+  "schedule_id": "study-201",
+  "schedules": [
+    {
+      "schedule_id": "study-201",
+      "start_date": "2026/10/05/19/00",
+      "end_date": "2026/10/05/20/00",
+      "topic": "Charts"
+    },
+    {
+      "schedule_id": "external-101",
+      "start_date": "2026/10/06/18/00",
+      "end_date": "2026/10/06/20/00",
+      "topic": ""
+    },
+    {
+      "schedule_id": "study-202",
+      "start_date": "2026/10/08/18/00",
+      "end_date": "2026/10/08/20/00",
+      "topic": "Functions"
+    },
+    {
+      "schedule_id": "external-102",
+      "start_date": "2026/10/10/10/00",
+      "end_date": "2026/10/10/12/00",
+      "topic": ""
+    }
+  ]
+}

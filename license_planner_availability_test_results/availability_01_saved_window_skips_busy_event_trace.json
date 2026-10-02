@@ -1,0 +1,56 @@
+{
+  "case_id": "availability_01_saved_window_skips_busy_event",
+  "description": "개인 가능 시간 JSON을 저장하고 기존 일정이 겹치는 시간을 건너뜁니다.",
+  "passed": true,
+  "expected_first_start": "2026/10/05/20/00",
+  "actual_first_start": "2026/10/05/20/00",
+  "expected_personal_availability": true,
+  "used_personal_availability": true,
+  "saved_availability_json": {
+    "weekly_availability": {
+      "monday": [
+        {
+          "start": "19:00",
+          "end": "21:00"
+        }
+      ],
+      "tuesday": [],
+      "wednesday": [
+        {
+          "start": "09:00",
+          "end": "11:00"
+        }
+      ],
+      "thursday": [],
+      "friday": [],
+      "saturday": [],
+      "sunday": []
+    }
+  },
+  "expected_tool_calls": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "called_tools": [
+    "analyze_exam_results",
+    "assess_readiness",
+    "build_study_schedule"
+  ],
+  "tool_calls": [
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {}
+    },
+    {
+      "tool": "assess_readiness",
+      "arguments": {}
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {}
+    }
+  ],
+  "study_block_count": 1,
+  "result_csv": "availability_01_saved_window_skips_busy_event_result.csv"
+}
