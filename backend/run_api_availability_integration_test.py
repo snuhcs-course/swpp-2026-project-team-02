@@ -163,6 +163,8 @@ def run() -> dict:
                     availability_valid = (
                         start.weekday() == 2 and start.date() == end.date()
                         and start.time() >= time(20, 0) and end.time() <= time(22, 0)
+                        # The fixture starts with a one-hour block; Schedule Adjuster
+                        # must preserve its original duration when moving it.
                         and end - start == timedelta(hours=1)
                     )
                 else:

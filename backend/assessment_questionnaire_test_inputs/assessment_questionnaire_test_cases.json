@@ -8,7 +8,7 @@
     "expected_topics": ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
   },
   {
-    "case_id": "assessment_02_scoring_and_planner_csv",
+    "case_id": "assessment_02_scoring_and_planner_json",
     "description": "질문, 정답, 사용자 답, 로컬 정오 판정이 Planner용 JSON으로 저장됩니다.",
     "kind": "assessment_flow",
     "question_document": {
@@ -86,7 +86,7 @@
     "expected_error": "possible_score는 양수"
   },
   {
-    "case_id": "assessment_07_eof_does_not_write_partial_csv",
+    "case_id": "assessment_07_eof_does_not_write_partial_json",
     "description": "응답 도중 입력이 끝나면 부분 결과 JSON을 만들지 않습니다.",
     "kind": "eof_no_partial_output",
     "question_document": {
@@ -101,7 +101,7 @@
     "expected_exit_code": 2
   },
   {
-    "case_id": "assessment_08_cli_writes_default_bank_csv",
+    "case_id": "assessment_08_cli_writes_default_bank_json",
     "description": "실제 CLI가 모든 더미 문항 응답을 받아 결과 JSON을 생성합니다.",
     "kind": "cli_project_bank",
     "answers": ["B", "B", "A", "A", "C"],

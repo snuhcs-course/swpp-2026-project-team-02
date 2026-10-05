@@ -142,8 +142,8 @@ function collectAssessmentResults() {
   return {
     certification_id: activeQuestionDocument.certification_id,
     results: activeQuestionDocument.questions.map((question) => {
-    const answer = form.querySelector(`input[name="answer-${question.id}"]:checked`);
-    if (!answer) throw new Error("모든 진단 질문에 답해 주세요.");
+      const answer = form.querySelector(`input[name="answer-${question.id}"]:checked`);
+      if (!answer) throw new Error("모든 진단 질문에 답해 주세요.");
       return {
         problem_id: question.id,
         question: question.prompt,
@@ -176,6 +176,8 @@ function renderPlan(result, preparationStart) {
   const startWeek = mondayOf(preparationStart);
   const groups = new Map();
   for (const schedule of result.schedules ?? []) {
+    // The API also returns existing external events; this view shows study blocks only.
+    if (!schedule.schedule_id?.startsWith("study-")) continue;
     const start = parseApiDate(schedule.start_date);
     const end = parseApiDate(schedule.end_date);
     const weekNumber = Math.floor((mondayOf(start) - startWeek) / (7 * 24 * 60 * 60 * 1000)) + 1;

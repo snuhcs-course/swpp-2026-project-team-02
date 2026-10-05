@@ -156,7 +156,7 @@ Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델
 | 입력 | 형식 | 규칙 |
 | --- | --- | --- |
 | `self_assessment` | 문장 또는 `None` | Agent가 문장 내용을 직접 학습 분량 산정에 참고합니다. 고정된 수준 구간으로 변환하지 않습니다. |
-| `problem_results` | 문제 결과 객체 튜플 또는 `None` | 각 행은 문제 ID, 토픽명, 배점, 획득 점수입니다. 토픽명은 데이터에서 받아들이며 고정 enum을 쓰지 않습니다. |
+| `problem_results` | 내부 호환용 문제 결과 튜플 | 구버전 내부 호출용입니다. HTTP API와 현재 CLI 입력은 문항별 `assessment_results` JSON이며 Agent가 고정 자격증 Topic으로 매핑합니다. |
 | `preparation_start` | datetime 또는 `None` | 형식은 `YYYY/MM/DD/HH/MM`; 날짜 일정 생성 시 필수입니다. |
 | `exam_date` | datetime 또는 `None` | 같은 형식이며 시작 시각보다 뒤여야 합니다. |
 | `busy_periods` | 기존 일정 객체 튜플 또는 `None` | API JSON의 `busy_schedules` 배열에서 변환됩니다. 시작·종료는 `YYYY/MM/DD/HH/MM`이며 ID는 양의 정수입니다. |
