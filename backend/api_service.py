@@ -6,6 +6,7 @@ import io
 import re
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 from typing import Any
 
@@ -25,6 +26,32 @@ from schedule_adjuster.availability import load_personal_availability as load_ad
 
 BACKEND_ROOT = Path(__file__).resolve().parent
 STUDY_PLAN_OUTPUT_DIR = BACKEND_ROOT / "license_planner" / "output"
+STUDY_PLAN_FILENAME = re.compile(r"study_plan_[0-9A-Fa-fT+_-]+\.csv")
+MAX_STUDY_PLAN_CSV_FILES = 100
+_STUDY_PLAN_OUTPUT_LOCK = Lock()
+
+
+def _prune_study_plan_csvs() -> None:
+    """Keep only the most recent generated plan CSVs in the output directory."""
+    candidates = []
+    try:
+        output_paths = STUDY_PLAN_OUTPUT_DIR.iterdir()
+        for path in output_paths:
+            if not path.is_file() or not STUDY_PLAN_FILENAME.fullmatch(path.name):
+                continue
+            try:
+                candidates.append((path.stat().st_mtime_ns, path.name, path))
+            except OSError:
+                continue
+    except OSError:
+        return
+    candidates.sort()
+    for _, _, path in candidates[:-MAX_STUDY_PLAN_CSV_FILES]:
+        try:
+            path.unlink()
+        except OSError:
+            # A locked file should not make an otherwise valid plan request fail.
+            continue
 
 
 def _save_study_plan_csv(content: str) -> str:
@@ -32,18 +59,20 @@ def _save_study_plan_csv(content: str) -> str:
     출력 값: backend 폴더 기준 재사용 가능한 CSV 상대 경로
     기능: 각 Planning 요청 결과를 고유한 파일로 저장합니다.
     """
-    STUDY_PLAN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f%z")
-    output_path = STUDY_PLAN_OUTPUT_DIR / f"study_plan_{timestamp}_{uuid4().hex[:8]}.csv"
-    with output_path.open("x", encoding="utf-8", newline="") as output_file:
-        output_file.write(content)
+    with _STUDY_PLAN_OUTPUT_LOCK:
+        STUDY_PLAN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f%z")
+        output_path = STUDY_PLAN_OUTPUT_DIR / f"study_plan_{timestamp}_{uuid4().hex[:8]}.csv"
+        with output_path.open("x", encoding="utf-8", newline="") as output_file:
+            output_file.write(content)
+        _prune_study_plan_csvs()
     return output_path.relative_to(BACKEND_ROOT).as_posix()
 
 
 def read_study_plan_csv(filename: str) -> tuple[str, str]:
     """Read a generated plan by its server-issued basename, without path traversal."""
     if (not isinstance(filename, str) or "/" in filename or "\\" in filename
-            or not re.fullmatch(r"study_plan_[0-9A-Fa-fT+_-]+\.csv", filename)):
+            or not STUDY_PLAN_FILENAME.fullmatch(filename)):
         raise FileNotFoundError("Study plan CSV not found")
     output_path = (STUDY_PLAN_OUTPUT_DIR / filename).resolve()
     if output_path.parent != STUDY_PLAN_OUTPUT_DIR.resolve() or not output_path.is_file():

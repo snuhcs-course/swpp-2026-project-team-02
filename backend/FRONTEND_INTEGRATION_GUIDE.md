@@ -18,15 +18,15 @@
 - 일정 날짜·시간: `YYYY/MM/DD/HH/MM` (예: `2026/10/05/18/30`)
 - 반복 가능 시간: `HH:MM` 24시간 형식
 - 일정 ID: 공부 일정 `study-숫자`, 외부 일정 `external-숫자`
-- 응답의 `schedules`는 화면 표/캘린더용, `schedule_csv`는 CSV 내용입니다. Planning API는 파일을 `backend/license_planner/output/`에 저장하고 `schedule_csv_file`(백엔드 상대 경로)과 `schedule_csv_url`(다운로드 API 경로)을 반환합니다.
-- `topic`은 자격증에 따라 바뀌므로 동적 문자열로 취급하고 프론트엔드에서 고정 목록으로 제한하지 않습니다.
+- 응답의 `schedules`는 화면 표/캘린더용, `schedule_csv`는 CSV 내용입니다. Planning API는 파일을 `backend/license_planner/output/`에 저장하고 `schedule_csv_file`(백엔드 상대 경로)과 `schedule_csv_url`(다운로드 API 경로)을 반환합니다. 새 계획 생성 시 삭제 가능한 자동 생성 CSV 중 최근 100개를 유지하도록 오래된 파일을 정리합니다. 정리된 파일 URL은 더 이상 다운로드할 수 없습니다.
+- 응답 `topic`은 선택 자격증의 Topic 중 하나입니다. 자격증마다 목록이 다를 수 있으므로 프론트엔드에서 하나의 전역 목록으로 제한하지 않습니다.
 - Gemini 키는 프론트엔드에 전달하지 않습니다. 일정 생성·조정 API가 서버에서 Gemini를 호출합니다.
 
 ## 자격증과 진단 문항
 
 `GET ${api_base_url}/certifications`는 활성 자격증 목록을 반환합니다.
 선택한 자격증의 `GET ${api_base_url}/certifications/{certification_id}/questions`
-더미 문항 응답에는 질문, 선택지, 정답, 배점이 포함됩니다. 질문별 토픽은 미리 고정하지 않으며, Planning Agent가 문제의 내용을 보고 복수 Topic과 비중을 선택합니다.
+더미 문항 응답에는 질문, 선택지, 정답, 배점이 포함됩니다. 질문별 Topic 매핑은 미리 고정하지 않으며, Planning Agent가 문제 내용을 보고 해당 자격증의 `backend/config/certifications.json`에 정의된 Topic 중 하나 이상과 비중을 선택합니다.
 
 ```json
 {
