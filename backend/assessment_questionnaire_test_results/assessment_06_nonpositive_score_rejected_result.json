@@ -1,0 +1,13 @@
+{
+  "case_id": "assessment_06_nonpositive_score_rejected",
+  "description": "0 이하 배점을 거부합니다.",
+  "passed": true,
+  "expected": {
+    "rejected": true,
+    "error_contains": "possible_score는 양수"
+  },
+  "actual": {
+    "rejected": true,
+    "error": "1번 질문의 possible_score는 양수여야 합니다."
+  }
+}

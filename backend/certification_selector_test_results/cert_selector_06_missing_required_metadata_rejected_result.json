@@ -1,0 +1,7 @@
+{
+  "case_id": "cert_selector_06_missing_required_metadata_rejected",
+  "description": "활성 항목에서 필수 메타데이터가 빠지면 카탈로그 오류를 반환합니다.",
+  "expected_error": "require id, name, exam_authority, and schedule_url",
+  "actual_error": "Enabled certifications require id, name, exam_authority, and schedule_url",
+  "passed": true
+}

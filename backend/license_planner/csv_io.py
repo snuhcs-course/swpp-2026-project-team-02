@@ -33,6 +33,8 @@ def parse_problem_results_csv(content: str | None) -> tuple[ProblemResult, ...]:
     if not content or not content.strip():
         return ()
     rows = list(csv.reader(io.StringIO(content), delimiter=CSV_DELIMITER))
+    if rows and rows[0]:
+        rows[0][0] = rows[0][0].lstrip("\ufeff")
     if rows and tuple(cell.strip().lower() for cell in rows[0]) == PROBLEM_RESULTS_HEADER:
         rows = rows[1:]
     results: list[ProblemResult] = []

@@ -1,0 +1,109 @@
+{
+  "case_count": 10,
+  "passed_count": 10,
+  "failed_count": 0,
+  "results": [
+    {
+      "case_id": "cert_selector_01_current_catalog",
+      "description": "현재 제품 카탈로그에서 컴퓨터활용능력 2급만 선택할 수 있습니다.",
+      "expected_ids": [
+        "computer_specialist_level_2"
+      ],
+      "actual_ids": [
+        "computer_specialist_level_2"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_02_disabled_future_certification",
+      "description": "비활성 자격증은 목록에 남아 있어도 선택 목록에서 제외합니다.",
+      "expected_ids": [
+        "computer_specialist_level_2"
+      ],
+      "actual_ids": [
+        "computer_specialist_level_2"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_03_multiple_enabled_order",
+      "description": "추후 여러 자격증이 활성화되면 카탈로그 순서대로 모두 제공합니다.",
+      "expected_ids": [
+        "cert_a",
+        "cert_b"
+      ],
+      "actual_ids": [
+        "cert_a",
+        "cert_b"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_04_empty_selectable_list",
+      "description": "활성 자격증이 하나도 없으면 빈 목록을 반환합니다.",
+      "expected_ids": [],
+      "actual_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_05_duplicate_id_rejected",
+      "description": "활성 항목의 ID가 중복되면 카탈로그 오류를 반환합니다.",
+      "expected_error": "Duplicate certification id",
+      "actual_error": "Duplicate certification id: same",
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_06_missing_required_metadata_rejected",
+      "description": "활성 항목에서 필수 메타데이터가 빠지면 카탈로그 오류를 반환합니다.",
+      "expected_error": "require id, name, exam_authority, and schedule_url",
+      "actual_error": "Enabled certifications require id, name, exam_authority, and schedule_url",
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_07_invalid_json_rejected",
+      "description": "JSON 문법이 잘못된 카탈로그 파일은 읽기 오류를 반환합니다.",
+      "expected_error": "자격증 목록을 읽을 수 없습니다",
+      "actual_error": "자격증 목록을 읽을 수 없습니다: Expecting property name enclosed in double quotes: line 1 column 3 (char 2)",
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_08_cli_selects_current_certification",
+      "description": "CLI에서 자격증을 선택하면 선택된 자격증과 공식 일정 링크만 출력합니다.",
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "expected_selected_id": "computer_specialist_level_2",
+      "actual_selected_id": "computer_specialist_level_2",
+      "expected_error": null,
+      "actual_error": null,
+      "expected_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+      "actual_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_09_cli_rejects_out_of_range_choice",
+      "description": "CLI에서 목록에 없는 번호를 입력하면 오류 코드로 종료합니다.",
+      "expected_exit_code": 2,
+      "actual_exit_code": 2,
+      "expected_selected_id": null,
+      "actual_selected_id": null,
+      "expected_error": "목록에 있는 번호를 입력해 주세요.",
+      "actual_error": "목록에 있는 번호를 입력해 주세요.",
+      "expected_schedule_url": null,
+      "actual_schedule_url": null,
+      "passed": true
+    },
+    {
+      "case_id": "cert_selector_10_cli_json_catalog",
+      "description": "선택 가능 자격증 목록을 JSON으로 출력합니다.",
+      "expected_exit_code": 0,
+      "actual_exit_code": 0,
+      "expected_selected_id": "computer_specialist_level_2",
+      "actual_selected_id": "computer_specialist_level_2",
+      "expected_error": null,
+      "actual_error": null,
+      "expected_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+      "actual_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+      "passed": true
+    }
+  ]
+}

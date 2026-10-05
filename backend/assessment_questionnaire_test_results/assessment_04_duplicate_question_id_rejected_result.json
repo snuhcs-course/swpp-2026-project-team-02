@@ -1,0 +1,13 @@
+{
+  "case_id": "assessment_04_duplicate_question_id_rejected",
+  "description": "질문 ID 중복을 거부합니다.",
+  "passed": true,
+  "expected": {
+    "rejected": true,
+    "error_contains": "중복되지 않는 양의 정수"
+  },
+  "actual": {
+    "rejected": true,
+    "error": "2번 질문의 id는 중복되지 않는 양의 정수여야 합니다."
+  }
+}

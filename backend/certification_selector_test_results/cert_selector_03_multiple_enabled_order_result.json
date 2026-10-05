@@ -1,0 +1,13 @@
+{
+  "case_id": "cert_selector_03_multiple_enabled_order",
+  "description": "추후 여러 자격증이 활성화되면 카탈로그 순서대로 모두 제공합니다.",
+  "expected_ids": [
+    "cert_a",
+    "cert_b"
+  ],
+  "actual_ids": [
+    "cert_a",
+    "cert_b"
+  ],
+  "passed": true
+}

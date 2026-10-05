@@ -3,8 +3,10 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from license_planner.catalog import CERTIFICATIONS, get_certification
+from api_service import build_plan_request
 from license_planner.csv_io import (parse_busy_csv, parse_datetime,
                                     parse_problem_results_csv, render_schedule_csv)
 from license_planner.models import PlanRequest, ToolTrace
@@ -38,6 +40,13 @@ def make_request(self_assessment="엑셀은 처음이라 잘 모릅니다"):
         preparation_start=parse_datetime("2026/10/05/17/00"),
         exam_date=parse_datetime("2026/11/30/23/00"),
         busy_periods=parse_busy_csv(BUSY_CSV),
+        weekly_availability=parse_weekly_availability({
+            "monday": [{"start": "18:00", "end": "22:00"}],
+            "tuesday": [{"start": "18:00", "end": "22:00"}],
+            "wednesday": [{"start": "18:00", "end": "22:00"}],
+            "thursday": [{"start": "18:00", "end": "22:00"}],
+            "friday": [{"start": "18:00", "end": "22:00"}],
+        }),
     )
 
 
@@ -54,7 +63,7 @@ class CsvTests(unittest.TestCase):
         self.assertIn("schedule_id,start_date,end_date,topic", output)
         self.assertIn("external-99,2026/10/05/18/00,2026/10/05/20/00,work", output)
 
-    def test_external_schedule_config_overrides_time_and_session_settings(self):
+    def test_external_schedule_config_overrides_session_settings(self):
         """
         입력 값: 테스트 픽스처와 해당 시나리오의 입력
         출력 값: 모든 검증 단언 통과 시 테스트 통과
@@ -63,11 +72,9 @@ class CsvTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "planner.json"
             config_path.write_text(json.dumps({
-                "study_window_start": "09:00", "study_window_end": "12:00",
                 "session_length_minutes": 45, "max_sessions_per_day": 2,
             }), encoding="utf-8")
             config = _load_schedule_config(config_path)
-        self.assertEqual(config["study_window_start"], "09:00")
         self.assertEqual(config["session_length_minutes"], 45)
         self.assertEqual(config["max_sessions_per_day"], 2)
 
@@ -230,9 +237,30 @@ class PlanTests(unittest.TestCase):
         출력 값: 모든 검증 단언 통과 시 테스트 통과
         기능: 학습 시간을 배치할 수 없을 때 명시적인 오류를 반환합니다.
         """
-        request = PlanRequest(None, (), datetime(2026, 10, 5, 8), datetime(2026, 10, 5, 9))
+        request = PlanRequest(
+            None, (), datetime(2026, 10, 5, 8), datetime(2026, 10, 5, 9),
+            weekly_availability=parse_weekly_availability({
+                "monday": [{"start": "08:00", "end": "09:00"}],
+            }),
+        )
         with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
             generate_schedule(request, self.cert, (), "beginner")
+
+    def test_plan_requires_user_weekday_availability(self):
+        """기본 공통 시간대를 대신 쓰지 않고 입력 오류를 반환합니다."""
+        request = PlanRequest(None, (), datetime(2026, 10, 5, 8), datetime(2026, 11, 30, 23))
+        with self.assertRaisesRegex(ValueError, "weekly_availability is required"):
+            generate_schedule(request, self.cert, (), "beginner")
+
+        payload = {
+            "preparation_start": "2026/10/05/08/00",
+            "exam_date": "2026/11/30/23/00",
+        }
+        with patch("api_service.load_personal_availability", return_value=None):
+            for request_payload in (payload, {**payload, "weekly_availability": {}}):
+                with self.subTest(request_payload=request_payload), self.assertRaisesRegex(
+                        ValueError, "weekly_availability is required"):
+                    build_plan_request(request_payload)
 
 
 class ToolUseEvaluationTests(unittest.TestCase):
@@ -281,29 +309,26 @@ class ToolUseEvaluationTests(unittest.TestCase):
         self.assertIn("analyze_exam_results", [schema["name"] for schema in schemas])
 
     def test_all_new_agent_case_fixtures_match_expected_local_tools(self):
-        """입력 값: 테스트 케이스 JSON과 동봉 CSV 자료
+        """입력 값: JSON Planning API 요청 fixture
         출력 값: 각 케이스가 도구 예상 수준과 취약 토픽을 통과하는지 여부
-        기능: Gemini 없이 새 Agent 케이스 입력과 deterministic tool path를 검증합니다.
+        기능: Gemini 없이 API JSON 변환과 deterministic tool path를 검증합니다.
         """
         project_root = Path(__file__).resolve().parents[1]
         input_dir = project_root / "license_planner_test_inputs"
         cases = json.loads((input_dir / "license_planner_test_cases.json").read_text(encoding="utf-8-sig"))
         for case in cases:
             with self.subTest(case=case["case_id"]):
-                results = parse_problem_results_csv((input_dir / case["results_csv"]).read_text(encoding="utf-8-sig"))
-                busy_path = input_dir / case["busy_csv"] if case.get("busy_csv") else None
-                busy = parse_busy_csv(busy_path.read_text(encoding="utf-8-sig") if busy_path else None)
-                request = PlanRequest(case.get("self_assessment"), results,
-                                      parse_datetime(case["preparation_start"]),
-                                      parse_datetime(case["exam_date"]), busy)
+                request = build_plan_request(case["request"])
+                self.assertIsNotNone(request.weekly_availability)
                 tools = PlannerTools(request)
                 tools.call("get_certification_profile", {"certification_id": request.certification_id})
                 tools.call("analyze_exam_results", {})
                 level = tools.call("assess_readiness", {})
                 plan = tools.call("build_study_schedule", {})
                 self.assertEqual(level["level"], case["expected_level"])
-                self.assertEqual(tools.schedule[0].topic, case["expected_first_topic"])
+                self.assertIsInstance(plan, dict, plan)
                 self.assertGreater(plan["study_block_count"], 0)
+                self.assertEqual(tools.schedule[0].topic, case["expected_first_topic"])
 
 
 if __name__ == "__main__":

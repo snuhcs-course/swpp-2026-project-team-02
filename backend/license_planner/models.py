@@ -28,6 +28,19 @@ class ProblemResult:
     # 배점과 실제 획득 점수이며 0 <= 획득 점수 <= 배점입니다.
     possible_score: float
     earned_score: float
+    topic_weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class AssessmentItem:
+    """One locally-scored question submitted to the planning agent."""
+    problem_id: int
+    question: str
+    choices: dict[str, str]
+    correct_answer: str
+    user_answer: str
+    is_correct: bool
+    possible_score: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -38,7 +51,7 @@ class TopicStatistics:
     possible_score: float
     earned_score: float
     score_percent: float
-    problem_count: int
+    problem_count: float
 
 
 @dataclass(frozen=True)
@@ -72,6 +85,7 @@ class PlanRequest:
     # 다른 시스템에서 전달할 준비 시작일과 시험일입니다.
     preparation_start: Optional[datetime]
     exam_date: Optional[datetime]
+    assessment_items: tuple[AssessmentItem, ...] = ()
     # 기간 내 기존 일정과 자격증/주간 공부일 설정입니다.
     busy_periods: tuple[BusyPeriod, ...] = ()
     certification_id: str = DEFAULT_CERTIFICATION_ID

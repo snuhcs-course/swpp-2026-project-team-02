@@ -1,37 +1,23 @@
 {
   "case_id": "license_planner_case_01_beginner_weak_charts",
   "passed": true,
-  "expected_level": "beginner",
-  "actual_level": "beginner",
+  "http_status": 200,
+  "checks": {
+    "http_200": true,
+    "schedules_returned": true,
+    "expected_tool_sequence": true,
+    "expected_first_topic": true,
+    "expected_first_start": true,
+    "availability_respected": true,
+    "busy_schedules_conflict_free": true,
+    "schedule_csv_returned": true
+  },
   "expected_first_topic": "Charts",
   "actual_first_topic": "Charts",
-  "expected_first_start": null,
+  "expected_first_start": "2026/10/05/20/00",
   "actual_first_start": "2026/10/05/20/00",
-  "uses_personal_availability": false,
-  "availability_respected": true,
-  "busy_schedule_conflict_free": true,
-  "gemini_api_request_count": 5,
-  "gemini_successful_response_count": 5,
-  "topic_statistics": [
-    {
-      "topic": "Charts",
-      "possible_score": 20.0,
-      "earned_score": 5.0,
-      "score_percent": 25.0
-    },
-    {
-      "topic": "Data Management",
-      "possible_score": 10.0,
-      "earned_score": 4.0,
-      "score_percent": 40.0
-    },
-    {
-      "topic": "Functions",
-      "possible_score": 10.0,
-      "earned_score": 8.0,
-      "score_percent": 80.0
-    }
-  ],
+  "uses_weekly_availability": true,
+  "study_schedule_count": 18,
   "called_tools": [
     "get_certification_profile",
     "analyze_exam_results",
@@ -58,117 +44,122 @@
       "arguments": {}
     }
   ],
-  "study_sessions": [
+  "schedules": [
+    {
+      "schedule_id": "external-88",
+      "start_date": "2026/10/05/18/00",
+      "end_date": "2026/10/05/20/00",
+      "topic": "work"
+    },
     {
       "schedule_id": "study-89",
-      "topic": "Charts",
-      "start_datetime": "2026/10/05/20/00",
-      "end_datetime": "2026/10/05/21/00"
+      "start_date": "2026/10/05/20/00",
+      "end_date": "2026/10/05/21/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-90",
-      "topic": "Charts",
-      "start_datetime": "2026/10/06/18/00",
-      "end_datetime": "2026/10/06/19/00"
+      "start_date": "2026/10/06/18/00",
+      "end_date": "2026/10/06/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-91",
-      "topic": "Charts",
-      "start_datetime": "2026/10/07/18/00",
-      "end_datetime": "2026/10/07/19/00"
+      "start_date": "2026/10/07/18/00",
+      "end_date": "2026/10/07/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-92",
-      "topic": "Charts",
-      "start_datetime": "2026/10/08/18/00",
-      "end_datetime": "2026/10/08/19/00"
+      "start_date": "2026/10/12/18/00",
+      "end_date": "2026/10/12/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-93",
-      "topic": "Charts",
-      "start_datetime": "2026/10/09/18/00",
-      "end_datetime": "2026/10/09/19/00"
+      "start_date": "2026/10/13/18/00",
+      "end_date": "2026/10/13/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-94",
-      "topic": "Charts",
-      "start_datetime": "2026/10/12/18/00",
-      "end_datetime": "2026/10/12/19/00"
+      "start_date": "2026/10/14/18/00",
+      "end_date": "2026/10/14/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-95",
-      "topic": "Charts",
-      "start_datetime": "2026/10/13/18/00",
-      "end_datetime": "2026/10/13/19/00"
+      "start_date": "2026/10/19/18/00",
+      "end_date": "2026/10/19/19/00",
+      "topic": "Charts"
     },
     {
       "schedule_id": "study-96",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/14/18/00",
-      "end_datetime": "2026/10/14/19/00"
+      "start_date": "2026/10/20/18/00",
+      "end_date": "2026/10/20/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-97",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/15/18/00",
-      "end_datetime": "2026/10/15/19/00"
+      "start_date": "2026/10/21/18/00",
+      "end_date": "2026/10/21/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-98",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/16/18/00",
-      "end_datetime": "2026/10/16/19/00"
+      "start_date": "2026/10/26/18/00",
+      "end_date": "2026/10/26/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-99",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/19/18/00",
-      "end_datetime": "2026/10/19/19/00"
+      "start_date": "2026/10/27/18/00",
+      "end_date": "2026/10/27/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-100",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/20/18/00",
-      "end_datetime": "2026/10/20/19/00"
+      "start_date": "2026/10/28/18/00",
+      "end_date": "2026/10/28/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-101",
-      "topic": "Data Management",
-      "start_datetime": "2026/10/21/18/00",
-      "end_datetime": "2026/10/21/19/00"
+      "start_date": "2026/11/02/18/00",
+      "end_date": "2026/11/02/19/00",
+      "topic": "Data Management"
     },
     {
       "schedule_id": "study-102",
-      "topic": "Functions",
-      "start_datetime": "2026/10/22/18/00",
-      "end_datetime": "2026/10/22/19/00"
+      "start_date": "2026/11/03/18/00",
+      "end_date": "2026/11/03/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-103",
-      "topic": "Functions",
-      "start_datetime": "2026/10/23/18/00",
-      "end_datetime": "2026/10/23/19/00"
+      "start_date": "2026/11/04/18/00",
+      "end_date": "2026/11/04/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-104",
-      "topic": "Functions",
-      "start_datetime": "2026/10/26/18/00",
-      "end_datetime": "2026/10/26/19/00"
+      "start_date": "2026/11/09/18/00",
+      "end_date": "2026/11/09/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-105",
-      "topic": "Functions",
-      "start_datetime": "2026/10/27/18/00",
-      "end_datetime": "2026/10/27/19/00"
+      "start_date": "2026/11/10/18/00",
+      "end_date": "2026/11/10/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-106",
-      "topic": "Functions",
-      "start_datetime": "2026/10/28/18/00",
-      "end_datetime": "2026/10/28/19/00"
+      "start_date": "2026/11/11/18/00",
+      "end_date": "2026/11/11/19/00",
+      "topic": "Functions"
     }
   ],
-  "study_block_count": 18,
-  "result_csv": "license_planner_case_01_beginner_weak_charts_result.csv",
-  "agent_summary": "자격증 정보 조회, 시험 결과 분석, 준비도 진단, 그리고 학습 일정 생성이 성공적으로 완료되었습니다. 응용 프로그램에서 CSV 형식의 학습 일정을 반환합니다."
+  "schedule_csv": "schedule_id,start_date,end_date,topic\nexternal-88,2026/10/05/18/00,2026/10/05/20/00,work\nstudy-89,2026/10/05/20/00,2026/10/05/21/00,Charts\nstudy-90,2026/10/06/18/00,2026/10/06/19/00,Charts\nstudy-91,2026/10/07/18/00,2026/10/07/19/00,Charts\nstudy-92,2026/10/12/18/00,2026/10/12/19/00,Charts\nstudy-93,2026/10/13/18/00,2026/10/13/19/00,Charts\nstudy-94,2026/10/14/18/00,2026/10/14/19/00,Charts\nstudy-95,2026/10/19/18/00,2026/10/19/19/00,Charts\nstudy-96,2026/10/20/18/00,2026/10/20/19/00,Data Management\nstudy-97,2026/10/21/18/00,2026/10/21/19/00,Data Management\nstudy-98,2026/10/26/18/00,2026/10/26/19/00,Data Management\nstudy-99,2026/10/27/18/00,2026/10/27/19/00,Data Management\nstudy-100,2026/10/28/18/00,2026/10/28/19/00,Data Management\nstudy-101,2026/11/02/18/00,2026/11/02/19/00,Data Management\nstudy-102,2026/11/03/18/00,2026/11/03/19/00,Functions\nstudy-103,2026/11/04/18/00,2026/11/04/19/00,Functions\nstudy-104,2026/11/09/18/00,2026/11/09/19/00,Functions\nstudy-105,2026/11/10/18/00,2026/11/10/19/00,Functions\nstudy-106,2026/11/11/18/00,2026/11/11/19/00,Functions\n",
+  "error": null
 }

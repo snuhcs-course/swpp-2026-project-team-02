@@ -1,0 +1,11 @@
+{
+  "case_id": "cert_selector_02_disabled_future_certification",
+  "description": "비활성 자격증은 목록에 남아 있어도 선택 목록에서 제외합니다.",
+  "expected_ids": [
+    "computer_specialist_level_2"
+  ],
+  "actual_ids": [
+    "computer_specialist_level_2"
+  ],
+  "passed": true
+}

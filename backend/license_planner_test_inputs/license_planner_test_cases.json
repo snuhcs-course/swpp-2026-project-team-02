@@ -1,47 +1,432 @@
 [
   {
     "case_id": "license_planner_case_01_beginner_weak_charts",
-    "self_assessment": "엑셀 함수는 처음이고 차트도 익숙하지 않습니다.",
-    "results_csv": "license_planner_case_01_results.csv",
-    "preparation_start": "2026/10/05/17/00",
-    "exam_date": "2026/11/30/23/00",
-    "busy_csv": "license_planner_case_01_busy.csv",
+    "request": {
+      "self_assessment": "엑셀 함수는 처음이고 차트도 익숙하지 않습니다.",
+      "preparation_start": "2026/10/05/17/00",
+      "exam_date": "2026/11/30/23/00",
+      "busy_schedules": [
+        {
+          "schedule_id": "88",
+          "start_date": "2026/10/05/18/00",
+          "end_date": "2026/10/05/20/00",
+          "topic": "work"
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "end": "21:00"
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "end": "21:00"
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "18:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "assessment_results": {
+        "certification_id": "computer_specialist_level_2",
+        "results": [
+          {
+            "problem_id": 1,
+            "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+            "choices": {
+              "A": "A1",
+              "B": "$A$1",
+              "C": "A$",
+              "D": "#A1"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 2,
+            "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+            "choices": {
+              "A": "=COUNT(A1:A5)",
+              "B": "=SUM(A1:A5)",
+              "C": "=MAX(A1:A5)",
+              "D": "=AVERAGE(A1:A5)"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 3,
+            "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+            "choices": {
+              "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+              "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+              "C": "=COUNTIF(A1,60,\"통과\")",
+              "D": "=AVERAGE(A1>=60)"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 4,
+            "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "분산형 차트",
+              "C": "주식형 차트",
+              "D": "표면형 차트"
+            },
+            "correct_answer": "A",
+            "user_answer": "B",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 5,
+            "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+            "choices": {
+              "A": "영구 삭제됩니다",
+              "B": "다른 워크시트로 이동합니다",
+              "C": "화면에서 일시적으로 숨겨집니다",
+              "D": "셀 수식이 값으로 바뀝니다"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          }
+        ]
+      }
+    },
     "expected_level": "beginner",
-    "expected_first_topic": "Charts"
+    "expected_first_topic": "차트와 분석",
+    "expected_first_start": "2026/10/05/20/00"
   },
   {
     "case_id": "license_planner_case_02_advanced_weak_functions",
-    "self_assessment": "엑셀에 익숙하고 피벗 테이블을 잘 다룹니다.",
-    "results_csv": "license_planner_case_02_results.csv",
-    "preparation_start": "2026/10/05/17/00",
-    "exam_date": "2026/11/30/23/00",
-    "busy_csv": null,
+    "request": {
+      "self_assessment": "엑셀에 익숙하고 피벗 테이블을 잘 다룹니다.",
+      "preparation_start": "2026/10/05/17/00",
+      "exam_date": "2026/11/30/23/00",
+      "busy_schedules": [],
+      "weekly_availability": {
+        "tuesday": [
+          {
+            "start": "18:00",
+            "end": "21:00"
+          }
+        ],
+        "thursday": [
+          {
+            "start": "18:00",
+            "end": "21:00"
+          }
+        ]
+      },
+      "assessment_results": {
+        "certification_id": "computer_specialist_level_2",
+        "results": [
+          {
+            "problem_id": 1,
+            "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+            "choices": {
+              "A": "A1",
+              "B": "$A$1",
+              "C": "A$",
+              "D": "#A1"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 2,
+            "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+            "choices": {
+              "A": "=COUNT(A1:A5)",
+              "B": "=SUM(A1:A5)",
+              "C": "=MAX(A1:A5)",
+              "D": "=AVERAGE(A1:A5)"
+            },
+            "correct_answer": "B",
+            "user_answer": "A",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 3,
+            "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+            "choices": {
+              "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+              "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+              "C": "=COUNTIF(A1,60,\"통과\")",
+              "D": "=AVERAGE(A1>=60)"
+            },
+            "correct_answer": "A",
+            "user_answer": "D",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 4,
+            "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "분산형 차트",
+              "C": "주식형 차트",
+              "D": "표면형 차트"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 5,
+            "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+            "choices": {
+              "A": "영구 삭제됩니다",
+              "B": "다른 워크시트로 이동합니다",
+              "C": "화면에서 일시적으로 숨겨집니다",
+              "D": "셀 수식이 값으로 바뀝니다"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          }
+        ]
+      }
+    },
     "expected_level": "advanced",
-    "expected_first_topic": "Functions"
+    "expected_first_topic": "함수와 데이터 관리",
+    "expected_first_start": "2026/10/06/18/00"
   },
   {
-    "case_id": "license_planner_case_03_data_driven_unknown_topics",
-    "self_assessment": "시험 공부를 처음 시작합니다.",
-    "results_csv": "license_planner_case_03_results.csv",
-    "preparation_start": "2026/10/05/17/00",
-    "exam_date": "2026/11/30/23/00",
-    "busy_csv": null,
+    "case_id": "license_planner_case_03_weak_charts",
+    "request": {
+      "self_assessment": "시험 공부를 처음 시작합니다.",
+      "preparation_start": "2026/10/05/17/00",
+      "exam_date": "2026/11/30/23/00",
+      "busy_schedules": [],
+      "weekly_availability": {
+        "wednesday": [
+          {
+            "start": "19:00",
+            "end": "22:00"
+          }
+        ],
+        "thursday": [
+          {
+            "start": "19:00",
+            "end": "22:00"
+          }
+        ],
+        "saturday": [
+          {
+            "start": "10:00",
+            "end": "13:00"
+          }
+        ]
+      },
+      "assessment_results": {
+        "certification_id": "computer_specialist_level_2",
+        "results": [
+          {
+            "problem_id": 1,
+            "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+            "choices": {
+              "A": "A1",
+              "B": "$A$1",
+              "C": "A$",
+              "D": "#A1"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 2,
+            "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+            "choices": {
+              "A": "=COUNT(A1:A5)",
+              "B": "=SUM(A1:A5)",
+              "C": "=MAX(A1:A5)",
+              "D": "=AVERAGE(A1:A5)"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 3,
+            "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+            "choices": {
+              "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+              "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+              "C": "=COUNTIF(A1,60,\"통과\")",
+              "D": "=AVERAGE(A1>=60)"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 4,
+            "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "분산형 차트",
+              "C": "주식형 차트",
+              "D": "표면형 차트"
+            },
+            "correct_answer": "A",
+            "user_answer": "C",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 5,
+            "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+            "choices": {
+              "A": "영구 삭제됩니다",
+              "B": "다른 워크시트로 이동합니다",
+              "C": "화면에서 일시적으로 숨겨집니다",
+              "D": "셀 수식이 값으로 바뀝니다"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          }
+        ]
+      }
+    },
     "expected_level": "beginner",
-    "expected_first_topic": "Custom Topic A"
+    "expected_first_topic": "차트와 분석",
+    "expected_first_start": "2026/10/07/19/00"
   },
   {
     "case_id": "license_planner_case_04_personal_availability_api",
-    "self_assessment": "엑셀에 익숙하고 능숙합니다.",
-    "results_csv": "license_planner_case_04_personal_availability_results.csv",
-    "preparation_start": "2026/10/05/17/00",
-    "exam_date": "2026/11/30/23/00",
-    "busy_csv": "license_planner_case_01_busy.csv",
-    "weekly_availability": {
-      "monday": [{"start": "19:00", "end": "21:00"}],
-      "tuesday": [{"start": "09:00", "end": "11:00"}]
+    "request": {
+      "self_assessment": "엑셀에 익숙하고 능숙합니다.",
+      "preparation_start": "2026/10/05/17/00",
+      "exam_date": "2026/11/30/23/00",
+      "busy_schedules": [
+        {
+          "schedule_id": "88",
+          "start_date": "2026/10/05/18/00",
+          "end_date": "2026/10/05/20/00",
+          "topic": "work"
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "19:00",
+            "end": "21:00"
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "09:00",
+            "end": "11:00"
+          }
+        ]
+      },
+      "assessment_results": {
+        "certification_id": "computer_specialist_level_2",
+        "results": [
+          {
+            "problem_id": 1,
+            "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+            "choices": {
+              "A": "A1",
+              "B": "$A$1",
+              "C": "A$",
+              "D": "#A1"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 2,
+            "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+            "choices": {
+              "A": "=COUNT(A1:A5)",
+              "B": "=SUM(A1:A5)",
+              "C": "=MAX(A1:A5)",
+              "D": "=AVERAGE(A1:A5)"
+            },
+            "correct_answer": "B",
+            "user_answer": "A",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 3,
+            "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+            "choices": {
+              "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+              "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+              "C": "=COUNTIF(A1,60,\"통과\")",
+              "D": "=AVERAGE(A1>=60)"
+            },
+            "correct_answer": "A",
+            "user_answer": "D",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 4,
+            "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "분산형 차트",
+              "C": "주식형 차트",
+              "D": "표면형 차트"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 5,
+            "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+            "choices": {
+              "A": "영구 삭제됩니다",
+              "B": "다른 워크시트로 이동합니다",
+              "C": "화면에서 일시적으로 숨겨집니다",
+              "D": "셀 수식이 값으로 바뀝니다"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          }
+        ]
+      }
     },
     "expected_level": "advanced",
-    "expected_first_topic": "Core Skills",
+    "expected_first_topic": "함수와 데이터 관리",
     "expected_first_start": "2026/10/05/20/00"
   }
 ]

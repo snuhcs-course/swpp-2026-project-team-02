@@ -1,0 +1,23 @@
+{
+  "case_id": "assessment_01_project_question_bank",
+  "description": "현재 더미 질문 JSON은 컴활 2급의 유효한 5개 문항을 제공합니다.",
+  "passed": true,
+  "expected": {
+    "certification_id": "computer_specialist_level_2",
+    "question_count": 5,
+    "topics": [
+      "스프레드시트 기본",
+      "차트와 분석",
+      "함수와 데이터 관리"
+    ]
+  },
+  "actual": {
+    "certification_id": "computer_specialist_level_2",
+    "question_count": 5,
+    "topics": [
+      "스프레드시트 기본",
+      "차트와 분석",
+      "함수와 데이터 관리"
+    ]
+  }
+}

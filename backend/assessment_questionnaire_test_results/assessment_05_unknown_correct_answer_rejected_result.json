@@ -1,0 +1,13 @@
+{
+  "case_id": "assessment_05_unknown_correct_answer_rejected",
+  "description": "선택지에 없는 정답 키를 거부합니다.",
+  "passed": true,
+  "expected": {
+    "rejected": true,
+    "error_contains": "correct_answer가 choices에 없습니다"
+  },
+  "actual": {
+    "rejected": true,
+    "error": "1번 질문의 correct_answer가 choices에 없습니다."
+  }
+}

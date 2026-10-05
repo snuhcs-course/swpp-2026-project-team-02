@@ -1,0 +1,13 @@
+{
+  "case_id": "cert_selector_08_cli_selects_current_certification",
+  "description": "CLI에서 자격증을 선택하면 선택된 자격증과 공식 일정 링크만 출력합니다.",
+  "expected_exit_code": 0,
+  "actual_exit_code": 0,
+  "expected_selected_id": "computer_specialist_level_2",
+  "actual_selected_id": "computer_specialist_level_2",
+  "expected_error": null,
+  "actual_error": null,
+  "expected_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+  "actual_schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do",
+  "passed": true
+}

@@ -32,10 +32,9 @@
     "expect_personal_availability": true
   },
   {
-    "case_id": "availability_04_missing_profile_uses_default_window",
-    "description": "개인 시간표가 없으면 공통 기본 시간대를 사용합니다.",
-    "expected_start": "default_window_start",
-    "expect_personal_availability": false
+    "case_id": "availability_04_missing_profile_returns_input_error",
+    "description": "개인 시간표가 없으면 공통 기본 시간대를 적용하지 않고 입력 오류를 반환합니다.",
+    "expected_plan_error": "weekly_availability is required"
   },
   {
     "case_id": "availability_05_overlapping_windows_are_rejected",

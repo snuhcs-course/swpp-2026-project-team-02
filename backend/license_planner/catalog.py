@@ -1,69 +1,64 @@
-"""Extensible certification catalog and readiness rules."""
+"""Certification catalog loaded from backend/config/certifications.json."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from .settings import DEFAULT_STUDY_DAYS_PER_TOPIC
+from pathlib import Path
+from typing import Any
 
-# 자격증별 변경 데이터: 시험 범위, 점수 구간, 자기평가 단서입니다.
-CERTIFICATION_CONFIGS = {
-    "computer_specialist_level_2": {
-        "display_name": "컴퓨터활용능력 2급",
-        "topics": ("스프레드시트 기본", "함수와 데이터 관리", "차트와 분석", "실기 문제 풀이", "오답 복습"),
-        "score_thresholds": ((80, "advanced"), (60, "intermediate"), (0, "beginner")),
-        "self_assessment_keywords": (
-            (("처음", "모른", "경험 없", "초보"), "beginner"),
-            (("익숙", "잘함", "능숙", "경험 많"), "advanced"),
-        ),
-        "study_days_per_topic": DEFAULT_STUDY_DAYS_PER_TOPIC,
-    }
-}
+
+CATALOG_PATH = Path(__file__).resolve().parent.parent / "config" / "certifications.json"
 
 
 @dataclass(frozen=True)
 class Certification:
-    """한 종류의 자격증에 대한 계획 생성 설정입니다."""
-    # 자격증 고유 ID와 화면 표시 이름입니다.
+    """Planning topics and display name for one supported certification."""
     certification_id: str
     display_name: str
-    # 이 자격증의 학습 단원, 점수 경계, 자기평가 단서, 단원별 학습 일수입니다.
     topics: tuple[str, ...]
-    score_thresholds: tuple[tuple[float, str], ...]
-    self_assessment_keywords: tuple[tuple[tuple[str, ...], str], ...]
-    default_study_days_per_topic: int = DEFAULT_STUDY_DAYS_PER_TOPIC
-
-    def level_from_score(self, score: float) -> str:
-        """입력 값: 0~100 점수
-        출력 값: 설정에서 찾은 수준 문자열
-        기능: 점수가 속하는 가장 높은 기준 구간의 수준을 반환합니다.
-        """
-        for minimum, level in self.score_thresholds:
-            if score >= minimum:
-                return level
-        return "beginner"
 
 
-# 실행 시 읽기 편한 자격증 객체 목록입니다. 새 자격증은 위 설정 사전에 추가합니다.
-CERTIFICATIONS: dict[str, Certification] = {
-    cert_id: Certification(
-        certification_id=cert_id,
-        display_name=config["display_name"],
-        topics=config["topics"],
-        score_thresholds=config["score_thresholds"],
-        self_assessment_keywords=config["self_assessment_keywords"],
-        default_study_days_per_topic=config["study_days_per_topic"],
-    )
-    for cert_id, config in CERTIFICATION_CONFIGS.items()
-}
+def load_certifications(path: Path = CATALOG_PATH) -> dict[str, Certification]:
+    """Read and validate the editable JSON certification catalog."""
+    try:
+        document: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Certification catalog could not be read: {error}") from error
+    rows = document.get("certifications") if isinstance(document, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("Certification catalog must contain a non-empty certifications array")
+
+    catalog: dict[str, Certification] = {}
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise RuntimeError(f"Certification catalog item {index} must be an object")
+        certification_id = row.get("id")
+        display_name = row.get("display_name")
+        topics = row.get("topics")
+        if not isinstance(certification_id, str) or not certification_id.strip():
+            raise RuntimeError(f"Certification catalog item {index} needs a non-empty id")
+        if certification_id in catalog:
+            raise RuntimeError(f"Duplicate certification id in catalog: {certification_id}")
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise RuntimeError(f"Certification {certification_id} needs a non-empty display_name")
+        if (not isinstance(topics, list) or not topics
+                or any(not isinstance(topic, str) or not topic.strip() for topic in topics)):
+            raise RuntimeError(f"Certification {certification_id} needs a non-empty topics array")
+        if len(set(topics)) != len(topics):
+            raise RuntimeError(f"Certification {certification_id} has duplicate topics")
+        catalog[certification_id] = Certification(certification_id, display_name, tuple(topics))
+    return catalog
+
+
+CERTIFICATIONS = load_certifications()
 
 
 def get_certification(certification_id: str) -> Certification:
-    """입력 값: 자격증 ID
-    출력 값: 자격증 설정 객체
-    기능: 지원 목록에서 설정을 찾거나 이용 가능한 ID를 포함한 오류를 냅니다.
-    """
+    """Return one configured certification or a useful unsupported-ID error."""
     try:
         return CERTIFICATIONS[certification_id]
     except KeyError:
         supported = ", ".join(sorted(CERTIFICATIONS))
-        raise ValueError(f"NOT_FOUND: unsupported certification_id={certification_id!r}. Choose one of: {supported}.") from None
-
+        raise ValueError(
+            f"NOT_FOUND: unsupported certification_id={certification_id!r}. Choose one of: {supported}."
+        ) from None

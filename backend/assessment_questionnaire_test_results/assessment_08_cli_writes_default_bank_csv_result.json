@@ -1,0 +1,19 @@
+{
+  "case_id": "assessment_08_cli_writes_default_bank_csv",
+  "description": "실제 CLI가 모든 더미 문항 응답을 받아 결과 CSV를 생성합니다.",
+  "passed": true,
+  "expected": {
+    "exit_code": 0,
+    "result_count": 5,
+    "total_possible": 5.0,
+    "total_earned": 5.0,
+    "utf8_without_bom": true
+  },
+  "actual": {
+    "exit_code": 0,
+    "result_count": 5,
+    "total_possible": 5.0,
+    "total_earned": 5.0,
+    "utf8_without_bom": true
+  }
+}

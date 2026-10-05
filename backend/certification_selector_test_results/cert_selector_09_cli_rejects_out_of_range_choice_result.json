@@ -1,0 +1,13 @@
+{
+  "case_id": "cert_selector_09_cli_rejects_out_of_range_choice",
+  "description": "CLI에서 목록에 없는 번호를 입력하면 오류 코드로 종료합니다.",
+  "expected_exit_code": 2,
+  "actual_exit_code": 2,
+  "expected_selected_id": null,
+  "actual_selected_id": null,
+  "expected_error": "목록에 있는 번호를 입력해 주세요.",
+  "actual_error": "목록에 있는 번호를 입력해 주세요.",
+  "expected_schedule_url": null,
+  "actual_schedule_url": null,
+  "passed": true
+}

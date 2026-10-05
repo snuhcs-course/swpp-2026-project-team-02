@@ -1,0 +1,7 @@
+{
+  "case_id": "cert_selector_05_duplicate_id_rejected",
+  "description": "활성 항목의 ID가 중복되면 카탈로그 오류를 반환합니다.",
+  "expected_error": "Duplicate certification id",
+  "actual_error": "Duplicate certification id: same",
+  "passed": true
+}

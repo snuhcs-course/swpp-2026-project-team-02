@@ -1,0 +1,45 @@
+{
+  "case_id": "assessment_02_scoring_and_planner_csv",
+  "description": "정답은 배점을 받고 오답은 0점을 받아 Planner가 읽을 수 있는 CSV로 저장됩니다.",
+  "passed": true,
+  "expected": {
+    "rows": [
+      [
+        1,
+        "함수와 데이터 관리",
+        2.0,
+        2.0
+      ],
+      [
+        2,
+        "차트와 분석",
+        3.0,
+        0.0
+      ]
+    ],
+    "total_possible": 5.0,
+    "total_earned": 2.0,
+    "utf8_without_bom": true,
+    "invalid_answer_message_seen": false
+  },
+  "actual": {
+    "rows": [
+      [
+        1,
+        "함수와 데이터 관리",
+        2.0,
+        2.0
+      ],
+      [
+        2,
+        "차트와 분석",
+        3.0,
+        0.0
+      ]
+    ],
+    "total_possible": 5.0,
+    "total_earned": 2.0,
+    "utf8_without_bom": true,
+    "invalid_answer_message_seen": false
+  }
+}

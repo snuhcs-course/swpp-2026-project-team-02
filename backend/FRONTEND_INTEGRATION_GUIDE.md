@@ -6,11 +6,11 @@
 
 1. `backend/.env`에 `GEMINI_API_KEY`가 설정되어 있는지 확인합니다. 이 키는 백엔드 전용이며 프론트엔드 코드, 설정 JSON, 브라우저 저장소에 복사하지 않습니다.
 2. `backend/` 디렉터리에서 `python api_server.py`를 실행합니다.
-3. 기본 API 주소는 `frontend_config.json`의 `api_base_url` (`http://127.0.0.1:8000/api/v1`)입니다.
+3. 프론트엔드 폴더의 `frontend_config.json`에 API 주소를 지정합니다 (`http://127.0.0.1:8000/api/v1`).
 4. `GET http://127.0.0.1:8000/api/v1/health`의 `{"status":"ok"}` 응답으로 연결을 확인합니다.
 5. 개발 서버 origin이 기본 허용 주소와 다르면 `config/api_server.json`의 `allowed_origins`에 추가합니다.
 
-프론트엔드는 API 주소를 코드에 직접 넣지 말고 `frontend_config.json` 또는 프론트엔드 환경별 공개 설정에서 가져옵니다. 서버 배포 후에는 주소 설정만 배포 API의 `/api/v1` 주소로 바꾸면 됩니다.
+정적 프론트엔드는 `frontend/`를 문서 루트로 제공해야 합니다. 저장소 루트를 정적 서버로 제공하면 백엔드 파일이 브라우저에서 직접 열릴 수 있습니다. 프론트엔드는 자격증과 질문을 API에서 불러오고 API 주소만 `frontend_config.json`에서 읽습니다.
 
 ## 공통 규칙
 
@@ -18,9 +18,26 @@
 - 일정 날짜·시간: `YYYY/MM/DD/HH/MM` (예: `2026/10/05/18/30`)
 - 반복 가능 시간: `HH:MM` 24시간 형식
 - 일정 ID: 공부 일정 `study-숫자`, 외부 일정 `external-숫자`
-- 응답의 `schedules`는 화면 표/캘린더용, `schedule_csv`는 CSV 다운로드 및 기존 CSV 연동용입니다.
+- 응답의 `schedules`는 화면 표/캘린더용, `schedule_csv`는 CSV 내용입니다. Planning API는 파일을 `backend/license_planner/output/`에 저장하고 `schedule_csv_file`(백엔드 상대 경로)과 `schedule_csv_url`(다운로드 API 경로)을 반환합니다.
 - `topic`은 자격증에 따라 바뀌므로 동적 문자열로 취급하고 프론트엔드에서 고정 목록으로 제한하지 않습니다.
 - Gemini 키는 프론트엔드에 전달하지 않습니다. 일정 생성·조정 API가 서버에서 Gemini를 호출합니다.
+
+## 자격증과 진단 문항
+
+`GET ${api_base_url}/certifications`는 활성 자격증 목록을 반환합니다.
+선택한 자격증의 `GET ${api_base_url}/certifications/{certification_id}/questions`
+더미 문항 응답에는 질문, 선택지, 정답, 배점이 포함됩니다. 질문별 토픽은 미리 고정하지 않으며, Planning Agent가 문제의 내용을 보고 복수 Topic과 비중을 선택합니다.
+
+```json
+{
+  "certification_id": "computer_specialist_level_2",
+  "certification_name": "컴퓨터활용능력 2급",
+  "questions": [
+    {"id": 1, "prompt": "...", "choices": {"A": "...", "B": "..."},
+     "correct_answer": "B", "possible_score": 1}
+  ]
+}
+```
 
 ## 일정 생성
 
@@ -31,10 +48,18 @@
 ```json
 {
   "self_assessment": "엑셀 함수는 익숙하지 않습니다.",
-  "problem_results": [
-    {"problem_id": 1, "topic": "함수", "possible_score": 10, "earned_score": 6},
-    {"problem_id": 2, "topic": "차트", "possible_score": 5, "earned_score": 2}
-  ],
+  "assessment_results": {
+    "certification_id": "computer_specialist_level_2",
+    "results": [{
+      "problem_id": 1,
+      "question": "A1부터 A5까지의 합계를 구하는 수식은 무엇인가요?",
+      "choices": {"A": "=COUNT(A1:A5)", "B": "=SUM(A1:A5)"},
+      "correct_answer": "B",
+      "user_answer": "A",
+      "is_correct": false,
+      "possible_score": 1
+    }]
+  },
   "preparation_start": "2026/10/05/18/00",
   "exam_date": "2026/11/30/23/00",
   "certification_id": "computer_specialist_level_2",
@@ -50,7 +75,7 @@
 }
 ```
 
-선택 필드는 생략하거나 `null`을 보낼 수 있습니다. `problem_results`와 `busy_schedules`는 생략, `null`, 빈 배열을 허용합니다. `weekly_availability`를 생략하거나 `null`로 보내면 서버에 저장된 프로필을 사용합니다. 객체를 보내면 이번 요청에 적용합니다. 저장 프로필을 바꾸려면 가능 시간 저장 API를 사용합니다.
+`assessment_results`는 자격증 ID와 질문 결과 JSON입니다. 각 결과는 `problem_id`, `question`, `choices`, `correct_answer`, `user_answer`, `is_correct`, `possible_score`를 포함합니다. 정오 판정은 FE/질문 CLI의 기본 비교 로직이 만듭니다. API는 재채점하지 않으며, Planning Agent가 각 문제를 자격증의 고정 Topic 하나 이상에 비중으로 매핑합니다. 각 문제의 Topic 비중 합은 1이어야 합니다. `busy_schedules`는 생략, `null`, 빈 배열을 허용합니다. 계획을 생성하려면 `weekly_availability`에 최소 한 개의 요일과 시간 구간을 보내거나, 서버에 유효한 저장 프로필이 있어야 합니다.
 
 응답 예시:
 
@@ -63,10 +88,14 @@
      "end_date": "2026/10/05/19/00", "topic": "함수"}
   ],
   "schedule_csv": "schedule_id,start_date,end_date,topic\n...",
+  "schedule_csv_file": "license_planner/output/study_plan_....csv",
+  "schedule_csv_url": "/api/v1/study-plans/study_plan_....csv",
   "agent_summary": "...",
   "tool_calls": []
 }
 ```
+
+응답의 `schedule_csv_url`에 `GET` 요청을 보내면 CSV 파일을 내려받습니다. 이 경로는 서버가 발급한 파일명만 허용하며, 경로 문자열을 임의로 조합해 요청하지 않습니다.
 
 화면에서는 `schedules`를 사용합니다. `tool_calls`는 개발 진단용이므로 사용자에게 표시할 필요가 없습니다.
 
@@ -92,7 +121,7 @@
 
 ## 가능 시간 조회와 저장
 
-- `GET ${api_base_url}/availability`: `{ "weekly_availability": {"monday": [{"start":"18:00","end":"21:00"}], ...} }`를 반환합니다.
+- `GET ${api_base_url}/availability`: 저장된 시간표가 있으면 `{ "weekly_availability": {"monday": [{"start":"18:00","end":"21:00"}], ...} }`를 반환합니다. 아직 저장된 시간표가 없으면 시간표 값은 `null`입니다.
 - `PUT ${api_base_url}/availability`: 요일별 객체를 직접 보냅니다. 성공 응답은 `weekly_availability` 래퍼를 포함합니다.
 
 저장 요청 예시:
@@ -127,14 +156,24 @@ const result = await callApi("/study-plans", {
   method: "POST",
   body: JSON.stringify(formValues),
 });
-// 캘린더/표에는 result.schedules, CSV 저장에는 result.schedule_csv를 사용합니다.
+// 캘린더/표에는 result.schedules를 사용합니다.
+// CSV 내려받기 링크는 new URL(result.schedule_csv_url, apiBaseUrl)에 연결합니다.
 ```
 
 프론트엔드가 정적 호스팅 환경에서 JSON 설정 파일을 제공할 수 없다면 빌드 시스템의 공개 환경 변수로 API 주소만 전달해도 됩니다. 그 변수에 비밀 키를 넣으면 안 됩니다.
 
 ## 오류 및 화면 처리
 
-오류는 `{ "error": { "code": "INVALID_INPUT", "message": "..." } }` 형태입니다.
+오류는 `{ "error": { "code": "INVALID_INPUT", "message": "..." } }` 형태입니다. 시간표가 없을 때 프론트엔드는 `message`를 입력 안내로 표시할 수 있습니다. Planning API는 다음과 같이 HTTP 422를 반환합니다.
+
+```json
+{
+  "error": {
+    "code": "INVALID_INPUT",
+    "message": "weekly_availability is required. Enter at least one weekday and available time window."
+  }
+}
+```
 
 | HTTP 상태 | 의미 | 화면 처리 |
 | --- | --- | --- |

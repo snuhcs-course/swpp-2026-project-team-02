@@ -1,0 +1,112 @@
+[
+  {
+    "case_id": "assessment_01_project_question_bank",
+    "description": "현재 더미 질문 JSON은 컴활 2급의 유효한 5개 문항을 제공합니다.",
+    "kind": "project_question_bank",
+    "expected_certification_id": "computer_specialist_level_2",
+    "expected_question_count": 5,
+    "expected_topics": ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
+  },
+  {
+    "case_id": "assessment_02_scoring_and_planner_csv",
+    "description": "질문, 정답, 사용자 답, 로컬 정오 판정이 Planner용 JSON으로 저장됩니다.",
+    "kind": "assessment_flow",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "함수와 데이터 관리", "prompt": "문항 1", "choices": {"A": "오답", "B": "정답"}, "correct_answer": "B", "possible_score": 2},
+        {"id": 2, "topic": "차트와 분석", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 3}
+      ]
+    },
+    "answers": ["B", "B"],
+    "expected_results": [
+      {"problem_id": 1, "question": "문항 1", "choices": {"A": "오답", "B": "정답"}, "correct_answer": "B", "user_answer": "B", "is_correct": true, "possible_score": 2.0},
+      {"problem_id": 2, "question": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "user_answer": "B", "is_correct": false, "possible_score": 3.0}
+    ],
+    "expected_correct_count": 1,
+    "expect_utf8_without_bom": true
+  },
+  {
+    "case_id": "assessment_03_invalid_choice_reprompt",
+    "description": "선택지에 없는 답을 다시 묻고, 유효한 오답은 0점으로 기록합니다.",
+    "kind": "assessment_flow",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항", "choices": {"A": "첫째", "B": "둘째"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "answers": ["Z", "A"],
+    "expected_results": [
+      {"problem_id": 1, "question": "문항", "choices": {"A": "첫째", "B": "둘째"}, "correct_answer": "B", "user_answer": "A", "is_correct": false, "possible_score": 1.0}
+    ],
+    "expected_correct_count": 0,
+    "expected_invalid_answer_message": "선택지 번호 1-2 또는 A,B 중 하나를 입력해 주세요."
+  },
+  {
+    "case_id": "assessment_04_duplicate_question_id_rejected",
+    "description": "질문 ID 중복을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "A", "prompt": "문항 1", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1},
+        {"id": 1, "topic": "B", "prompt": "문항 2", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1}
+      ]
+    },
+    "expected_error": "중복되지 않는 양의 정수"
+  },
+  {
+    "case_id": "assessment_05_unknown_correct_answer_rejected",
+    "description": "선택지에 없는 정답 키를 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "C", "possible_score": 1}
+      ]
+    },
+    "expected_error": "correct_answer가 choices에 없습니다"
+  },
+  {
+    "case_id": "assessment_06_nonpositive_score_rejected",
+    "description": "0 이하 배점을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 0}
+      ]
+    },
+    "expected_error": "possible_score는 양수"
+  },
+  {
+    "case_id": "assessment_07_eof_does_not_write_partial_csv",
+    "description": "응답 도중 입력이 끝나면 부분 결과 JSON을 만들지 않습니다.",
+    "kind": "eof_no_partial_output",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 1, "topic": "A", "prompt": "문항 1", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1},
+        {"id": 2, "topic": "B", "prompt": "문항 2", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1}
+      ]
+    },
+    "answers_before_eof": ["A"],
+    "expected_exit_code": 2
+  },
+  {
+    "case_id": "assessment_08_cli_writes_default_bank_csv",
+    "description": "실제 CLI가 모든 더미 문항 응답을 받아 결과 JSON을 생성합니다.",
+    "kind": "cli_project_bank",
+    "answers": ["B", "B", "A", "A", "C"],
+    "expected_exit_code": 0,
+    "expected_result_count": 5,
+    "expected_correct_count": 5
+  }
+]

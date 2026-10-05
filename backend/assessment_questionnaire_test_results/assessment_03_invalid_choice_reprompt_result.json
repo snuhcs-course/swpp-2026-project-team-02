@@ -1,0 +1,33 @@
+{
+  "case_id": "assessment_03_invalid_choice_reprompt",
+  "description": "선택지에 없는 답을 다시 묻고, 유효한 오답은 0점으로 기록합니다.",
+  "passed": true,
+  "expected": {
+    "rows": [
+      [
+        1,
+        "스프레드시트 기본",
+        1.0,
+        0.0
+      ]
+    ],
+    "total_possible": 1.0,
+    "total_earned": 0.0,
+    "utf8_without_bom": true,
+    "invalid_answer_message_seen": true
+  },
+  "actual": {
+    "rows": [
+      [
+        1,
+        "스프레드시트 기본",
+        1.0,
+        0.0
+      ]
+    ],
+    "total_possible": 1.0,
+    "total_earned": 0.0,
+    "utf8_without_bom": true,
+    "invalid_answer_message_seen": true
+  }
+}

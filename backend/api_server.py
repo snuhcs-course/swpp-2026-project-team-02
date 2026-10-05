@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from api_service import adjust_schedule, create_study_plan, read_availability, write_availability
+from api_service import (adjust_schedule, create_study_plan, read_availability,
+                         read_study_plan_csv, write_availability)
+from assessment_service import get_public_certifications, get_public_questions
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -78,6 +80,20 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_csv(self, filename: str, content: str) -> None:
+            """Return one generated schedule as a downloadable UTF-8 CSV."""
+            body = content.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            origin = self.headers.get("Origin")
+            if origin in config["allowed_origins"]:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _read_json(self) -> dict[str, Any]:
             """입력 값: HTTP 요청 본문
             출력 값: JSON 객체
@@ -117,12 +133,31 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             기능: 읽기 전용 API 경로를 처리합니다.
             """
             path = urlparse(self.path).path
-            if path == f"{API_PREFIX}/health":
-                self._send_json(200, {"status": "ok"})
-            elif path == f"{API_PREFIX}/availability":
-                self._send_json(200, {"weekly_availability": read_availability()})
-            else:
-                self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
+            try:
+                if path == f"{API_PREFIX}/health":
+                    self._send_json(200, {"status": "ok"})
+                elif path == f"{API_PREFIX}/availability":
+                    self._send_json(200, {"weekly_availability": read_availability()})
+                elif path == f"{API_PREFIX}/certifications":
+                    self._send_json(200, get_public_certifications())
+                elif path.startswith(f"{API_PREFIX}/certifications/") and path.endswith("/questions"):
+                    certification_id = path[len(f"{API_PREFIX}/certifications/"):-len("/questions")].strip("/")
+                    if not certification_id or "/" in certification_id:
+                        self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
+                        return
+                    self._send_json(200, get_public_questions(certification_id))
+                elif path.startswith(f"{API_PREFIX}/study-plans/"):
+                    filename = path[len(f"{API_PREFIX}/study-plans/"):]
+                    content, safe_filename = read_study_plan_csv(filename)
+                    self._send_csv(safe_filename, content)
+                else:
+                    self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
+            except KeyError as error:
+                self._send_json(404, {"error": {"code": "NOT_FOUND", "message": str(error)}})
+            except FileNotFoundError:
+                self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "Study plan CSV not found"}})
+            except ValueError as error:
+                self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": str(error)}})
 
         def do_POST(self) -> None:
             """입력 값: HTTP POST 경로 및 JSON 요청 본문

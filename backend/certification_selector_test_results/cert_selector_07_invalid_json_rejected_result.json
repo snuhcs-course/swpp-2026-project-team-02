@@ -1,0 +1,7 @@
+{
+  "case_id": "cert_selector_07_invalid_json_rejected",
+  "description": "JSON 문법이 잘못된 카탈로그 파일은 읽기 오류를 반환합니다.",
+  "expected_error": "자격증 목록을 읽을 수 없습니다",
+  "actual_error": "자격증 목록을 읽을 수 없습니다: Expecting property name enclosed in double quotes: line 1 column 3 (char 2)",
+  "passed": true
+}

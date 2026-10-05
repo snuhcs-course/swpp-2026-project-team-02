@@ -1,15 +1,1 @@
-{
-  "study_window_start": "18:00",
-  "study_window_end": "22:00",
-  "session_length_minutes": 60,
-  "max_sessions_per_day": 1,
-  "study_days_per_week": 5,
-  "sessions_per_topic": 2,
-  "weak_topic_extra_sessions": 3,
-  "unknown_topic_extra_sessions": 1,
-  "level_session_multipliers": {
-    "beginner": 2.0,
-    "intermediate": 1.0,
-    "advanced": 0.5
-  }
-}
+{}

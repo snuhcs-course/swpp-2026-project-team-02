@@ -1,0 +1,182 @@
+{
+  "executed_at": "2026-10-06T02:53:09+09:00",
+  "input_file": "C:\\SNU_Program_file\\SWPP\\TEAM_PROJECT_2\\repo\\backend\\assessment_questionnaire_test_inputs\\assessment_questionnaire_test_cases.json",
+  "result_directory": "C:\\SNU_Program_file\\SWPP\\TEAM_PROJECT_2\\repo\\backend\\assessment_questionnaire_test_results",
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "results": [
+    {
+      "case_id": "assessment_01_project_question_bank",
+      "description": "현재 더미 질문 JSON은 컴활 2급의 유효한 5개 문항을 제공합니다.",
+      "passed": true,
+      "expected": {
+        "certification_id": "computer_specialist_level_2",
+        "question_count": 5,
+        "topics": [
+          "스프레드시트 기본",
+          "차트와 분석",
+          "함수와 데이터 관리"
+        ]
+      },
+      "actual": {
+        "certification_id": "computer_specialist_level_2",
+        "question_count": 5,
+        "topics": [
+          "스프레드시트 기본",
+          "차트와 분석",
+          "함수와 데이터 관리"
+        ]
+      }
+    },
+    {
+      "case_id": "assessment_02_scoring_and_planner_csv",
+      "description": "정답은 배점을 받고 오답은 0점을 받아 Planner가 읽을 수 있는 CSV로 저장됩니다.",
+      "passed": true,
+      "expected": {
+        "rows": [
+          [
+            1,
+            "함수와 데이터 관리",
+            2.0,
+            2.0
+          ],
+          [
+            2,
+            "차트와 분석",
+            3.0,
+            0.0
+          ]
+        ],
+        "total_possible": 5.0,
+        "total_earned": 2.0,
+        "utf8_without_bom": true,
+        "invalid_answer_message_seen": false
+      },
+      "actual": {
+        "rows": [
+          [
+            1,
+            "함수와 데이터 관리",
+            2.0,
+            2.0
+          ],
+          [
+            2,
+            "차트와 분석",
+            3.0,
+            0.0
+          ]
+        ],
+        "total_possible": 5.0,
+        "total_earned": 2.0,
+        "utf8_without_bom": true,
+        "invalid_answer_message_seen": false
+      }
+    },
+    {
+      "case_id": "assessment_03_invalid_choice_reprompt",
+      "description": "선택지에 없는 답을 다시 묻고, 유효한 오답은 0점으로 기록합니다.",
+      "passed": true,
+      "expected": {
+        "rows": [
+          [
+            1,
+            "스프레드시트 기본",
+            1.0,
+            0.0
+          ]
+        ],
+        "total_possible": 1.0,
+        "total_earned": 0.0,
+        "utf8_without_bom": true,
+        "invalid_answer_message_seen": true
+      },
+      "actual": {
+        "rows": [
+          [
+            1,
+            "스프레드시트 기본",
+            1.0,
+            0.0
+          ]
+        ],
+        "total_possible": 1.0,
+        "total_earned": 0.0,
+        "utf8_without_bom": true,
+        "invalid_answer_message_seen": true
+      }
+    },
+    {
+      "case_id": "assessment_04_duplicate_question_id_rejected",
+      "description": "질문 ID 중복을 거부합니다.",
+      "passed": true,
+      "expected": {
+        "rejected": true,
+        "error_contains": "중복되지 않는 양의 정수"
+      },
+      "actual": {
+        "rejected": true,
+        "error": "2번 질문의 id는 중복되지 않는 양의 정수여야 합니다."
+      }
+    },
+    {
+      "case_id": "assessment_05_unknown_correct_answer_rejected",
+      "description": "선택지에 없는 정답 키를 거부합니다.",
+      "passed": true,
+      "expected": {
+        "rejected": true,
+        "error_contains": "correct_answer가 choices에 없습니다"
+      },
+      "actual": {
+        "rejected": true,
+        "error": "1번 질문의 correct_answer가 choices에 없습니다."
+      }
+    },
+    {
+      "case_id": "assessment_06_nonpositive_score_rejected",
+      "description": "0 이하 배점을 거부합니다.",
+      "passed": true,
+      "expected": {
+        "rejected": true,
+        "error_contains": "possible_score는 양수"
+      },
+      "actual": {
+        "rejected": true,
+        "error": "1번 질문의 possible_score는 양수여야 합니다."
+      }
+    },
+    {
+      "case_id": "assessment_07_eof_does_not_write_partial_csv",
+      "description": "응답 도중 입력이 끝나면 부분 결과 CSV를 만들지 않습니다.",
+      "passed": true,
+      "expected": {
+        "exit_code": 2,
+        "output_exists": false
+      },
+      "actual": {
+        "exit_code": 2,
+        "output_exists": false
+      }
+    },
+    {
+      "case_id": "assessment_08_cli_writes_default_bank_csv",
+      "description": "실제 CLI가 모든 더미 문항 응답을 받아 결과 CSV를 생성합니다.",
+      "passed": true,
+      "expected": {
+        "exit_code": 0,
+        "result_count": 5,
+        "total_possible": 5.0,
+        "total_earned": 5.0,
+        "utf8_without_bom": true
+      },
+      "actual": {
+        "exit_code": 0,
+        "result_count": 5,
+        "total_possible": 5.0,
+        "total_earned": 5.0,
+        "utf8_without_bom": true
+      }
+    }
+  ]
+}

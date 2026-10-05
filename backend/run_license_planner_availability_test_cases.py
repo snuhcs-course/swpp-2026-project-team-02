@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 from license_planner.csv_io import (parse_busy_csv, parse_datetime,
@@ -11,7 +10,6 @@ from license_planner.csv_io import (parse_busy_csv, parse_datetime,
 from license_planner.models import PlanRequest
 from license_planner.settings import (DEFAULT_CERTIFICATION_ID,
                                       DEFAULT_STUDY_DAYS_PER_WEEK,
-                                      DEFAULT_STUDY_WINDOW_START,
                                       DATETIME_FORMAT)
 from license_planner.tools import PlannerTools
 from license_planner.user_availability import (load_personal_availability,
@@ -46,6 +44,27 @@ def run_case(case: dict) -> dict:
     case_id = case["case_id"]
     trace: dict = {"case_id": case_id, "description": case["description"]}
     result_csv_name = f"{case_id}_result.csv"
+    if case.get("expected_plan_error"):
+        request = PlanRequest(
+            self_assessment=TEST_SELF_ASSESSMENT,
+            problem_results=parse_problem_results_csv(TEST_RESULTS_CSV),
+            preparation_start=parse_datetime(TEST_PREPARATION_START),
+            exam_date=parse_datetime(TEST_EXAM_DATE),
+            certification_id=DEFAULT_CERTIFICATION_ID,
+            study_days_per_week=DEFAULT_STUDY_DAYS_PER_WEEK,
+            weekly_availability=None,
+        )
+        tools = PlannerTools(request)
+        tools.call("analyze_exam_results", {})
+        tools.call("assess_readiness", {})
+        build_result = tools.call("build_study_schedule", {})
+        actual_error = build_result if isinstance(build_result, str) else None
+        trace.update({
+            "expected_plan_error": case["expected_plan_error"],
+            "actual_plan_error": actual_error,
+            "passed": actual_error is not None and case["expected_plan_error"] in actual_error,
+        })
+        return trace
     if case.get("expected_error"):
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -84,9 +103,6 @@ def run_case(case: dict) -> dict:
         schedule = tools.schedule or []
         first_start = schedule[0].start_datetime.strftime(DATETIME_FORMAT) if schedule else None
         expected_start = case["expected_start"]
-        if expected_start == "default_window_start":
-            default_start = datetime.combine(request.preparation_start.date(), DEFAULT_STUDY_WINDOW_START)
-            expected_start = max(default_start, request.preparation_start).strftime(DATETIME_FORMAT)
         actual_personal_availability = bool(build_result.get("uses_personal_availability"))
         called_tools = [call["tool"] for call in tools.trace.calls]
         passed = (

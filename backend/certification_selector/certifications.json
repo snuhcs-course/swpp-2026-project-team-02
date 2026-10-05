@@ -1,0 +1,11 @@
+{
+  "certifications": [
+    {
+      "id": "computer_specialist_level_2",
+      "name": "컴퓨터활용능력 2급",
+      "enabled": true,
+      "exam_authority": "대한상공회의소",
+      "schedule_url": "https://license.korcham.net/ex/dailyExamPlaceConf.do"
+    }
+  ]
+}

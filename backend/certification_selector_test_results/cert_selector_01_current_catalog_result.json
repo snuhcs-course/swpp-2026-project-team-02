@@ -1,0 +1,11 @@
+{
+  "case_id": "cert_selector_01_current_catalog",
+  "description": "현재 제품 카탈로그에서 컴퓨터활용능력 2급만 선택할 수 있습니다.",
+  "expected_ids": [
+    "computer_specialist_level_2"
+  ],
+  "actual_ids": [
+    "computer_specialist_level_2"
+  ],
+  "passed": true
+}

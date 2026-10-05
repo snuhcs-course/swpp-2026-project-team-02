@@ -1,0 +1,13 @@
+{
+  "case_id": "assessment_07_eof_does_not_write_partial_csv",
+  "description": "응답 도중 입력이 끝나면 부분 결과 CSV를 만들지 않습니다.",
+  "passed": true,
+  "expected": {
+    "exit_code": 2,
+    "output_exists": false
+  },
+  "actual": {
+    "exit_code": 2,
+    "output_exists": false
+  }
+}

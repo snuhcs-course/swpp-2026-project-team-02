@@ -1,0 +1,7 @@
+{
+  "case_id": "cert_selector_04_empty_selectable_list",
+  "description": "활성 자격증이 하나도 없으면 빈 목록을 반환합니다.",
+  "expected_ids": [],
+  "actual_ids": [],
+  "passed": true
+}

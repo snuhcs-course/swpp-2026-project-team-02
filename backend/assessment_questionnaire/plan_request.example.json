@@ -1,0 +1,11 @@
+{
+  "certification_id": "computer_specialist_level_2",
+  "self_assessment": "엑셀 함수는 처음이라 천천히 익히고 싶습니다.",
+  "preparation_start": "2026/10/07/18/00",
+  "exam_date": "2026/11/30/09/00",
+  "weekly_availability": {
+    "monday": [{"start": "18:00", "end": "20:00"}],
+    "wednesday": [{"start": "18:00", "end": "20:00"}],
+    "saturday": [{"start": "10:00", "end": "13:00"}]
+  }
+}

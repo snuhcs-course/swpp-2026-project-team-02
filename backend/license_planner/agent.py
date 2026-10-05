@@ -21,8 +21,15 @@ HTTP_CONTENT_TYPE = "application/json"  # Request body format.
 HTTP_POST_METHOD = "POST"  # HTTP method for Gemini requests.
 AGENT_SYSTEM_PROMPT = (
     "You create study schedules through the provided tools. Inspect the certification profile, "
-    "analyze exam results, assess readiness, then build the schedule in that order. Never invent "
-    "scores, dates, topics, certification details, or schedule rows. If a tool reports an error, explain it clearly. "
+    "analyze exam results, then build the schedule in that order. Never invent scores, dates, "
+    "topics, or certification details. For each question, map the knowledge it requires to one or "
+    "more topics from the certification profile; assign contribution weights summing to 1 per question. "
+    "Use the user's locally calculated correctness as supplied. Use the user's free-form self-assessment and topic scores "
+    "directly to choose study minutes per topic and date. Do not classify users into fixed readiness "
+    "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
+    "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
+    "more time. For example, distribute 120 planned minutes across two equivalent available dates "
+    "as about 60 minutes per date, not all 120 on one date. If a tool reports an error, explain it. "
     "When tools succeed, briefly summarize that the application will return the CSV."
 )  # Agent role and tool-use constraints.
 
@@ -85,16 +92,34 @@ class GeminiToolAgent:
         if request.certification_id not in cert_ids:
             raise ValueError(f"Unsupported certification {request.certification_id!r}; choose from {cert_ids}")
         tools = PlannerTools(request, ToolTrace())  # 상태를 공유하는 로컬 도구 집합입니다.
+        weekday_names = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        availability = ({day: [{"start": window.start_time.strftime("%H:%M"),
+                                "end": window.end_time.strftime("%H:%M")}
+                         for window in request.weekly_availability.for_weekday(index)]
+                        for index, day in enumerate(weekday_names)}
+                       if request.weekly_availability else None)
+        busy_schedules = [{"schedule_id": item.schedule_id,
+                           "start_date": item.start_datetime.strftime(DATETIME_FORMAT),
+                           "end_date": item.end_datetime.strftime(DATETIME_FORMAT),
+                           "topic": item.topic}
+                          for item in request.busy_periods]
         user = {"certification_id": request.certification_id,
                 "self_assessment": request.self_assessment,
-                "problem_result_count": len(request.problem_results),
+                "problem_result_count": len(request.assessment_items or request.problem_results),
+                "assessment_results": [
+                    {"problem_id": item.problem_id, "question": item.question,
+                     "choices": item.choices,
+                     "correct_answer": item.correct_answer, "user_answer": item.user_answer,
+                     "is_correct": item.is_correct, "possible_score": item.possible_score}
+                    for item in request.assessment_items
+                ],
                 "preparation_start": request.preparation_start.strftime(DATETIME_FORMAT) if request.preparation_start else None,
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
-                "busy_period_count": len(request.busy_periods),
-                "has_personal_availability": request.weekly_availability is not None}
-        contents: list[dict] = [{"role": "user", "parts": [{"text": "Prepare this user's plan using tools. Problem results and busy periods are available to the local tools; do not infer or invent their contents. Input metadata: " + json.dumps(user, ensure_ascii=False)}]}]  # Gemini 대화 기록입니다.
+                "busy_schedules": busy_schedules,
+                "weekly_availability": availability}
+        contents: list[dict] = [{"role": "user", "parts": [{"text": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]}]  # Gemini 대화 기록입니다.
         for _ in range(self.max_steps):
-            result = self._ask_model(contents, tool_schemas())
+            result = self._ask_model(contents, tool_schemas(request.certification_id))
             candidate = (result.get("candidates") or [{}])[0].get("content", {})
             contents.append(candidate)
             calls = [part["functionCall"] for part in candidate.get("parts", []) if "functionCall" in part]

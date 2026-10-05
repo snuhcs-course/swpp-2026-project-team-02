@@ -1,0 +1,14 @@
+{
+  "certifications": [
+    {
+      "id": "computer_specialist_level_2",
+      "display_name": "컴퓨터활용능력 2급",
+      "topics": [
+        "스프레드시트 기본",
+        "함수와 데이터 관리",
+        "차트와 분석",
+        "오답 복습"
+      ]
+    }
+  ]
+}

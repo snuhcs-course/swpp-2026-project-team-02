@@ -1,31 +1,23 @@
 {
   "case_id": "license_planner_case_02_advanced_weak_functions",
   "passed": true,
-  "expected_level": "advanced",
-  "actual_level": "advanced",
+  "http_status": 200,
+  "checks": {
+    "http_200": true,
+    "schedules_returned": true,
+    "expected_tool_sequence": true,
+    "expected_first_topic": true,
+    "expected_first_start": true,
+    "availability_respected": true,
+    "busy_schedules_conflict_free": true,
+    "schedule_csv_returned": true
+  },
   "expected_first_topic": "Functions",
   "actual_first_topic": "Functions",
-  "expected_first_start": null,
-  "actual_first_start": "2026/10/05/18/00",
-  "uses_personal_availability": false,
-  "availability_respected": true,
-  "busy_schedule_conflict_free": true,
-  "gemini_api_request_count": 5,
-  "gemini_successful_response_count": 5,
-  "topic_statistics": [
-    {
-      "topic": "Functions",
-      "possible_score": 20.0,
-      "earned_score": 17.0,
-      "score_percent": 85.0
-    },
-    {
-      "topic": "Pivot Tables",
-      "possible_score": 20.0,
-      "earned_score": 19.0,
-      "score_percent": 95.0
-    }
-  ],
+  "expected_first_start": "2026/10/06/18/00",
+  "actual_first_start": "2026/10/06/18/00",
+  "uses_weekly_availability": true,
+  "study_schedule_count": 4,
   "called_tools": [
     "get_certification_profile",
     "analyze_exam_results",
@@ -52,33 +44,32 @@
       "arguments": {}
     }
   ],
-  "study_sessions": [
+  "schedules": [
     {
       "schedule_id": "study-1",
-      "topic": "Functions",
-      "start_datetime": "2026/10/05/18/00",
-      "end_datetime": "2026/10/05/19/00"
+      "start_date": "2026/10/06/18/00",
+      "end_date": "2026/10/06/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-2",
-      "topic": "Functions",
-      "start_datetime": "2026/10/06/18/00",
-      "end_datetime": "2026/10/06/19/00"
+      "start_date": "2026/10/08/18/00",
+      "end_date": "2026/10/08/19/00",
+      "topic": "Functions"
     },
     {
       "schedule_id": "study-3",
-      "topic": "Pivot Tables",
-      "start_datetime": "2026/10/07/18/00",
-      "end_datetime": "2026/10/07/19/00"
+      "start_date": "2026/10/13/18/00",
+      "end_date": "2026/10/13/19/00",
+      "topic": "Pivot Tables"
     },
     {
       "schedule_id": "study-4",
-      "topic": "Pivot Tables",
-      "start_datetime": "2026/10/08/18/00",
-      "end_datetime": "2026/10/08/19/00"
+      "start_date": "2026/10/15/18/00",
+      "end_date": "2026/10/15/19/00",
+      "topic": "Pivot Tables"
     }
   ],
-  "study_block_count": 4,
-  "result_csv": "license_planner_case_02_advanced_weak_functions_result.csv",
-  "agent_summary": "인증 프로필, 시험 결과 분석, 준비도 평가, 그리고 맞춤형 학습 일정 생성이 성공적으로 완료되었습니다. 애플리케이션에서 최종 CSV 결과가 반환될 것입니다."
+  "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-1,2026/10/06/18/00,2026/10/06/19/00,Functions\nstudy-2,2026/10/08/18/00,2026/10/08/19/00,Functions\nstudy-3,2026/10/13/18/00,2026/10/13/19/00,Pivot Tables\nstudy-4,2026/10/15/18/00,2026/10/15/19/00,Pivot Tables\n",
+  "error": null
 }

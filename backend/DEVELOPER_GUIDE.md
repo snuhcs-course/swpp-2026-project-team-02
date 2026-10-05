@@ -17,7 +17,8 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 현재 HTTP 계층은 외부 서버 없이 개발할 수 있도록 Python 표준 라이브러리로
 구현되어 있습니다. `backend/` 디렉터리에서 `python api_server.py`를 실행하면
 기본 주소 `http://127.0.0.1:8000`에서 API가 열립니다. 프론트엔드는
-`frontend_config.json`의 `api_base_url`을 읽어 호출합니다. 서버가 준비되면
+`frontend/frontend_config.json`의 `api_base_url`을 읽어 호출합니다. 정적 파일 서버는
+`frontend/`만 제공해 백엔드 원본 파일이 직접 노출되지 않도록 합니다. 서버가 준비되면
 프론트엔드 코드는 그대로 두고 이 주소를 배포 API 주소로 바꿀 수 있습니다.
 
 ### 설정 위치
@@ -40,9 +41,12 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 | Method / 경로 | 목적 | 요청 핵심 필드 |
 | --- | --- | --- |
 | `GET /api/v1/health` | 연결 상태 확인 | 없음 |
+| `GET /api/v1/certifications` | 활성 자격증 목록 | 없음 |
+| `GET /api/v1/certifications/{certification_id}/questions` | 더미 진단 질문·선택지·정답 | 없음 |
 | `GET /api/v1/availability` | 저장된 반복 가능 시간 조회 | 없음 |
 | `PUT /api/v1/availability` | 반복 가능 시간 저장 | 요일별 `start`, `end` 배열 |
-| `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 문제 결과, 준비/시험 시각, 외부 일정, 자격증 ID |
+| `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
+| `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
 | `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 일정 |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
@@ -51,9 +55,11 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 ```json
 {
   "self_assessment": "함수에 익숙하지 않습니다.",
-  "problem_results": [
-    {"problem_id": 1, "topic": "함수", "possible_score": 10, "earned_score": 6}
-  ],
+  "assessment_results": {
+    "certification_id": "computer_specialist_level_2",
+    "results": [{"problem_id": 1, "question": "...", "choices": {"A": "...", "B": "..."},
+      "correct_answer": "B", "user_answer": "A", "is_correct": false, "possible_score": 1}]
+  },
   "preparation_start": "2026/10/05/18/00",
   "exam_date": "2026/11/30/23/00",
   "certification_id": "computer_specialist_level_2",
@@ -67,8 +73,11 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 }
 ```
 
-일정 생성·조정 응답에는 화면 표시에 쓸 `schedules` 배열과 저장/내보내기용
-`schedule_csv` 문자열이 함께 포함됩니다. 정상 요청은 HTTP 200, 잘못된
+일정 생성 응답에는 화면 표시에 쓸 `schedules` 배열, `schedule_csv` 문자열,
+저장 CSV 다운로드 경로 `schedule_csv_url`이 포함됩니다. 진단 질문 API는
+더미 문항의 정답도 제공하며, FE가 기본 비교 로직으로 `is_correct`를 계산합니다.
+Planning API는 재채점하지 않고, Agent가 문항마다 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
+정상 요청은 HTTP 200, 잘못된
 입력은 HTTP 422, Gemini 인증/통신 실패는 각각 HTTP 503/502, 알 수 없는
 내부 오류는 HTTP 500의 `{ "error": { "code", "message" } }` 형태입니다.
 운영 로그나 응답에 API 키를 기록하지 않습니다.
@@ -83,12 +92,12 @@ API를 실행하는 명령은 `python api_server.py`입니다. 기본 서버 설
 
 ## License Planner
 
-License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기존 일정을 받아 취약 토픽을 먼저 배치한 학습 일정을 CSV로 반환합니다. 날짜·시간 형식은 `YYYY/MM/DD/HH/MM`입니다. Gemini Agent는 정해진 도구를 호출하고, 점수 통계와 일정 배치는 Python 코드가 수행합니다.
+License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기존 일정을 받아 취약 토픽을 먼저 배치한 학습 일정을 CSV로 반환합니다. 날짜·시간 형식은 `YYYY/MM/DD/HH/MM`입니다. Gemini Agent는 날짜별·주제별 공부 시간 배분을 제안하고, Python 코드가 점수 통계와 시간표·기존 일정 검증 및 실제 시간 배치를 수행합니다.
 
 ## 현재 구현 범위
 
-- 자기평가 문장과 문항별 배점/획득 점수를 이용해 준비 수준과 토픽별 취약도를 계산합니다.
-- 준비 시작 시각과 시험 시각 사이에 취약 토픽부터 공부 세션을 배치합니다.
+- Gemini Agent가 자기평가 문장과 문항별·토픽별 점수를 직접 참고해 학습 분량을 정합니다. 수준을 3단계로 구간화하거나 배수를 적용하지 않습니다.
+- 준비 시작 시각과 시험 시각 사이에 Agent가 정한 토픽별 학습 시간을 배치합니다.
 - 날짜·시간 단위의 기존 일정 CSV와 겹치지 않는 슬롯을 찾고, 기존 일정도 결과에 포함합니다.
 - CSV 출력의 일정 ID는 외부 일정 `external-번호`, 공부 일정 `study-번호` 형식입니다.
 - Gemini function calling을 통해 자격증 조회, 수준 평가, 일정 생성 도구를 호출하고, 도구 호출 기록을 확인할 수 있습니다.
@@ -112,77 +121,78 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 | `run_license_planner_availability_test_cases.py` | 개인 가능 시간 저장·갱신·계획 반영을 API 없이 검증하는 테스트 러너 |
 | `license_planner/agent.py` | Gemini 모델 설정, ReAct 호출 루프, API 통신 |
 | `license_planner/tools.py` | Agent의 자격증 조회·점수 분석·수준 평가·일정 생성 도구와 스키마 |
-| `license_planner/catalog.py` | 자격증 이름, 학습 토픽, 점수 경계, 자기평가 키워드 |
+| `config/certifications.json` | 자격증 ID별 표시 이름과 학습 Topic 목록 |
+| `license_planner/catalog.py` | JSON 자격증 설정을 읽고 검증하는 카탈로그 |
 | `license_planner/scheduler.py` | 토픽 통계, 수준 판정, 시간 슬롯 배치 규칙 |
 | `license_planner/csv_io.py` | 기존 일정 CSV 파싱 및 결과 CSV 생성 |
 | `license_planner/models.py` | 사용자 요청, 일정 기간, 공부 블록 등 도메인 객체 |
-| `license_planner/settings.py` | CSV/날짜·시간 형식, `config/license_planner.json` 로드·검증, `.env` API 키 읽기 |
-| `config/license_planner.json` | 학습 시간대, 세션 길이·일일 횟수, 주간 공부일, 토픽별 노력 및 수준 배수 |
+| `license_planner/settings.py` | CSV/날짜·시간 형식과 `.env` API 키 읽기 |
+| `config/license_planner.json` | 레거시 설정 파일. 고정 세션 길이·일일 횟수·토픽별 세션 정책은 사용하지 않음 |
 | `license_planner/user_availability.py` | 개인용 주간 가능 시간 검증, JSON 저장 및 불러오기 |
 | `config/user_availability.json` | 개인 앱의 주간 가능 시간 설정. 로컬 사용자 데이터라 Git에서 제외 |
 | `.env` / `.env.example` | Gemini API 키 설정 및 설정 예시. 실제 키 파일은 Git에서 제외됩니다. |
 | `license_planner_tests/test_license_planner.py` | API를 호출하지 않는 로컬 단위 테스트 |
 | `license_planner_availability_test_inputs/` | 개인 가능 시간 저장/갱신/요일·시간 적용/기본값/입력 오류 케이스 JSON |
 | `license_planner_availability_test_results/` | 케이스별 계획 CSV와 도구 trace, 통합 요약 JSON |
-| `license_planner_test_inputs/` | Gemini 테스트 케이스 JSON과 케이스별 외부 일정 CSV |
+| `license_planner_test_inputs/` | Planning API 요청 모양의 JSON 통합 테스트 케이스 |
 | `license_planner_test_results/` | 케이스별 결과 CSV, 개별 도구 trace JSON, 통합 요약 JSON |
 
 ## 실행 흐름
 
 ```text
 CLI 또는 앱 호출
-  → 입력값과 외부 일정 CSV 검증
+  → JSON 입력 배열, 날짜, 점수, 주간 가능 시간 검증
   → Gemini Agent에 입력과 도구 스키마 전달
   → get_certification_profile
   → analyze_exam_results
-  → assess_readiness
   → build_study_schedule
   → 기존 일정 + 공부 일정을 CSV로 합쳐 반환
 ```
 
-Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델의 역할은 허용된 도구를 필요한 순서로 호출하는 것입니다. 계산과 최종 일정 행 생성은 Python 도구가 담당합니다.
+Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델은 사용자의 자기평가와 실제 점수 통계를 해석해 날짜별 공부 시간을 제안합니다. Python 도구는 입력 검증, 충돌 검사, 가용 시간 안에 일정 행 배치를 담당합니다.
 
 ## 입력과 검증 규칙
 
 | 입력 | 형식 | 규칙 |
 | --- | --- | --- |
-| `self_assessment` | 문장 또는 `None` | 자격증 설정에 둔 문구에 따라 수준 단서를 찾습니다. |
+| `self_assessment` | 문장 또는 `None` | Agent가 문장 내용을 직접 학습 분량 산정에 참고합니다. 고정된 수준 구간으로 변환하지 않습니다. |
 | `problem_results` | 문제 결과 객체 튜플 또는 `None` | 각 행은 문제 ID, 토픽명, 배점, 획득 점수입니다. 토픽명은 데이터에서 받아들이며 고정 enum을 쓰지 않습니다. |
 | `preparation_start` | datetime 또는 `None` | 형식은 `YYYY/MM/DD/HH/MM`; 날짜 일정 생성 시 필수입니다. |
 | `exam_date` | datetime 또는 `None` | 같은 형식이며 시작 시각보다 뒤여야 합니다. |
-| `busy_csv` | CSV 텍스트 또는 `None` | 새 헤더는 `schedule_id,start_date,end_date,topic`; 기존 3열 헤더도 읽습니다. 일정 열 값은 `YYYY/MM/DD/HH/MM`이며 ID는 양의 정수입니다. |
+| `busy_periods` | 기존 일정 객체 튜플 또는 `None` | API JSON의 `busy_schedules` 배열에서 변환됩니다. 시작·종료는 `YYYY/MM/DD/HH/MM`이며 ID는 양의 정수입니다. |
 | `certification_id` | 카탈로그 ID | 기본값은 `computer_specialist_level_2`입니다. |
-| `study_days_per_week` | 정수 | 기본값은 5입니다. 현재 값 5는 월~금 공부를 뜻합니다. |
-| `weekly_availability` | 주간 시간표 또는 `None` | 요일별 `HH:MM` 시작·종료 구간입니다. 지정하면 기본 시간대와 공부 요일 대신 이 시간표를 적용합니다. |
+| `study_days_per_week` | 정수 | 구버전 요청 호환 필드이며 실제 공부 요일은 `weekly_availability`로만 결정합니다. |
+| `weekly_availability` | 주간 시간표 또는 `None` | 최소 한 개의 요일별 `HH:MM` 시작·종료 구간이 필요합니다. 저장 시간표도 없으면 요청 오류를 반환하며 공통 시간대를 대신 쓰지 않습니다. |
 
-전체 시험 점수는 문항별 획득 점수 합계를 배점 합계로 나누어 백분율로 계산합니다. 자기평가와 시험 결과의 수준이 다르면 더 많은 학습이 필요한 쪽을 선택합니다. 둘 다 없으면 `intermediate`를 사용합니다. 결과 CSV가 비어 있으면 자격증 설정의 기본 토픽을 사용합니다.
+문항별 결과가 있으면 토픽별 획득 점수·배점 비율을 계산해 Agent에 제공합니다. Agent는 이를 자기평가 문장과 함께 연속적인 입력 근거로 사용하며, 초급·중급·고급 분류나 수준별 시간 배수를 적용하지 않습니다. 결과가 없으면 자격증 설정의 기본 토픽을 사용합니다.
 
 ## 입력·출력 및 오류 형식
 
-이 절은 License Planner의 입력·출력 필드와 표현 규칙을 정리합니다. CLI는 인자와 CSV 파일을 `PlanRequest`로 변환하고, HTTP API는 JSON 요청을 같은 도메인 객체로 변환합니다. HTTP 경로와 정확한 응답 형식은 앞의 `웹 API와 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다.
+이 절은 License Planner의 입력·출력 필드와 표현 규칙을 정리합니다. HTTP API와 로컬 CLI는 `assessment_results` JSON을 받습니다. 질문 CLI/FE가 정답 여부를 계산하며 API는 다시 채점하지 않습니다. Agent는 문제 내용으로 고정 Topic 복수개와 기여 비중을 판단합니다. HTTP 경로와 응답 형식은 앞의 `웹 API와 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다.
 
 ### 입력 데이터
 
 | 필드 | 자료형 | 필수 여부와 규칙 |
 | --- | --- | --- |
 | `self_assessment` | 문자열 또는 `null` | 선택. 사용자가 스스로의 수준을 설명하는 문장입니다. |
-| `problem_results` | 객체 배열 또는 `null` | 선택. 객체별 필드는 `problem_id`, `topic`, `possible_score`, `earned_score`입니다. ID는 고유 양의 정수, 배점은 양수, 획득 점수는 0 이상 배점 이하입니다. |
-| `preparation_start` | 날짜·시간 문자열 또는 `null` | 선택 입력이지만 날짜가 있는 계획 생성에는 필수입니다. 형식은 `YYYY/MM/DD/HH/MM`입니다. |
-| `exam_date` | 날짜·시간 문자열 또는 `null` | 같은 형식이며 시작 시각보다 늦어야 합니다. |
+| `assessment_results` | 객체 | HTTP API 필수. `certification_id`와 `results` 배열을 포함합니다. 각 결과는 `problem_id`, `question`, `choices`, `correct_answer`, `user_answer`, `is_correct`, `possible_score`입니다. |
+| `preparation_start` | 날짜·시간 문자열 | 필수. 형식은 `YYYY/MM/DD/HH/MM`입니다. |
+| `exam_date` | 날짜·시간 문자열 | 필수이며 준비 시작보다 늦어야 합니다. 형식은 `YYYY/MM/DD/HH/MM`입니다. |
 | `busy_schedules` | 일정 객체 배열 또는 `null` | 선택. 각 일정은 숫자형 문자열 ID와 시작·종료 시각을 가집니다. 일정 구간은 시작 포함·종료 제외입니다. |
 | `certification_id` | 문자열 | 선택. 기본값은 `computer_specialist_level_2`입니다. |
-| `study_days_per_week` | 정수 | 선택. 1~7 범위이며 기본값은 5입니다. 값 5는 월~금 공부일을 뜻합니다. |
-| `weekly_availability` | 요일별 객체 또는 `null` | HTTP API에서는 제공한 시간표를 해당 계획 요청에 적용하고 저장하지 않습니다. 생략하거나 `null`이면 저장 프로필을 적용합니다. 지속 저장은 `PUT /api/v1/availability`로 수행합니다. CLI는 새 시간표 입력 시 개인 JSON 설정에 저장합니다. |
+| `study_days_per_week` | 정수 | 구버전 요청 호환 필드입니다. 실제 계획 요일은 `weekly_availability`에서 고르며 이 값은 세션 수나 일일 공부량을 제한하지 않습니다. |
+| `weekly_availability` | 요일별 객체 또는 `null` | 최소 한 개의 시간 구간이 필요합니다. 제공한 시간표를 요청에 적용하며 저장하지 않습니다. 생략하거나 `null`이면 저장 프로필을 사용하고, 저장 프로필도 없으면 HTTP 422 `INVALID_INPUT`을 반환합니다. 지속 저장은 `PUT /api/v1/availability`로 수행합니다. |
 
 예시:
 
 ```json
 {
   "self_assessment": "엑셀 함수는 처음입니다.",
-  "problem_results": [
-    {"problem_id": 1, "topic": "Functions", "possible_score": 10, "earned_score": 6},
-    {"problem_id": 2, "topic": "Charts", "possible_score": 5, "earned_score": 2}
-  ],
+  "assessment_results": {
+    "certification_id": "computer_specialist_level_2",
+    "results": [{"problem_id": 1, "question": "...", "choices": {"A": "...", "B": "..."},
+      "correct_answer": "B", "user_answer": "A", "is_correct": false, "possible_score": 1}]
+  },
   "preparation_start": "2026/10/05/17/00",
   "exam_date": "2026/11/30/23/00",
   "busy_schedules": [
@@ -202,9 +212,9 @@ Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델
 }
 ```
 
-가능 시간 JSON의 요일 키는 `monday`부터 `sunday`까지이며, 하루 안의 각 구간은 `{"start":"HH:MM","end":"HH:MM"}` 형식입니다. 같은 요일의 구간은 서로 겹칠 수 없습니다. 빠진 요일은 공부 불가로 취급합니다.
+가능 시간 JSON의 요일 키는 `monday`부터 `sunday`까지이며, 하루 안의 각 구간은 `{"start":"HH:MM","end":"HH:MM"}` 형식입니다. 같은 요일의 구간은 서로 겹칠 수 없습니다. 빠진 요일은 공부 불가로 취급합니다. 모든 요일이 비어 있거나 요청과 저장 프로필 모두에 시간이 없으면 `weekly_availability is required. Enter at least one weekday and available time window.` 오류를 반환합니다.
 
-문항 결과 CSV 헤더는 `problem_id,topic,possible_score,earned_score`입니다. 바쁜 일정 CSV는 `schedule_id,start_date,end_date,topic`이며 외부 일정의 주제는 빈 값이어도 됩니다. 기존 3열 CSV도 입력으로 허용합니다. 빈 파일/미입력은 해당 종류의 입력 결과가 없는 것으로 처리합니다. 기존 외부 일정 값은 출력에서 `external-` 접두어가 붙습니다.
+진단은 HTTP 요청의 `assessment_results` JSON으로 제출합니다. 입력 구조 오류, 중복 문제 ID, 빈 질문/답변, 잘못된 Topic 매핑은 HTTP 422를 반환합니다. Planning Agent는 문제마다 여러 Topic을 지정할 수 있고 각 문제의 비중 합은 1이어야 합니다. 바쁜 일정은 JSON 배열이며 생략하거나 비우면 기존 일정이 없는 것으로 처리합니다. 기존 일정은 출력 CSV에서 `external-` 접두어가 붙습니다.
 
 ### 성공 출력 데이터
 
@@ -216,7 +226,7 @@ study-102,2026/10/05/18/00,2026/10/05/19/00,Charts
 external-101,2026/10/12/18/00,2026/10/12/20/00,
 ```
 
-CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열과 CSV 문자열인 `schedule_csv`, `agent_summary`, `tool_calls`를 JSON으로 반환합니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
+CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장됩니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
 
 ### 오류 데이터
 
@@ -241,19 +251,13 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 
 계획 생성 불가나 일정 배치 실패는 도구/Agent 실행 오류를 거쳐 현재 구현에서 HTTP 502로 반환될 수 있습니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
 
-## 수준과 일정 계산
+## 점수와 일정 계산
 
-기본 점수 경계는 [catalog.py](license_planner/catalog.py)의 자격증 설정에 있습니다.
+현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. Gemini Agent가 원문 자기평가와 토픽별 점수 통계를 직접 참고해 학습량을 정합니다.
 
-- 0~59점: `beginner`
-- 60~79점: `intermediate`
-- 80~100점: `advanced`
+문항 결과의 토픽별 획득 점수/배점 비율을 계산해 낮은 토픽을 Agent에 전달합니다. Gemini Agent는 시험일까지의 기간, 현재 수준, 토픽별 점수와 사용자가 입력한 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 총 학습 시간(분)을 정합니다. 문제 토픽 이름은 입력에서 읽으며 고정 enum에 제한되지 않습니다.
 
-자기평가는 해당 설정의 키워드와 부분 문자열로 비교합니다. 현재 예를 들어 `처음`, `모른`, `초보`는 초급 단서이며 `익숙`, `능숙`은 고급 단서입니다. 새로운 표현을 지원하려면 자격증 설정에 키워드를 추가해야 합니다.
-
-문항 결과의 토픽별 획득 점수/배점 비율을 계산해 낮은 토픽부터 배치합니다. 기본 세션 수는 `DEFAULT_STUDY_DAYS_PER_TOPIC`이며 취약도에 따라 `WEAK_TOPIC_EXTRA_SESSIONS`만큼 추가됩니다. 결과가 없는 자격증 토픽은 `UNKNOWN_TOPIC_EXTRA_SESSIONS`가 추가됩니다. 초급은 기본 세션 수 배수를 `BEGINNER_STUDY_DAY_MULTIPLIER`에서 정합니다. 문제 토픽 이름은 CSV에서 읽으며 고정 enum에 제한되지 않습니다.
-
-세션 기본 길이는 60분, 기본 가능 시간대는 18:00–22:00, 하루 세션 제한은 1개입니다. 이 값과 주간 공부일, 토픽별 세션 수/취약 가중치, 수준별 배수는 `config/license_planner.json`에서 외부 설정합니다. 사용자 시간표가 있으면 해당 요일별 구간이 기본 시간대와 요일 설정을 대신합니다. 외부 일정과 겹치는 구간은 건너뛰며, 시험 시각을 넘는 세션은 넣지 않습니다. 필요한 세션이 기간 내에 배치되지 않으면 `NOT_ENOUGH_TIME` 오류입니다.
+Agent는 날짜별·주제별 공부 시간(분)을 직접 제안합니다. 예를 들어 총 120분이고 용량이 비슷한 공부 가능 날짜가 2일이면 날짜별 약 60분씩 배정하도록 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다.
 
 ## 출력 형식과 일정 ID
 
@@ -265,29 +269,25 @@ study-104,2026/10/05/18/00,2026/10/05/19/00,Functions
 external-101,2026/10/12/18/00,2026/10/12/20/00,
 ```
 
-외부 입력 CSV의 ID는 숫자로 유지합니다. 새 공부 일정 번호는 기존 숫자 ID 최댓값 다음부터 배정하고, 출력에서 `study-`를 붙입니다. 외부 행은 `external-`를 붙입니다. 결과는 시작 시각 기준으로 정렬됩니다. 공부 일정의 topic 열은 입력 시험 결과의 주제명과 일치합니다.
+외부 입력 CSV의 ID는 숫자로 유지합니다. 새 공부 일정 번호는 기존 숫자 ID 최댓값 다음부터 배정하고, 출력에서 `study-`를 붙입니다. 외부 행은 `external-`를 붙입니다. 결과는 시작 시각 기준으로 정렬됩니다. 공부 일정의 `topic` 열은 assessment 문제를 JSON 자격증 카탈로그에 맞춰 Agent가 분류한 Topic입니다.
 
 ## 설정과 실행
 
-`.env`에는 `GEMINI_API_KEY`만 설정합니다. 모델명(`gemini-3.5-flash-lite`), endpoint, 요청 시간 제한, Agent 반복 횟수는 [agent.py](license_planner/agent.py) 파일 상단에서 바꿉니다. 자격증별 표시 이름, 기본 토픽, 수준 문구, 점수 경계는 [catalog.py](license_planner/catalog.py)에 있습니다. 공통 시간대·세션 정책은 [config/license_planner.json](config/license_planner.json)에, 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다.
+`.env`에는 `GEMINI_API_KEY`만 설정합니다. 모델명(`gemini-3.5-flash-lite`), endpoint, 요청 시간 제한, Agent 반복 횟수 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
 
 Python 3.10 이상을 사용하고, 이 프로젝트는 현재 Python 표준 라이브러리만 사용합니다. 단일 요청 실행 예시:
 
 ```powershell
-python run_planner.py `
-  --self-assessment "엑셀 함수는 처음입니다" `
-  --availability-file availability.json `
-  --results-csv license_planner_test_inputs/license_planner_case_01_results.csv `
-  --preparation-start 2026/10/05/17/00 `
-  --exam-date 2026/11/30/23/00 `
-  --busy-csv license_planner_test_inputs/license_planner_case_01_busy.csv `
+python -m license_planner.cli `
+  --request-json assessment_questionnaire/plan_request.example.json `
+  --assessment-results-json assessment_questionnaire/output/assessment_results.json `
   1> license_planner_test_results/manual_result.csv `
   2> license_planner_test_results/manual_agent_log.txt
 ```
 
-`--availability-file` 대신 `--availability-json '{"monday":[{"start":"18:00","end":"21:00"}]}'`를 전달할 수도 있습니다. 새 가능 시간을 입력하면 개인용 JSON 설정 파일이 갱신됩니다. 다음 실행에서 가능 시간을 생략하면 저장한 시간표가 자동으로 불러와집니다. 가능 시간 파일은 로컬 개인정보 보호를 위해 Git에서 제외됩니다.
+`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`end` 구간으로 지정합니다. 프론트엔드는 로컬 채점된 `assessment_results`를 API에 보내며, 주간 시간표 저장은 `PUT /api/v1/availability`를 사용합니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
 
-CSV 결과는 표준 출력으로, Agent 요약과 도구 호출명은 표준 오류로 나옵니다. 앱 API로 연결할 때는 CLI 인자 파싱만 서비스 계층으로 바꾸고 `PlanRequest`, `GeminiToolAgent`, `render_schedule_csv`를 재사용할 수 있습니다.
+계획 CSV 결과는 표준 출력으로도 제공되며, API 서비스는 생성 결과를 `license_planner/output/`에 저장합니다. HTTP 응답의 `schedule_csv_url`은 그 파일을 내려받는 GET 경로입니다. CLI에서 stdout 결과를 파일로 저장하려면 PowerShell 리디렉션(`python -m license_planner.cli ... > plan.csv`)을 사용할 수 있습니다. Agent 요약과 도구 호출명은 표준 오류로 나옵니다.
 
 ## 테스트와 도구 호출 기록
 
@@ -306,19 +306,19 @@ python run_license_planner_availability_test_cases.py
 python run_license_planner_test_cases.py --case-id license_planner_case_04_personal_availability_api
 ```
 
-이 통합 케이스는 Gemini에 실제 요청을 보내며, 성공 응답 수가 1 이상인지, Agent가 모든 도구를 호출했는지, 개인 시간표를 지키고 외부 일정과 겹치지 않는지 검사합니다. 결과 CSV와 상세 trace는 `license_planner_test_results/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 Gemini 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
+이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 Gemini에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제·시작 시각, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 결과 CSV와 상세 trace는 `license_planner_test_results/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 Gemini 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
 
-각 케이스는 `license_planner_test_inputs/license_planner_test_cases.json`에서 입력, 예상 수준, 바쁜 일정 파일을 지정합니다. 실행 결과는 다음처럼 저장됩니다.
+각 케이스는 `license_planner_test_inputs/license_planner_test_cases.json`에서 `request` 객체에 API 요청 필드 전체를 JSON으로 지정합니다. `assessment_results`, `busy_schedules`, `weekly_availability`를 포함해 HTTP API 계약을 확인합니다. 실제 API 응답과 일정은 통합 테스트에서 검증합니다. 실행 결과는 다음처럼 저장됩니다.
 
 - `<case_id>_result.csv`: 외부 일정과 공부 일정
-- `<case_id>_tool_trace.json`: 실제 호출 순서/인자, 예상 및 실제 수준, 통과 여부
+- `<case_id>_tool_trace.json`: HTTP 상태, 실제 호출 순서/인자, 예상 및 실제 일정, 통과 여부
 - `license_planner_test_summary.json`: 모든 케이스의 요약
 
-통과 기준은 프로필 조회 → 시험 결과 분석 → 수준 평가 → 일정 생성 순서의 도구 호출, 예상 수준과 취약 토픽 일치, 공부 일정 생성입니다. 케이스에는 초급/고급 사용자와 카탈로그 밖의 시험 토픽을 넣어 확장 가능성을 확인합니다.
+통합 테스트 통과 기준은 HTTP 200, 프로필 조회 → 시험 결과 분석 → 수준 평가 → 일정 생성 순서, 예상 취약 토픽·시작 시각, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음입니다. 케이스에는 초급/고급 사용자와 카탈로그 밖의 시험 토픽을 넣어 확장 가능성을 확인합니다.
 
 ## 자격증 추가와 확장
 
-새 시험을 추가하려면 `CERTIFICATION_CONFIGS`에 고유 ID, 표시 이름, 결과가 없을 때 사용할 기본 토픽, 점수 경계, 자기평가 키워드, 토픽별 기본 세션 수를 추가합니다. 문항 결과에 새 토픽명이 들어와도 분석 도구는 그대로 통계를 계산합니다. 도구 스키마의 자격증 ID enum은 카탈로그에서 자동으로 생성됩니다. 새 시험의 결과 CSV 및 테스트 케이스도 추가합니다.
+새 시험을 추가하려면 `config/certifications.json`의 `certifications` 배열에 고유 ID, 표시 이름, Topic 목록을 추가합니다. 문항 결과는 Agent가 해당 자격증 목록의 Topic 여러 개에 비중으로 연결합니다. 도구 스키마의 자격증 ID와 Topic enum은 JSON 설정에서 자동으로 생성됩니다. 새 시험의 assessment JSON 및 테스트 케이스도 추가합니다.
 
 향후 점수 기준을 확정하려면 진단 문제와 문제 난이도 자료가 필요합니다. 공식 시험 범위나 학습 자료를 온라인에서 가져오려면 출처가 검증되는 별도 데이터 도구를 추가해야 하며, 현재 코드는 온라인 검색을 수행하지 않습니다.
 
