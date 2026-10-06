@@ -1,7 +1,7 @@
 [versions]
 # Newest releases that still compile against android-36 (design D1); later
 # AndroidX/OkHttp releases require compileSdk 37.
-agp = "9.4.0"
+agp = "9.4.1"
 kotlin = "2.4.20"
 coreKtx = "1.18.0"
 activityCompose = "1.13.0"
