@@ -1,6 +1,7 @@
 # Shared ignore rules for the frontend and backend.
 **/__pycache__/
 *.py[cod]
-.env
 **/.env
 backend/config/user_availability.json
+**/.idea
+backend/license_planner/output/
