@@ -1,30 +1,82 @@
-# Temporary License Planner Frontend
+# Frontend
 
-이 폴더는 기존 Backend API에 연결되는 임시 브라우저 UI입니다. 빌드 도구나 npm 패키지 없이 정적 파일로 실행합니다.
+Android app for the License Planner MVP (Kotlin, Jetpack Compose, single `:app`
+module, minSdk 26, target SDK 36).
 
-## 실행
+**Flow:** select 컴퓨터활용능력 2급 → enter preparation start and exam dates →
+choose current level and answer example questions → set weekday study windows →
+generate a plan → browse it by week and day.
 
-PowerShell 창 1에서 API를 시작합니다.
+**Scope:** written exam (필기) only; practical exam (실기) is not included. The
+questions are authored examples, not official exam questions or a validated
+diagnostic.
 
-```powershell
-cd C:\SNU_Program_file\SWPP\TEAM_PROJECT_2\repo\backend
-python api_server.py
+## Build and run
+
+Open this `frontend/` directory (not the repository root) in Android Studio and
+let Gradle sync. Pick a build variant: `demoDebug` (default) or `liveDebug`.
+
+From the command line, using Android Studio's bundled Java runtime:
+
+```bash
+cd frontend
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+./gradlew assembleDemoDebug assembleLiveDebug           # APKs in app/build/outputs/apk/
+./gradlew testDemoDebugUnitTest testLiveDebugUnitTest   # unit tests
+./gradlew installDemoDebug                              # install on a running emulator
 ```
 
-PowerShell 창 2에서 프론트엔드 폴더만 정적 파일 서버로 제공합니다.
+## Flavors
 
-```powershell
-cd C:\SNU_Program_file\SWPP\TEAM_PROJECT_2\repo
-python -m http.server 5173 --directory frontend
+| Flavor | Needs backend | Questions | Plans |
+| --- | --- | --- | --- |
+| `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen |
+| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) |
+
+**Use `demo` for evaluation without a backend.** Its plans are a demonstration
+calculation, not backend or AI output. The live flavor never falls back to demo
+data: on failure it shows an error with retry and keeps all inputs.
+
+## Live backend
+
+The live flavor connects to this repository's backend. Start it from `backend/`
+with the project's Python environment and `GEMINI_API_KEY` configured in
+`backend/.env`:
+
+```bash
+conda activate swpp
+cd backend
+python api_server.py    # http://127.0.0.1:8000/api/v1; GEMINI_API_KEY in backend/.env
 ```
 
-브라우저에서 [http://localhost:5173/](http://localhost:5173/)를 엽니다. 화면 위에 Planning API 연결 상태가 표시됩니다. 계획 생성은 백엔드 `.env`의 Gemini API 키와 네트워크 연결을 사용합니다. Gemini 키는 브라우저에 전달하지 않습니다. 현재 더미 진단 문항 API는 로컬 채점을 위해 정답도 반환합니다.
+The app's default API URL is `http://10.0.2.2:8000/api/v1`, which reaches the
+host machine from the Android Emulator. To use a different backend URL, build
+the live variant with:
 
-## 흐름
+```bash
+./gradlew assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
+```
 
-1. `GET /api/v1/certifications`에서 활성화된 자격증 목록을 가져옵니다.
-2. 선택한 자격증 ID로 `GET /api/v1/certifications/{id}/questions`를 호출합니다. 더미 문항·선택지·정답을 가져옵니다.
-3. 질문, 선택지, 정답, 사용자 답, 로컬 정오 판정이 포함된 `assessment_results` JSON과 시험 날짜, 준비 시작, 자유형 자기평가, 요일별 가능 시간을 `POST /api/v1/study-plans`로 보냅니다. 채점은 프론트엔드의 기본 비교 로직이 수행하며, Planning Agent는 문제마다 복수의 학습 Topic 비중을 판단합니다.
-4. 응답의 `schedules`를 준비 시작일 기준 주차와 날짜별로 표시하고, `schedule_csv_url`로 저장된 CSV를 내려받습니다.
+For a USB-connected device, run `adb reverse tcp:8000 tcp:8000` and set the
+build property to `http://127.0.0.1:8000/api/v1`. Debug builds allow cleartext
+HTTP only to `10.0.2.2`, `127.0.0.1`, and `localhost`. API keys stay in the
+backend; the app never calls Gemini directly.
 
-현재 질문 세트는 컴퓨터활용능력 2급 더미 문항입니다. `backend/assessment_questionnaire/question_banks.json`에서 자격증 ID와 백엔드 질문 파일을 연결합니다.
+Planning runs Gemini synchronously and can take tens of seconds (request timeout
+120 s). The matching routes and JSON contract are documented in
+[`backend/FRONTEND_INTEGRATION_GUIDE.md`](../backend/FRONTEND_INTEGRATION_GUIDE.md).
+
+## Verification
+
+- Unit tests pass for both flavors (JVM, with MockWebServer for HTTP).
+- `contract_checks/verify_request.py` checks the request the app serializes
+  against the pinned backend source, offline (no server or Gemini).
+- Demo and live flows were run end to end on an emulator and compared with the
+  Figma design.
+
+## Known limitations
+
+- Written exam only; practical-exam support is an open decision.
+- Not tested on a physical device; TalkBack support is incomplete.
+- Form state is held in memory and is lost if the process is killed.
+- Live plans come from Gemini, so session counts can vary for the same inputs.

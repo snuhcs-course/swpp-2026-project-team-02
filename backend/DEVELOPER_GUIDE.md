@@ -1,11 +1,10 @@
 이 문서의 상대 경로와 명령은 `backend/` 디렉터리 기준입니다. 저장소 최상위의 구조 안내는 `../README.md`를 참고하세요.
 # 개발 인계 안내
 
-## 웹 API와 프론트엔드 연결
+## HTTP API와 Android 프론트엔드 연결
 
-프론트엔드 담당자용 상세 요청·응답 예시, 브라우저 호출 코드, 오류별 화면
-처리 안내는 [`FRONTEND_INTEGRATION_GUIDE.md`](FRONTEND_INTEGRATION_GUIDE.md)에
-정리되어 있습니다.
+Android 앱의 `live` flavor가 사용하는 요청·응답 계약과 로컬 연결 안내는
+[`FRONTEND_INTEGRATION_GUIDE.md`](FRONTEND_INTEGRATION_GUIDE.md)에 정리되어 있습니다.
 
 HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 API 일정 조정을
 한 번에 확인하려면 `python run_api_availability_integration_test.py`를 실행합니다.
@@ -16,25 +15,25 @@ HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 
 
 현재 HTTP 계층은 외부 서버 없이 개발할 수 있도록 Python 표준 라이브러리로
 구현되어 있습니다. `backend/` 디렉터리에서 `python api_server.py`를 실행하면
-기본 주소 `http://127.0.0.1:8000`에서 API가 열립니다. 프론트엔드는
-`frontend/frontend_config.json`의 `api_base_url`을 읽어 호출합니다. 정적 파일 서버는
-`frontend/`만 제공해 백엔드 원본 파일이 직접 노출되지 않도록 합니다. 서버가 준비되면
-프론트엔드 코드는 그대로 두고 이 주소를 배포 API 주소로 바꿀 수 있습니다.
+기본 주소 `http://127.0.0.1:8000`에서 API가 열립니다. Android Emulator에서는
+호스트의 API를 `http://10.0.2.2:8000/api/v1`로 호출합니다. 앱 기본값을 바꾸려면
+live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니다. USB 연결
+기기에서는 `adb reverse tcp:8000 tcp:8000`과 `127.0.0.1` 주소를 사용할 수 있습니다.
 
 ### 설정 위치
 
 | 설정 | 파일/환경 변수 | 용도 |
 | --- | --- | --- |
-| 프론트엔드 API 주소 | `frontend_config.json`의 `api_base_url` | 프론트엔드가 요청할 백엔드 주소 |
+| Android live API 주소 | Gradle `licensePlanner.apiBaseUrl` 속성 | live 앱이 요청할 공개 API 주소 |
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
-| CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 프론트엔드 origin 허용 목록 |
+| CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
 | API 비밀 키 | `backend/.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
 
-로컬 프론트엔드 개발 서버가 다른 포트를 사용하면 그 origin을
-`allowed_origins`에 추가합니다. 실제 배포 시에는 HTTPS 주소를 사용하고,
-환경별 설정 파일 또는 배포 환경 변수를 통해 서버 주소와 CORS origin을
-지정합니다. `.env`에는 Gemini API 키만 둡니다.
+브라우저 기반 클라이언트를 별도로 사용할 때만 해당 개발 origin을
+`allowed_origins`에 추가합니다. Android 네이티브 앱은 브라우저 CORS 제한을
+적용받지 않습니다. 실제 배포 시에는 HTTPS 주소를 사용합니다. `.env`에는
+Gemini API 키만 둡니다.
 
 ### 엔드포인트
 
@@ -114,7 +113,7 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 | `api_server.py` | 로컬/배포 환경에서 HTTP API를 실행하는 표준 라이브러리 서버 |
 | `api_service.py` | API JSON과 두 프로그램의 도메인 객체/Agent 사이 변환 |
 | `config/api_server.json` | API bind 주소·포트, 허용 origin, 요청 크기 제한 |
-| `frontend_config.json` | 프론트엔드가 읽는 API base URL 기본값 |
+| `frontend/` | Kotlin/Jetpack Compose Android 앱과 Gradle live API URL 설정 |
 | `run_api_availability_integration_test.py` | 임시 프로필을 써서 HTTP·CORS·Agent 조정 전체 흐름 확인 |
 | `api_test_inputs/`, `api_test_results/` | API 통합 테스트 입력 fixture와 요약/CSV 결과 |
 | `run_license_planner_test_cases.py` | 여러 실제 Gemini Agent 테스트를 실행하고 케이스별 결과/trace를 저장 |
@@ -168,7 +167,7 @@ Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델
 
 ## 입력·출력 및 오류 형식
 
-이 절은 License Planner의 입력·출력 필드와 표현 규칙을 정리합니다. HTTP API와 로컬 CLI는 `assessment_results` JSON을 받습니다. 질문 CLI/FE가 정답 여부를 계산하며 API는 다시 채점하지 않습니다. Agent는 문제 내용으로 고정 Topic 복수개와 기여 비중을 판단합니다. HTTP 경로와 응답 형식은 앞의 `웹 API와 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다.
+이 절은 License Planner의 입력·출력 필드와 표현 규칙을 정리합니다. HTTP API와 로컬 CLI는 `assessment_results` JSON을 받습니다. 질문 CLI/FE가 정답 여부를 계산하며 API는 다시 채점하지 않습니다. Agent는 문제 내용으로 고정 Topic 복수개와 기여 비중을 판단합니다. HTTP 경로와 응답 형식은 앞의 `HTTP API와 Android 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다.
 
 ### 입력 데이터
 
@@ -358,7 +357,7 @@ study-202,2026/10/08/18/00,2026/10/08/20/00,Functions
 
 ### 입력·출력 및 오류 형식
 
-이 절은 Schedule Adjuster의 논리 입력 및 CSV 형식을 설명합니다. 웹 API 경로, HTTP 상태와 프론트엔드 연동 방식은 이 문서 앞의 `웹 API와 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다. 아래 요청 예시는 도메인 수준 입력 형태입니다. 실제 HTTP 요청에서는 일정 배열 키가 `schedule`이 아니라 `schedules`이며 JSON 응답을 반환합니다. CLI는 `schedule_id`와 CSV 파일 경로를 인자로 받아 CSV 내용을 `AdjustmentRequest`로 변환합니다.
+이 절은 Schedule Adjuster의 논리 입력 및 CSV 형식을 설명합니다. 웹 API 경로, HTTP 상태와 프론트엔드 연동 방식은 이 문서 앞의 `HTTP API와 Android 프론트엔드 연결` 절 및 `FRONTEND_INTEGRATION_GUIDE.md`를 기준으로 합니다. 아래 요청 예시는 도메인 수준 입력 형태입니다. 실제 HTTP 요청에서는 일정 배열 키가 `schedule`이 아니라 `schedules`이며 JSON 응답을 반환합니다. CLI는 `schedule_id`와 CSV 파일 경로를 인자로 받아 CSV 내용을 `AdjustmentRequest`로 변환합니다.
 
 입력은 변경 대상 ID 하나와 원본 일정 전체입니다. 일정 ID는 `study-` 또는 `external-` 접두어 뒤에 양의 정수가 와야 하며, 그 ID가 CSV에 존재해야 합니다. 새 CSV는 네 열(`schedule_id,start_date,end_date,topic`)을 사용하며 기존 세 열 CSV도 입력으로 허용합니다. 시간 값은 `YYYY/MM/DD/HH/MM` 형식입니다. 영어 헤더와 대응하는 한국어 헤더를 허용합니다.
 

@@ -1,16 +1,20 @@
 # Backend application
 
-This directory contains the existing Python API, license planner, schedule adjuster, configuration, tests, and developer documentation. Run backend commands from this directory. The repository overview is in `../README.md`.
+This directory contains the Python API used by the Android app's `live` flavor,
+license planner, schedule adjuster, configuration, and developer documentation.
+Run backend commands from this directory. The repository overview is in
+`../README.md`.
 # Study Planning Programs
 
-## Local web API and frontend connection
+## Local API and Android frontend connection
 
-The project now includes a dependency-free local HTTP API. The frontend reads
-`frontend_config.json` for `api_base_url`; change that value when connecting to
-a future hosted backend. The backend address, port, allowed frontend origins,
-and request-size limit are in `config/api_server.json` and can be overridden
-with `APP_API_HOST` and `APP_API_PORT`. Gemini credentials stay in the backend
-root `.env`; never copy them into frontend configuration.
+The project includes a dependency-free local HTTP API used by the Android
+frontend's `live` flavor. The Android Emulator reaches the default backend at
+`http://10.0.2.2:8000/api/v1`; configure a different public API URL with the
+Gradle property `licensePlanner.apiBaseUrl`. Backend bind address, port, browser
+origins, and request-size limit are in `config/api_server.json` and can be
+overridden with `APP_API_HOST` and `APP_API_PORT`. Gemini credentials stay in
+the backend root `.env`; never copy them into frontend configuration.
 
 Start the API from the backend directory:
 
@@ -37,9 +41,9 @@ be reused as inputs to the existing CSV-based tools. Dates use
 `YYYY/MM/DD/HH/MM`; recurring availability uses `HH:MM`. See
 `DEVELOPER_GUIDE.md` for request examples and error handling. The local server
 defaults to loopback (`127.0.0.1`); set `host` deliberately when deployment
-requires another bind address, and update allowed origins for the frontend.
-For frontend handoff, request/response examples, browser calls, and UI error
-handling, see `FRONTEND_INTEGRATION_GUIDE.md`.
+requires another bind address. Browser-based clients need an allowed origin;
+the Android app does not use browser CORS. For the app's request/response
+contract and emulator setup, see `FRONTEND_INTEGRATION_GUIDE.md`.
 
 Run the automated HTTP integration case for CORS, availability persistence,
 input validation, and profile-aware schedule adjustment:
