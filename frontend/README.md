@@ -30,8 +30,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ## Checks
 
 CI runs these in order (Java 25, Android SDK platform 36 and build-tools
-36.0.0, Python 3.14). `gradlew` is not executable in Git, so invoke it through
-`bash`:
+36.0.0, Python 3.14):
 
 ```bash
 # from frontend/
