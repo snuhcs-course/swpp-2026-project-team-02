@@ -71,14 +71,24 @@ class AvailabilityAndInputTests(unittest.TestCase):
     def test_availability_profile_is_saved_and_loaded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "availability.json"
-            expected = {
+            availability = {
                 "monday": [{"start": "18:00", "end": "21:00"}],
                 "saturday": [{"start": "10:00", "end": "12:00"}],
             }
-            saved = save_personal_availability(expected, config_path)
+            saved = save_personal_availability(availability, config_path)
             loaded = load_personal_availability(config_path)
             document = json.loads(config_path.read_text(encoding="utf-8"))
 
+        # Omitted weekdays are persisted as empty lists (AVAIL-02).
+        expected = {
+            "monday": [{"start": "18:00", "end": "21:00"}],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": [{"start": "10:00", "end": "12:00"}],
+            "sunday": [],
+        }
         self.assertEqual(saved, loaded)
         self.assertEqual(document["weekly_availability"], expected)
 
