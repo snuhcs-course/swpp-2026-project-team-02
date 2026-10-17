@@ -184,6 +184,25 @@ Passing CI (unit tests, contract check, coverage, build, and lint) is offline
 evidence only. It does not run the backend server, Gemini planning, an emulator,
 or the UI; those still need the manual live and emulator checks above.
 
+## Evaluation inputs
+
+Fixed inputs for repeatable plan-quality and performance checks. Use the APKs
+from `assembleDemoDebug`/`assembleLiveDebug` (or CI's `android-debug-apks`
+artifact), and record the APK SHA-256 and the backend commit with each result.
+Both cases choose 기본 기능은 알아요 and answer the five example questions
+correctly (B, B, A, A, C), with preparation starting 2026-10-19.
+
+| Case | Exam date and study windows | Demo result (observed 2026-10-17) |
+| --- | --- | --- |
+| A: adjustment | 2026-12-14; Mon 18:00 for 2 h, Tue 18:00 for 1 h, Wed 18:00 for 2 h | Six sessions. Adjusting `study-1` moves it to 10/26 19:00–20:00; adjusting it again moves it to 10/28 19:00–20:00. |
+| B: no free slot | 2026-11-02; Mon, Wed, Fri 18:00 for 1 h | Six sessions fill every slot; adjusting one reports 옮길 수 있는 시간이 없어요. |
+
+In the live build, Gemini output varies, so run each case several times. Check
+the returned `schedules` against the inputs: sessions inside the chosen windows,
+no overlaps, everything before the exam date, topic coverage, and response
+time. Live adjustment results mean nothing until the backend dependency in
+[Plan adjustment](#plan-adjustment) is met.
+
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
