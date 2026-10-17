@@ -79,7 +79,7 @@ class AvailabilityAndInputTests(unittest.TestCase):
             loaded = load_personal_availability(config_path)
             document = json.loads(config_path.read_text(encoding="utf-8"))
 
-        # Omitted weekdays are persisted as empty lists (AVAIL-02).
+        # Omitted weekdays are saved as empty lists.
         expected = {
             "monday": [{"start": "18:00", "end": "21:00"}],
             "tuesday": [],
