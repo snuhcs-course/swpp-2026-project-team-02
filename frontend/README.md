@@ -164,15 +164,17 @@ nonblank and unique, the target row is present, and any returned
 `schedule_csv_file` equals the one sent. Anything else leaves the plan as it was.
 The app never sends the availability profile (`PUT /availability`).
 
-**Backend dependency (Task 2), not yet met.** The current backend ignores
+**Backend dependency** This checkout's backend ignores
 `schedule_csv_file` and `weekly_availability`, reads the saved availability
-profile, and does not write the adjusted CSV back. The agreed target is:
-use the given file and save the result to that same file before replying;
-when `weekly_availability` is present, validate it like generation does and use
-it instead of the saved profile (invalid or all-empty → 422, nothing changed);
-when it is omitted or null, keep the saved-profile fallback. Until a backend
-revision shows this, a live 200 does not prove the plan file was updated, and
-live adjustment is unverified.
+profile, and does not write the adjusted CSV back. Backend candidate
+`iter-2-BE@c14b925` passed source review and isolated HTTP/storage checks for
+updating the selected file before success. It uses supplied valid availability
+instead of the saved profile; omission keeps the saved-profile fallback.
+Explicit null, invalid or all-empty windows return 422 without changing the plan
+or profile. Android always sends the selected plan's original non-null windows.
+The candidate still needs integration with main, and Android/Gemini same-file
+verification remains pending. Its 409 conflict, 404 missing-plan and reload
+recovery flow also needs client planning; a live 200 alone proves none of these.
 
 ## Verification
 
