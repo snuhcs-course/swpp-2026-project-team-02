@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,7 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.IconButton44
@@ -57,9 +59,10 @@ import java.util.Locale
  * bounded previous/next, seven day sections, returned session cards, the AI-authored
  * summary when present, and the demo statement for local plans. The phase timeline,
  * on-track status and calendar export from the frame are omitted (no backing data).
+ * [onHome] and [onAdjust] lead to the home and plan-list screens (REPLAN-01).
  */
 @Composable
-fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit) {
+fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit, onHome: () -> Unit, onAdjust: () -> Unit) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
@@ -105,13 +108,15 @@ fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit)
                 }
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
             }
+            item { SecondaryButton("계획 조정하기", onAdjust) }
             item { SecondaryButton("입력 수정하기", onEdit) }
+            item { SecondaryButton("처음으로", onHome) }
         }
     }
 }
 
 @Composable
-private fun AiSummary(summary: String) {
+internal fun AiSummary(summary: String) {
     DashedBox {
         Tag("AI", mono = true)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -122,7 +127,7 @@ private fun AiSummary(summary: String) {
 }
 
 @Composable
-private fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
+internal fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         IconButton44(R.drawable.ic_back, "이전 주", onPrevious, enabled = index > 0)
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -142,12 +147,16 @@ private fun weekRange(week: WeekPlan): String {
     return "${monthDay(week.monday)} – $endText"
 }
 
-private fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
+internal fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
 
 private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
 
+/**
+ * One day of the plan. With [onSelect], study sessions become single-choice options with
+ * [selectedId] marked (REPLAN-03); existing schedules stay plain rows.
+ */
 @Composable
-private fun DaySection(day: DayPlan) {
+internal fun DaySection(day: DayPlan, selectedId: String? = null, onSelect: ((String) -> Unit)? = null) {
     if (day.sessions.isEmpty()) {
         MutedBox {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -161,7 +170,10 @@ private fun DaySection(day: DayPlan) {
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             DayStamp(day.date)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                for (session in day.sessions) SessionRow(session)
+                for (session in day.sessions) {
+                    if (onSelect == null || session.isExternal) SessionRow(session)
+                    else SelectableSession(session, day.date, session.scheduleId == selectedId) { onSelect(session.scheduleId) }
+                }
             }
         }
     }
@@ -176,6 +188,17 @@ private fun DayStamp(date: LocalDate) {
 }
 
 @Composable
+private fun SelectableSession(session: PlanSession, date: LocalDate, selected: Boolean, onClick: () -> Unit) {
+    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}"
+    ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label) {
+        Box(Modifier.weight(1f)) { SessionRow(session) }
+    }
+}
+
+private fun sessionTime(session: PlanSession) =
+    "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"
+
+@Composable
 private fun SessionRow(session: PlanSession) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -185,7 +208,7 @@ private fun SessionRow(session: PlanSession) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}",
+                sessionTime(session),
                 style = MonoStyles.number,
                 color = InkBody,
             )

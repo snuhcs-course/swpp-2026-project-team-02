@@ -11,3 +11,13 @@ fun ApiError.userMessage(): String = when (this) {
     ApiError.Connection -> "서버에 연결할 수 없어요. 네트워크와 서버 상태를 확인한 뒤 다시 시도해 주세요."
     is ApiError.InvalidResponse -> "서버 응답을 읽을 수 없어요. 다시 시도해 주세요."
 }
+
+/**
+ * Adjustment wording (REPLAN-05): a lost connection or timeout cannot say whether the server
+ * changed the plan, and an invalid response left the shown plan untouched.
+ */
+fun ApiError.adjustmentMessage(): String = when (this) {
+    ApiError.Connection -> "서버 응답을 받지 못해 조정 결과를 확인할 수 없어요. 화면의 기존 계획은 그대로 두었어요."
+    is ApiError.InvalidResponse -> "서버 응답을 읽을 수 없거나 요청과 맞지 않아 계획을 바꾸지 않았어요."
+    else -> userMessage()
+}

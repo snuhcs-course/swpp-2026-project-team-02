@@ -12,14 +12,20 @@ import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
 import com.swpp.licenseplanner.ui.screens.GenerateScreen
+import com.swpp.licenseplanner.ui.screens.HomeScreen
 import com.swpp.licenseplanner.ui.screens.LevelScreen
+import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
+import com.swpp.licenseplanner.ui.screens.PlanListScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
 
-/** One route per step (design D4). */
+/** One route per step (design D4), plus home, plan list and adjustment (REPLAN-01). */
 private object Routes {
+    const val HOME = "home"
+    const val PLAN_LIST = "plan_list"
+    const val ADJUST = "adjust"
     const val CERTIFICATION = "certification"
     const val DATES = "dates"
     const val LEVEL = "level"
@@ -39,14 +45,52 @@ private fun NavHostController.showResult(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
-/** The whole input flow; [viewModel] is activity-scoped, so state survives back and rotation (FLOW-07). */
+/** Home and list sit at the bottom of the stack, so back from either flow returns home. */
+private fun NavHostController.fromHome(route: String) = navigate(route) {
+    popUpTo(Routes.HOME)
+    launchSingleTop = true
+}
+
+/** The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation (FLOW-07, REPLAN-08). */
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
 
-    NavHost(navController = nav, startDestination = Routes.CERTIFICATION) {
+    NavHost(navController = nav, startDestination = Routes.HOME) {
+        composable(Routes.HOME) {
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            HomeScreen(plans.size, onCreate = { nav.fromHome(Routes.CERTIFICATION) }, onAdjust = { nav.fromHome(Routes.PLAN_LIST) })
+        }
+        composable(Routes.PLAN_LIST) {
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            PlanListScreen(
+                plans = plans,
+                onOpen = { ordinal -> if (viewModel.selectPlan(ordinal)) nav.go(Routes.ADJUST) },
+                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.ADJUST) {
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val selection by viewModel.adjustment.collectAsStateWithLifecycle()
+            val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
+            if (plan == null) {
+                LaunchedEffect(Unit) { nav.popBackStack() }
+            } else {
+                PlanAdjustmentScreen(
+                    plan = plan,
+                    selection = selection,
+                    onSelect = viewModel::selectFailedSession,
+                    onSubmit = { viewModel.submitAdjustment() },
+                    onRetry = viewModel::retryAdjustment,
+                    onBack = { nav.popBackStack() },
+                    onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                )
+            }
+        }
+        // System back from the first input step returns home.
         composable(Routes.CERTIFICATION) {
             CertificationScreen(form, viewModel::selectCertification) { nav.go(Routes.DATES) }
         }
@@ -104,13 +148,21 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
             )
         }
+        // Reads the stored plan, so an adjustment made from the list is shown here too (design D1).
         composable(Routes.PLAN) {
-            val generation by viewModel.generation.collectAsStateWithLifecycle()
-            val success = generation as? GenerationState.Success
-            if (success == null) {
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
+            val plan = plans.firstOrNull { it.ordinal == generatedPlan }
+            if (plan == null) {
                 LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
             } else {
-                PlanScreen(success.response, success.isDemo) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
+                PlanScreen(
+                    response = plan.current,
+                    isDemo = plan.isDemo,
+                    onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                    onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
+                    onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                )
             }
         }
         composable(Routes.SHORTFALL) {
