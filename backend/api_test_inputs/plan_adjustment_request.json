@@ -1,0 +1,15 @@
+{
+  "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedule_id": "study-1",
+  "schedules": [
+    {
+      "schedule_id": "study-1",
+      "start_date": "2026/10/19/18/00",
+      "end_date": "2026/10/19/19/00",
+      "topic": "Functions"
+    }
+  ],
+  "weekly_availability": {
+    "monday": [{"start": "18:00", "end": "21:00"}]
+  }
+}

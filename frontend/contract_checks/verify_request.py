@@ -31,7 +31,7 @@ from pathlib import Path
 # Committed paths the validator needs. Anything else (".env*", saved profiles,
 # outputs, tests, browser files) is never extracted.
 ALLOWED_PATHS = (
-    re.compile(r"backend/(api_service|assessment_service)\.py"),
+    re.compile(r"backend/(api_service|assessment_service|study_plan_store)\.py"),
     re.compile(r"backend/(license_planner|schedule_adjuster|certification_selector)/[A-Za-z0-9_]+\.py"),
     re.compile(r"backend/certification_selector/certifications\.json"),
     re.compile(r"backend/config/(api_server|certifications|license_planner)\.json"),

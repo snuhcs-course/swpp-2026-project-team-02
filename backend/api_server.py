@@ -9,8 +9,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from api_service import (adjust_schedule, create_study_plan, read_availability,
-                         read_study_plan_csv, write_availability)
+                         read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import get_public_certifications, get_public_questions
+from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -146,12 +147,18 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                         self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
                         return
                     self._send_json(200, get_public_questions(certification_id))
+                elif path == f"{API_PREFIX}/study-plans":
+                    self._send_json(200, list_study_plans())
                 elif path.startswith(f"{API_PREFIX}/study-plans/"):
                     filename = path[len(f"{API_PREFIX}/study-plans/"):]
                     content, safe_filename = read_study_plan_csv(filename)
                     self._send_csv(safe_filename, content)
                 else:
                     self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
+            except PlanNotFoundError as error:
+                self._send_json(404, {"error": {"code": "PLAN_NOT_FOUND", "message": str(error)}})
+            except PlanStorageError as error:
+                self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except KeyError as error:
                 self._send_json(404, {"error": {"code": "NOT_FOUND", "message": str(error)}})
             except FileNotFoundError:
@@ -191,6 +198,12 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                     self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
                     return
                 self._send_json(200, result)
+            except PlanNotFoundError as error:
+                self._send_json(404, {"error": {"code": "PLAN_NOT_FOUND", "message": str(error)}})
+            except PlanConflictError as error:
+                self._send_json(409, {"error": {"code": "PLAN_CONFLICT", "message": str(error)}})
+            except PlanStorageError as error:
+                self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
                 message = str(error)
                 if "GEMINI_API_KEY" in message or "API key" in message:

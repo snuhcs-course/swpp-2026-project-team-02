@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import csv
 import io
-import re
 from datetime import datetime
 from pathlib import Path
-from threading import Lock
-from uuid import uuid4
 from typing import Any
 
 from license_planner.agent import GeminiToolAgent
@@ -19,65 +16,30 @@ from license_planner.user_availability import (
     save_personal_availability,
 )
 from schedule_adjuster.agent import GeminiAdjustmentAgent
-from schedule_adjuster.csv_io import render_schedule_csv as render_adjusted_csv
+from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as render_adjusted_csv
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
-from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
+from schedule_adjuster.availability import (
+    load_personal_availability as load_adjuster_availability,
+    parse_weekly_availability as parse_adjuster_availability,
+)
+from schedule_adjuster.schedule_logic import move_study_entry, remove_external_entry
+from study_plan_store import StudyPlanStore, PlanConflictError, plan_fields
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
 STUDY_PLAN_OUTPUT_DIR = BACKEND_ROOT / "license_planner" / "output"
-STUDY_PLAN_FILENAME = re.compile(r"study_plan_[0-9A-Fa-fT+_-]+\.csv")
-MAX_STUDY_PLAN_CSV_FILES = 100
-_STUDY_PLAN_OUTPUT_LOCK = Lock()
-
-
-def _prune_study_plan_csvs() -> None:
-    """Keep only the most recent generated plan CSVs in the output directory."""
-    candidates = []
-    try:
-        output_paths = STUDY_PLAN_OUTPUT_DIR.iterdir()
-        for path in output_paths:
-            if not path.is_file() or not STUDY_PLAN_FILENAME.fullmatch(path.name):
-                continue
-            try:
-                candidates.append((path.stat().st_mtime_ns, path.name, path))
-            except OSError:
-                continue
-    except OSError:
-        return
-    candidates.sort()
-    for _, _, path in candidates[:-MAX_STUDY_PLAN_CSV_FILES]:
-        try:
-            path.unlink()
-        except OSError:
-            # A locked file should not make an otherwise valid plan request fail.
-            continue
 
 
 def _save_study_plan_csv(content: str) -> str:
-    """입력 값: 생성된 일정 CSV 문자열
-    출력 값: backend 폴더 기준 재사용 가능한 CSV 상대 경로
-    기능: 각 Planning 요청 결과를 고유한 파일로 저장합니다.
-    """
-    with _STUDY_PLAN_OUTPUT_LOCK:
-        STUDY_PLAN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f%z")
-        output_path = STUDY_PLAN_OUTPUT_DIR / f"study_plan_{timestamp}_{uuid4().hex[:8]}.csv"
-        with output_path.open("x", encoding="utf-8", newline="") as output_file:
-            output_file.write(content)
-        _prune_study_plan_csvs()
-    return output_path.relative_to(BACKEND_ROOT).as_posix()
+    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(content)
 
 
 def read_study_plan_csv(filename: str) -> tuple[str, str]:
-    """Read a generated plan by its server-issued basename, without path traversal."""
-    if (not isinstance(filename, str) or "/" in filename or "\\" in filename
-            or not STUDY_PLAN_FILENAME.fullmatch(filename)):
-        raise FileNotFoundError("Study plan CSV not found")
-    output_path = (STUDY_PLAN_OUTPUT_DIR / filename).resolve()
-    if output_path.parent != STUDY_PLAN_OUTPUT_DIR.resolve() or not output_path.is_file():
-        raise FileNotFoundError("Study plan CSV not found")
-    return output_path.read_text(encoding="utf-8"), filename
+    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).download(filename)
+
+
+def list_study_plans() -> dict[str, Any]:
+    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans()}
 
 
 def _datetime(value: Any, field: str) -> datetime:
@@ -191,30 +153,58 @@ def _csv_rows(content: str) -> list[dict[str, str]]:
     return list(csv.DictReader(io.StringIO(content)))
 
 
+# AI-assisted with Codex, 2026-10-17; execution verification pending.
 def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
-    """입력 값: 대상 일정 ID와 전체 일정이 담긴 API 요청 객체
-    출력 값: 조정된 CSV와 일정 행을 포함한 JSON 객체
-    기능: 일정을 검증하고 기존 Schedule Adjuster Agent를 실행합니다.
-    """
-    if not isinstance(payload, dict) or not isinstance(payload.get("schedules"), list):
-        raise ValueError("schedules must be an array")
-    entries: list[ScheduleEntry] = []
-    for row in payload["schedules"]:
-        if not isinstance(row, dict):
-            raise ValueError("each schedules item must be an object")
-        start, end = _datetime(row.get("start_date"), "start_date"), _datetime(row.get("end_date"), "end_date")
-        if start >= end:
-            raise ValueError("schedule start_date must be before end_date")
-        entries.append(ScheduleEntry(str(row.get("schedule_id", "")), start, end, str(row.get("topic", ""))))
-    availability = load_adjuster_availability()
-    request = AdjustmentRequest(str(payload.get("schedule_id", "")), tuple(entries), availability)
+    """Adjust a snapshot and optionally update its existing generated file."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be an object")
+    entries = parse_schedule_rows(payload.get("schedules"))
+    target_id = payload.get("schedule_id")
+    if not isinstance(target_id, str) or not target_id:
+        raise ValueError("schedule_id must be a non-empty string")
+    target = next((entry for entry in entries if entry.schedule_id == target_id), None)
+    if target is None:
+        raise ValueError("schedule_id must identify an entry in schedules")
+    store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
+    snapshot = None
+    if "schedule_csv_file" in payload:
+        snapshot = store.snapshot(payload["schedule_csv_file"])
+        if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
+            raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
+    if "weekly_availability" in payload:
+        availability = parse_adjuster_availability(payload["weekly_availability"])
+        if availability is None or not any(availability.for_weekday(day) for day in range(7)):
+            raise ValueError("weekly_availability must contain at least one study window")
+    else:
+        availability = load_adjuster_availability()
+    # Preflight constraints and guard agent output before any file mutation.
+    expected = (move_study_entry(entries, target_id, availability)
+                if target.schedule_type == "study" else remove_external_entry(entries, target_id))
+    expected_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
+    request = AdjustmentRequest(target_id, entries, availability)
     tools, summary = GeminiAdjustmentAgent().adjust(request)
-    if tools.outcome is None:
-        raise RuntimeError("Agent did not apply a schedule adjustment")
-    csv_text = render_adjusted_csv(tools.schedule)
-    return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
-            "action": tools.outcome.action, "target_schedule_id": tools.outcome.schedule_id,
-            "agent_summary": summary, "tool_calls": tools.trace.calls}
+    if (tools.outcome is None or tools.outcome.schedule_id != target_id
+            or tools.outcome.action != expected_action):
+        raise RuntimeError("Agent did not apply the requested schedule adjustment")
+    try:
+        result_entries = parse_schedule_rows([
+            {"schedule_id": e.schedule_id,
+             "start_date": e.start_datetime.strftime("%Y/%m/%d/%H/%M"),
+             "end_date": e.end_datetime.strftime("%Y/%m/%d/%H/%M"), "topic": e.topic}
+            for e in tools.schedule
+        ])
+    except (ValueError, TypeError, AttributeError) as error:
+        raise RuntimeError("Agent returned invalid schedule data") from error
+    if {e.schedule_id: e for e in result_entries} != {e.schedule_id: e for e in expected}:
+        raise RuntimeError("Agent adjustment violated schedule constraints")
+    csv_text = render_adjusted_csv(result_entries)
+    result = {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
+              "action": tools.outcome.action, "target_schedule_id": target_id,
+              "agent_summary": summary, "tool_calls": tools.trace.calls}
+    if snapshot is not None:
+        store.update(snapshot, csv_text)
+        result.update(plan_fields(snapshot.identifier))
+    return result
 
 
 def read_availability() -> dict[str, Any]:

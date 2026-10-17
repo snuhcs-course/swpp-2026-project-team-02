@@ -37,25 +37,38 @@ def parse_schedule_csv(content: str) -> tuple[ScheduleEntry, ...]:
                         and "시작" in header[1] and "끝" in header[2])
     if is_english_header or is_korean_header:
         rows = rows[1:]
-    entries: list[ScheduleEntry] = []  # 검증을 통과한 원본 일정 행입니다.
-    seen_ids: set[str] = set()  # 중복 일정 ID를 차단하기 위한 집합입니다.
+    records = []
     for row_number, row in enumerate(rows, start=2):
         if len(row) not in (3, 4):
             raise ValueError(f"INVALID_CSV: row {row_number} must have 3 or 4 columns.")
-        schedule_id = row[0].strip()
-        if classify_schedule_id(schedule_id) is None:
-            raise ValueError(f"INVALID_ID: row {row_number} ID must use external-N or study-N format.")
+        records.append({"schedule_id": row[0].strip(), "start_date": row[1],
+                        "end_date": row[2], "topic": row[3] if len(row) == 4 else ""})
+    return parse_schedule_rows(records)
+
+
+# AI-assisted with Codex, 2026-10-17; execution verification pending.
+def parse_schedule_rows(rows: object) -> tuple[ScheduleEntry, ...]:
+    """Shared typed validation for JSON and CSV schedules."""
+    if not isinstance(rows, list):
+        raise ValueError("schedules must be an array")
+    entries = []
+    seen_ids = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("each schedules item must be an object")
+        schedule_id = row.get("schedule_id")
+        if not isinstance(schedule_id, str) or classify_schedule_id(schedule_id) is None:
+            raise ValueError("schedule_id must use external-N or study-N format")
         if schedule_id in seen_ids:
-            raise ValueError(f"DUPLICATE_ID: schedule_id {schedule_id!r} appears more than once.")
+            raise ValueError(f"Duplicate schedule_id: {schedule_id}")
+        start, end, topic = row.get("start_date"), row.get("end_date"), row.get("topic", "")
+        if not all(isinstance(value, str) for value in (start, end, topic)):
+            raise ValueError("start_date, end_date and topic must be strings")
+        start, end = parse_datetime(start), parse_datetime(end)
+        if start >= end:
+            raise ValueError("schedule start_date must be before end_date")
+        entries.append(ScheduleEntry(schedule_id, start, end, topic))
         seen_ids.add(schedule_id)
-        try:
-            start_date, end_date = parse_datetime(row[1]), parse_datetime(row[2])
-        except ValueError as error:
-            raise ValueError(f"INVALID_DATE: row {row_number} dates must use YYYY/MM/DD/HH/MM.") from error
-        if start_date >= end_date:
-            raise ValueError(f"INVALID_DATE_RANGE: row {row_number} start must be before end.")
-        topic = row[3].strip() if len(row) == 4 else ""
-        entries.append(ScheduleEntry(schedule_id, start_date, end_date, topic))
     return tuple(entries)
 
 

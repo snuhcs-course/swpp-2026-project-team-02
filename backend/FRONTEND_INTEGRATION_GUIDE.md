@@ -112,3 +112,156 @@ configuration, and `500` for unexpected server errors. Error bodies use
 The API also exposes availability profile read/write and schedule adjustment
 endpoints for other clients. The current Android MVP does not call them; it
 sends weekly availability as part of each plan request.
+
+## Task 2: select, adjust, and update a saved plan
+
+Implementation status: added on 2026-10-17. Fifteen isolated HTTP/storage tests
+passed using a replacement agent that executes the real domain tools. Fifteen
+existing adjustment tests passed; the planner suite passed 12/13 with an existing
+weekday-normalization expectation mismatch. Live Gemini calls were not run
+because no key was configured. Android tests could not run because the SDK
+location was unavailable. The Android UI is not changed by this backend task.
+
+### Select a plan
+
+`GET /api/v1/study-plans` returns `{"plans": [...]}`, newest modification first.
+Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`.
+An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
+an unreadable or malformed plan produces `500 STORAGE_ERROR`.
+
+```json
+{
+  "plans": [{
+    "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+    "schedule_csv_url": "/api/v1/study-plans/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+    "schedules": [{
+      "schedule_id": "study-1",
+      "start_date": "2026/10/19/18/00",
+      "end_date": "2026/10/19/19/00",
+      "topic": "Functions"
+    }]
+  }]
+}
+```
+
+Alternatively, retain `schedule_csv_file` and `schedules` directly from the
+existing generation response. Treat the identifier as opaque and retain it with
+the schedule; do not construct a filename. The current Android DTO ignores this
+field and must be extended by the FE integration task.
+
+### Adjust the selected plan
+
+`POST /api/v1/schedules/adjust` retains the existing request fields and accepts
+two additional fields:
+
+| Field | Behavior |
+| --- | --- |
+| `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
+| `weekly_availability` | Optional request override; otherwise read the saved profile. An explicit null or empty profile is invalid |
+
+Always send the complete schedule currently displayed, not only the failed row.
+The rows must match the stored plan (array order does not matter). Existing IDs,
+topics and session durations are preserved for study-session movement. An
+`external-N` target retains the existing external-event removal behavior.
+
+Example request (replace the example identifier and rows with actual values):
+
+```json
+{
+  "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedule_id": "study-1",
+  "schedules": [{
+    "schedule_id": "study-1",
+    "start_date": "2026/10/19/18/00",
+    "end_date": "2026/10/19/19/00",
+    "topic": "Functions"
+  }],
+  "weekly_availability": {
+    "monday": [{"start": "18:00", "end": "21:00"}]
+  }
+}
+```
+
+Illustrative success response; summary and trace depend on the agent:
+
+```json
+{
+  "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedule_csv_url": "/api/v1/study-plans/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedules": [{
+    "schedule_id": "study-1",
+    "start_date": "2026/10/19/19/00",
+    "end_date": "2026/10/19/20/00",
+    "topic": "Functions"
+  }],
+  "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-1,2026/10/19/19/00,2026/10/19/20/00,Functions\n",
+  "action": "rescheduled_study",
+  "target_schedule_id": "study-1",
+  "agent_summary": "The failed session was moved.",
+  "tool_calls": []
+}
+```
+
+A persistent request returns 200 only after replacing the selected file. Its
+identifier and download URL remain unchanged. Replace FE's entire displayed
+schedule with the response rows. Non-persistent responses keep their previous
+shape and omit the two file fields.
+
+### Error handling and limits
+
+| Status / code | FE handling |
+| --- | --- |
+| 422 / `INVALID_INPUT` | Correct invalid fields, duplicate IDs, missing target, or unusable availability |
+| 404 / `PLAN_NOT_FOUND` | Refresh the plan list; the file may have been pruned |
+| 409 / `PLAN_CONFLICT` | Reload the plan before resubmitting; never overwrite with stale rows |
+| 500 / `STORAGE_ERROR` | Report storage failure |
+| 502 or 503 / `UPSTREAM_ERROR` | Report agent/configuration failure |
+
+Errors keep `{"error":{"code":"...","message":"..."}}`. The current Android
+error mapper needs a dedicated 409 path in the FE integration task.
+
+If a call times out, reload before retrying: the write may have completed.
+There is no idempotency key. File reads and replacements share a process lock;
+the original file digest is checked again after the agent runs. Conflicting
+requests cannot silently overwrite one another within one server process.
+Cross-process locking is not provided.
+
+Availability in a generation or adjustment request is not saved automatically.
+If neither an override nor a saved profile exists, adjustment uses the legacy
+conflict-only rule. CSV files do not retain exam dates or plan-specific
+availability, and this task does not add partial-completion or exam-deadline
+constraints. The store retains up to 100 generated plans on a best-effort basis.
+
+### Local execution
+
+With `GEMINI_API_KEY` configured on the backend, start from the repository root:
+
+```powershell
+Set-Location backend
+python api_server.py
+```
+
+In another terminal from `backend/`, list plans and prepare a request using
+actual data. These are manual execution instructions, not recorded test results.
+
+```powershell
+$plans = Invoke-RestMethod http://127.0.0.1:8000/api/v1/study-plans
+$selected = $plans.plans | Select-Object -First 1
+if ($null -eq $selected) { throw 'Generate a plan before adjusting.' }
+$failed = $selected.schedules | Where-Object { $_.schedule_id -like 'study-*' } | Select-Object -First 1
+if ($null -eq $failed) { throw 'The selected plan has no study session.' }
+$payload = @{
+    schedule_csv_file = $selected.schedule_csv_file
+    schedule_id = $failed.schedule_id
+    schedules = @($selected.schedules)
+} | ConvertTo-Json -Depth 10
+Invoke-RestMethod -Method Post `
+    -Uri http://127.0.0.1:8000/api/v1/schedules/adjust `
+    -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))
+```
+
+For a static payload template, see `api_test_inputs/plan_adjustment_request.json`.
+Its sample file does not exist automatically; replace both the identifier and
+schedule rows with those from generation or listing. The Android Emulator base
+URL remains `http://10.0.2.2:8000/api/v1`.
