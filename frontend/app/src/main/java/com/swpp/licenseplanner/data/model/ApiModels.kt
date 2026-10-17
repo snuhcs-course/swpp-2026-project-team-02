@@ -71,12 +71,40 @@ data class ScheduleRow(
     val topic: String = "",
 )
 
-/** `POST /study-plans` response; `tool_calls`, CSV file/URL and future fields are ignored. */
+/**
+ * `POST /study-plans` response; `tool_calls`, the CSV URL and future fields are ignored.
+ * [scheduleCsvFile] is the opaque server-issued plan identity used for adjustment (GEN-02);
+ * it may be absent from older servers.
+ */
 @Serializable
 data class StudyPlanResponse(
     val schedules: List<ScheduleRow>,
     @SerialName("schedule_csv") val scheduleCsv: String = "",
     @SerialName("agent_summary") val agentSummary: String? = null,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
+)
+
+/**
+ * `POST /schedules/adjust` request (REPLAN-04, design D3): the selected plan's server file,
+ * the failed study row, the plan's full current rows, and its original creation windows.
+ */
+@Serializable
+data class ScheduleAdjustmentRequest(
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    @SerialName("schedule_id") val scheduleId: String,
+    val schedules: List<ScheduleRow>,
+    @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+)
+
+/** `POST /schedules/adjust` response; `tool_calls` and future fields are ignored. */
+@Serializable
+data class ScheduleAdjustmentResponse(
+    val schedules: List<ScheduleRow>,
+    @SerialName("schedule_csv") val scheduleCsv: String,
+    val action: String,
+    @SerialName("target_schedule_id") val targetScheduleId: String,
+    @SerialName("agent_summary") val agentSummary: String? = null,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
 )
 
 @Serializable
