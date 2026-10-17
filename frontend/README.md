@@ -3,9 +3,11 @@
 Android app for the License Planner MVP (Kotlin, Jetpack Compose, single `:app`
 module, minSdk 26, target SDK 36).
 
-**Flow:** select 컴퓨터활용능력 2급 → enter preparation start and exam dates →
-choose current level and answer example questions → set weekday study windows →
-generate a plan → browse it by week and day.
+**Flow:** home (계획 생성 / 계획 조정). Creation: select 컴퓨터활용능력 2급 →
+enter preparation start and exam dates → choose current level and answer example
+questions → set weekday study windows → generate a plan → browse it by week and
+day. Adjustment: pick a plan generated in this app session → mark one missed
+study session → see the updated plan. See [Plan adjustment](#plan-adjustment).
 
 **Scope:** written exam (필기) only; practical exam (실기) is not included. The
 questions are authored examples, not official exam questions or a validated
@@ -61,10 +63,10 @@ changed; CI starts from a fresh checkout, so its tests always run.
 
 ## Flavors
 
-| Flavor | Needs backend | Questions | Plans |
-| --- | --- | --- | --- |
-| `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen |
-| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) |
+| Flavor | Needs backend | Questions | Plans | Adjustment |
+| --- | --- | --- | --- | --- |
+| `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen | Local rule, no network |
+| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) | `POST /schedules/adjust` |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
 calculation, not backend or AI output. The live flavor never falls back to demo
@@ -99,6 +101,71 @@ Planning runs Gemini synchronously and can take tens of seconds (request timeout
 120 s). The matching routes and JSON contract are documented in
 [`backend/FRONTEND_INTEGRATION_GUIDE.md`](../backend/FRONTEND_INTEGRATION_GUIDE.md).
 
+## Plan adjustment
+
+Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
+and 계획 조정 (a list of the plans generated in this app process). Each
+successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
+match. Editing the form or a failed generation never removes an entry. The
+list is held in memory only: it survives rotation and navigation but is lost
+when the process ends. There is no server listing route.
+
+On a plan, choose exactly one missed study session (`study-N`); existing
+schedules (`external-N`) are shown but cannot be chosen. A live plan whose
+generation response had no `schedule_csv_file` can be viewed but not adjusted.
+A plan with no study sessions explains that and offers a way back. After a
+successful adjustment the same entry is updated in place, the view jumps to the
+moved session's week, and another session can be adjusted from the new rows.
+Other plans never change, even when they share schedule IDs.
+
+While an adjustment request runs, the screen shows progress; system back,
+the top-bar back, and every other action are held, and rotation keeps the same
+request. A second tap sends nothing. On failure the plan and the chosen session
+stay as they were, and 다시 시도 resends the identical request; choosing another
+session builds a new one. There is no automatic retry and no demo fallback in
+the live build. A lost connection or timeout says the result could not be
+confirmed, not that the server undid anything.
+
+**Demo:** a local demonstration rule, not the backend's policy and not AI
+output. The session moves to the first free interval inside the plan's
+original weekday windows that starts after both its own end and the latest
+other session with the same topic, and ends before the original exam date. If
+nothing fits, the app reports it and keeps the plan. Nothing is saved.
+
+**Live contract.** The app always sends four fields to
+`POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from
+generation, the chosen `schedule_id`, every current row (external rows
+included), and the `weekly_availability` from that plan's original creation
+request (not the current form):
+
+```json
+{
+  "schedule_csv_file": "license_planner/output/study_plan_20261016T180000000000+0900_abcdef12.csv",
+  "schedule_id": "study-1",
+  "schedules": [
+    {"schedule_id": "study-1", "start_date": "2026/10/19/18/00", "end_date": "2026/10/19/19/00", "topic": "함수와 데이터 관리"},
+    {"schedule_id": "external-1", "start_date": "2026/10/22/18/00", "end_date": "2026/10/22/19/00", "topic": ""}
+  ],
+  "weekly_availability": {"monday": [{"start": "18:00", "end": "20:00"}]}
+}
+```
+
+The app accepts a 200 response only if `action` is `rescheduled_study`,
+`target_schedule_id` matches, rows parse with end after start, IDs are
+nonblank and unique, the target row is present, and any returned
+`schedule_csv_file` equals the one sent. Anything else leaves the plan as it was.
+The app never sends the availability profile (`PUT /availability`).
+
+**Backend dependency (Task 2), not yet met.** The current backend ignores
+`schedule_csv_file` and `weekly_availability`, reads the saved availability
+profile, and does not write the adjusted CSV back. The agreed target is:
+use the given file and save the result to that same file before replying;
+when `weekly_availability` is present, validate it like generation does and use
+it instead of the saved profile (invalid or all-empty → 422, nothing changed);
+when it is omitted or null, keep the saved-profile fallback. Until a backend
+revision shows this, a live 200 does not prove the plan file was updated, and
+live adjustment is unverified.
+
 ## Verification
 
 - Unit tests pass for both flavors (JVM, with MockWebServer for HTTP).
@@ -107,6 +174,11 @@ Planning runs Gemini synchronously and can take tens of seconds (request timeout
   `--backend-ref HEAD`, the backend in the same checkout.
 - Demo and live flows were run end to end on an emulator and compared with the
   Figma design.
+- Plan adjustment: JVM tests cover the request body, response checks, the demo
+  rule and the session/adjustment state. The demo flow and the live screens
+  (against a scripted local test server, not the backend or Gemini) were run on
+  an emulator. Adjustment against a real backend is not verified yet (see the
+  backend dependency above).
 
 Passing CI (unit tests, contract check, coverage, build, and lint) is offline
 evidence only. It does not run the backend server, Gemini planning, an emulator,
@@ -116,5 +188,6 @@ or the UI; those still need the manual live and emulator checks above.
 
 - Written exam only; practical-exam support is an open decision.
 - Not tested on a physical device; TalkBack support is incomplete.
-- Form state is held in memory and is lost if the process is killed.
+- Form state and the generated-plan list are held in memory and are lost if
+  the process is killed.
 - Live plans come from Gemini, so session counts can vary for the same inputs.
