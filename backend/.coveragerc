@@ -1,4 +1,4 @@
-# Offline unittest coverage for CI. Run from backend/; see the CI section of ../README.md.
+# Offline unittest coverage for CI. Run from backend/; see "Checks and coverage" in README.md.
 [run]
 branch = True
 relative_files = True

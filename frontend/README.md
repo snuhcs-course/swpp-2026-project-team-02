@@ -52,6 +52,10 @@ flavor's and `debug` source sets, including Compose UI code that JVM tests do
 not run; AGP leaves generated `R` and `BuildConfig` classes out. Coverage
 measures JVM tests only, not on-device or instrumentation tests.
 
+CI uploads the unit-test results, lint reports, and both coverage reports as the
+`android-reports` artifact, and the two debug APKs as `android-debug-apks` when
+the job succeeds; both are kept 7 days. No minimum coverage is enforced.
+
 Gradle may report test tasks as `UP-TO-DATE` and skip them when nothing
 changed; CI starts from a fresh checkout, so its tests always run.
 

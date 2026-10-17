@@ -40,48 +40,13 @@ Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs two independent
-jobs, **Backend** and **Android**, on pull requests to `main`, pushes to `main`,
-manual dispatch, and daily at 00:00 UTC (09:00 Asia/Seoul). GitHub runs the
-scheduled event on the default branch only and may start it late.
-
-**Backend** (Python 3.14, from `backend/`):
-
-```bash
-python -m pip install -r requirements-ci.txt   # CI-only: pinned coverage.py
-python -c "import sys; import api_service; print(sys.executable)"
-python -m coverage erase
-python -m coverage run -m unittest discover -s license_planner_tests -v
-python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
-python -m coverage report -m
-python -m coverage xml
-python -m coverage html
-```
-
-The backend application has no third-party dependencies; to reproduce locally,
-install `requirements-ci.txt` into a separate virtual environment rather than the
-`swpp` runtime environment. [`backend/.coveragerc`](backend/.coveragerc) measures
-branch coverage over the production modules, including HTTP and Gemini agent
-code that no unit test runs, and writes `backend/coverage-results/` (generated;
-do not commit it).
-
-**Android** (Java 25, Android SDK 36) runs both flavors' JVM unit tests, the
-request contract check against this checkout's backend, JaCoCo unit-test
-coverage, debug APK builds, and lint. Commands are in
-[`frontend/README.md`](frontend/README.md#checks).
-
-**Artifacts** (kept 7 days): `backend-coverage` (XML and HTML),
-`android-reports` (unit-test results, lint, and demo/live coverage under
-`frontend/app/build/reports/coverage/test/{demo,live}/debug/`), and
-`android-debug-apks` (only when the Android job succeeds). Coverage is reported
-without a minimum percentage; any threshold should be agreed from measured
-baselines.
-
-**Offline** means the tests call no external application service: no Gemini
-key, running backend, emulator, or deployed server is used. Downloading actions,
-Python packages, the JDK, the Android SDK, and Gradle dependencies still requires
-network access. A passing run therefore does not verify Gemini planning, the
-HTTP server, or the Android UI.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
+pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the backend
+unit tests with coverage, and the Android unit tests, request contract check,
+coverage, debug APK builds, and lint. Commands and report locations are in
+[`backend/README.md`](backend/README.md#checks-and-coverage) and
+[`frontend/README.md`](frontend/README.md#checks). CI uses no Gemini key, running
+backend, or emulator, so it does not verify live Gemini planning or the Android UI.
 
 ## Open decisions
 
