@@ -1,6 +1,8 @@
 package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.TestFixtures
+import com.swpp.licenseplanner.data.AdjustmentInput
+import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanningRepository
@@ -59,6 +61,11 @@ class PlanFormViewModelTest {
         }
     }
 
+    /** These tests never adjust; PlanAdjustmentViewModelTest covers adjustment. */
+    private class UnusedAdjustment : AdjustmentRepository {
+        override suspend fun adjust(input: AdjustmentInput) = error("not used")
+    }
+
     private val questions = TestFixtures.publicQuestions()
     private val plan = StudyPlanResponse(
         schedules = listOf(ScheduleRow("study-1", "2026/10/05/18/00", "2026/10/05/19/30", "셀 참조")),
@@ -69,7 +76,7 @@ class PlanFormViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     private fun viewModel(q: QuestionRepository, p: PlanningRepository) =
-        PlanFormViewModel(q, p, today = LocalDate.of(2026, 10, 5))
+        PlanFormViewModel(q, p, UnusedAdjustment(), today = LocalDate.of(2026, 10, 5))
 
     /** Certification, dates and level chosen; questions not yet loaded. */
     private fun PlanFormViewModel.fillBeforeAssessment() {
