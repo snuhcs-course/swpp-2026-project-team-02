@@ -8,7 +8,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 
 /**
  * `POST <base>/schedules/adjust` with design D3's four-field body (REPLAN-04). Responses are
@@ -30,8 +32,10 @@ class LiveAdjustmentRepository(
             schedules = input.schedules,
             weeklyAvailability = input.original.weeklyAvailability,
         )
-        val body = ApiJson.encodeToString(ScheduleAdjustmentRequest.serializer(), request)
-            .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE)
+        val body = OneShotBody(
+            ApiJson.encodeToString(ScheduleAdjustmentRequest.serializer(), request)
+                .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE),
+        )
         val httpRequest = Request.Builder()
             .url(apiUrl(baseUrl, "/schedules/adjust"))
             .post(body)
@@ -77,6 +81,17 @@ class LiveAdjustmentRepository(
             start == null || end == null || !end.isAfter(start)
         }
         return badRow?.let { "invalid schedule row ${it.scheduleId}" }
+    }
+
+    /**
+     * Stops OkHttp from replaying the adjustment by itself (408/503 `Retry-After: 0` follow-ups,
+     * redirects, recovery after sending); only an explicit retry may send it again (REPLAN-05).
+     */
+    private class OneShotBody(private val delegate: RequestBody) : RequestBody() {
+        override fun contentType() = delegate.contentType()
+        override fun contentLength() = delegate.contentLength()
+        override fun writeTo(sink: BufferedSink) = delegate.writeTo(sink)
+        override fun isOneShot() = true
     }
 
     companion object {

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -151,6 +152,39 @@ class LiveAdjustmentRepositoryTest {
         assertEquals(AdjustmentOutcome.Failure(ApiError.ServerUnavailable(null)), adjust())
         assertEquals(5, server.requestCount)
     }
+
+    /**
+     * One call sends once and reports [first]'s failure even with another response queued; only an
+     * explicit retry sends the unchanged snapshot again (REPLAN-05).
+     */
+    private fun assertNotReplayed(first: MockResponse, expected: ApiError) {
+        server.enqueue(first)
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"second"}}"""))
+        assertEquals(AdjustmentOutcome.Failure(expected), adjust())
+        assertEquals(1, server.requestCount)
+        assertEquals(AdjustmentOutcome.Failure(ApiError.InvalidInput("second")), adjust())
+        assertEquals(2, server.requestCount)
+        assertEquals(server.takeRequest().body.readUtf8(), server.takeRequest().body.readUtf8())
+    }
+
+    @Test
+    fun requestTimeoutIsNotReplayed() = assertNotReplayed(
+        MockResponse().setResponseCode(408).setHeader("Retry-After", "0"),
+        ApiError.ServerFailure(408),
+    )
+
+    @Test
+    fun unavailableWithZeroRetryAfterIsNotReplayed() = assertNotReplayed(
+        MockResponse().setResponseCode(503).setHeader("Retry-After", "0")
+            .setBody("""{"error":{"code":"SERVICE_UNAVAILABLE","message":"busy"}}"""),
+        ApiError.ServerUnavailable("busy"),
+    )
+
+    @Test
+    fun disconnectAfterSendingIsNotReplayed() = assertNotReplayed(
+        MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST),
+        ApiError.Connection,
+    )
 
     /** Task 2 has not fixed the stale/deleted-file status; any such failure stays a failure. */
     @Test
