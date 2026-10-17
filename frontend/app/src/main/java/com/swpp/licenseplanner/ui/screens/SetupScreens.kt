@@ -20,6 +20,7 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.Validation
 import com.swpp.licenseplanner.ui.components.AppScreen
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.FieldLabel
@@ -101,6 +102,40 @@ fun DatesScreen(
 
 private const val START = "start"
 private const val EXAM = "exam"
+
+/**
+ * Frames 2122:2/2122:58: changes only the exam date after a demo shortfall. The draft
+ * (epoch day) is committed only by [onConfirm]; back leaves it uncommitted.
+ */
+@Composable
+fun ExamDateEditScreen(form: PlanFormState, onBack: () -> Unit, onConfirm: (LocalDate) -> Unit) {
+    var draftDay by rememberSaveable { mutableStateOf(form.examDate?.toEpochDay()) }
+    var picking by rememberSaveable { mutableStateOf(false) }
+    val draft = draftDay?.let(LocalDate::ofEpochDay)
+    val error = Validation.datesError(form.preparationStart, draft)
+    AppScreen(
+        title = CERTIFICATION_NAME,
+        onNav = onBack,
+        footer = {
+            PrimaryButton(
+                "변경한 날짜로 계획 확인",
+                { if (draft != null) onConfirm(draft) },
+                enabled = error == null,
+                subtitle = "모의고사를 다시 풀지 않아요",
+            )
+        },
+    ) {
+        Heading("시험 일정 바꾸기", "모의고사 답안과 공부 시간은 그대로예요. 바꾼 날짜로 계획을 다시 확인해요.")
+        DateField("필기 시험일", draft) { picking = true }
+        if (draft != null && error != null) Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
+    }
+    if (picking) {
+        DatePickerSheet(draft ?: form.preparationStart.plusDays(1), onDismiss = { picking = false }) {
+            draftDay = it.toEpochDay()
+            picking = false
+        }
+    }
+}
 
 @Composable
 private fun DateField(label: String, date: LocalDate?, onClick: () -> Unit) {

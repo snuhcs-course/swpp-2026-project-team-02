@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -11,6 +12,7 @@ import androidx.navigation.compose.rememberNavController
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
+import com.swpp.licenseplanner.ui.screens.ExamDateEditScreen
 import com.swpp.licenseplanner.ui.screens.GenerateScreen
 import com.swpp.licenseplanner.ui.screens.HomeScreen
 import com.swpp.licenseplanner.ui.screens.LevelScreen
@@ -35,6 +37,7 @@ private object Routes {
     const val GENERATE = "generate"
     const val PLAN = "plan"
     const val SHORTFALL = "shortfall"
+    const val EDIT_EXAM_DATE = "edit-exam-date"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -174,9 +177,29 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 ShortfallScreen(
                     required = shortfall.required,
                     available = shortfall.available,
-                    onEditDates = { nav.popBackStack(Routes.DATES, inclusive = false) },
+                    onEditDates = { nav.go(Routes.EDIT_EXAM_DATE) },
                     onEditAvailability = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                 )
+            }
+        }
+        // A changed date commits and recalculates once,
+        // replacing the old warning and this editor; back or an unchanged date returns to the warning.
+        // A tap that lands after the editor started leaving is ignored, so it cannot pop the new result.
+        composable(Routes.EDIT_EXAM_DATE) { entry ->
+            ExamDateEditScreen(form, onBack = { nav.popBackStack() }) { date ->
+                when {
+                    !entry.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) -> Unit
+                    date == form.examDate -> nav.popBackStack()
+                    else -> {
+                        viewModel.setExamDate(date)
+                        if (viewModel.generate()) {
+                            nav.navigate(Routes.GENERATE) {
+                                popUpTo(Routes.SHORTFALL) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    }
+                }
             }
         }
     }

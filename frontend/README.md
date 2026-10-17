@@ -9,6 +9,14 @@ questions → set weekday study windows → generate a plan → browse it by wee
 day. Adjustment: pick a plan generated in this app session → mark one missed
 study session → see the updated plan. See [Plan adjustment](#plan-adjustment).
 
+**Exam-date change (demo):** when the demo planner shows the insufficient-time
+warning, “시험 일정 바꾸기” opens an editor with only the exam date. Confirming a
+changed date recalculates straight away and shows a fresh warning or the plan; the
+assessment answers and study windows are kept, so there is no need to retake the
+example questions or re-enter availability. The original setup screen is unchanged.
+Back (or an unchanged date) returns to the warning and discards the unconfirmed
+date.
+
 **Scope:** written exam (필기) only; practical exam (실기) is not included. The
 questions are authored examples, not official exam questions or a validated
 diagnostic.
@@ -210,3 +218,5 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Form state and the generated-plan list are held in memory and are lost if
   the process is killed.
 - Live plans come from Gemini, so session counts can vary for the same inputs.
+- Live insufficient capacity arrives as a generic generation error with retry and
+  “입력 수정하기”, so the warning-origin exam-date editor is demo-only.

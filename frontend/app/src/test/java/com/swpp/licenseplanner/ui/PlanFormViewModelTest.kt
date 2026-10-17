@@ -94,8 +94,11 @@ class PlanFormViewModelTest {
         stepDuration(Weekday.MONDAY, 2)
     }
 
-    private suspend fun TestScope.loadedViewModel(planning: PlanningRepository): PlanFormViewModel =
-        viewModel(FakeQuestions(QuestionOutcome.Loaded(questions)), planning).apply {
+    private suspend fun TestScope.loadedViewModel(
+        planning: PlanningRepository,
+        questionRepo: QuestionRepository = FakeQuestions(QuestionOutcome.Loaded(questions)),
+    ): PlanFormViewModel =
+        viewModel(questionRepo, planning).apply {
             fillBeforeAssessment()
             loadQuestions()
             advanceUntilIdle()
@@ -269,5 +272,90 @@ class PlanFormViewModelTest {
         advanceUntilIdle()
         assertFalse(failedQuestions.generation.value is GenerationState.Success)
         assertEquals(GenerationState.Idle, failedQuestions.generation.value)
+    }
+
+    // --- Exam-date edit after a demo shortfall (synthetic JVM checks, not a device route) ---
+
+    private val firstShortfall = PlanOutcome.DemoShortfall(required = 30, available = 1)
+
+    /** [later] equals [earlier] except for exam_date, which is [examDate] in wire form. */
+    private fun assertOnlyExamDateChanged(earlier: StudyPlanRequest, later: StudyPlanRequest, examDate: String) {
+        assertEquals(examDate, later.examDate)
+        assertEquals(earlier.copy(examDate = examDate), later)
+    }
+
+    @Test fun changedDateRecalculationKeepsEveryOtherInput() = runTest(dispatcher) {
+        val questionRepo = FakeQuestions(QuestionOutcome.Loaded(questions))
+        val planning = FakePlanning(firstShortfall, PlanOutcome.DemoShortfall(30, 2), PlanOutcome.Success(plan, isDemo = true))
+        val vm = loadedViewModel(planning, questionRepo)
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        val formBefore = vm.form.value
+
+        vm.setExamDate(LocalDate.of(2026, 11, 23))
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(GenerationState.DemoShortfall(30, 2), vm.generation.value)
+
+        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(GenerationState.Success(plan, isDemo = true), vm.generation.value)
+
+        assertEquals(3, planning.requests.size)
+        assertOnlyExamDateChanged(planning.requests[0], planning.requests[1], "2026/11/23/00/00")
+        assertOnlyExamDateChanged(planning.requests[0], planning.requests[2], "2026/12/14/00/00")
+        assertEquals(UNKNOWN_KEY, planning.requests[2].assessmentResults.results.single { it.problemId == 1 }.userAnswer)
+        assertEquals(formBefore.copy(examDate = LocalDate.of(2026, 12, 14)), vm.form.value)
+        assertEquals(1, questionRepo.calls)
+        assertEquals(QuestionLoadState.Loaded, vm.questionLoad.value)
+    }
+
+    @Test fun delayedChangedDateRecalculationSendsOneRequest() = runTest(dispatcher) {
+        val questionRepo = FakeQuestions(QuestionOutcome.Loaded(questions))
+        val planning = FakePlanning(firstShortfall, PlanOutcome.Success(plan, isDemo = true))
+        val vm = loadedViewModel(planning, questionRepo)
+        vm.generate()
+        advanceUntilIdle()
+
+        planning.gate = CompletableDeferred()
+        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        assertTrue(vm.generate())
+        assertFalse(vm.generate())
+        vm.setExamDate(LocalDate.of(2027, 1, 4)) // ignored while the request is in flight
+        advanceUntilIdle()
+        assertEquals(GenerationState.Loading, vm.generation.value)
+        planning.gate!!.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2, planning.requests.size)
+        assertOnlyExamDateChanged(planning.requests[0], planning.requests[1], "2026/12/14/00/00")
+        assertEquals(LocalDate.of(2026, 12, 14), vm.form.value.examDate)
+        assertEquals(GenerationState.Success(plan, isDemo = true), vm.generation.value)
+        assertEquals(1, questionRepo.calls)
+    }
+
+    @Test fun changedDateFailureRetriesTheIdenticalRequest() = runTest(dispatcher) {
+        val questionRepo = FakeQuestions(QuestionOutcome.Loaded(questions))
+        val failure = ApiError.ServerFailure(502)
+        val planning = FakePlanning(firstShortfall, PlanOutcome.Failure(failure), PlanOutcome.Success(plan, isDemo = false))
+        val vm = loadedViewModel(planning, questionRepo)
+        vm.generate()
+        advanceUntilIdle()
+
+        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        vm.generate()
+        advanceUntilIdle()
+        assertEquals(GenerationState.Failure(failure), vm.generation.value)
+        assertEquals(LocalDate.of(2026, 12, 14), vm.form.value.examDate)
+        assertTrue(vm.plans.value.isEmpty()) // no fallback plan replaced the failure
+
+        vm.retryGeneration()
+        advanceUntilIdle()
+        assertEquals(3, planning.requests.size)
+        assertOnlyExamDateChanged(planning.requests[0], planning.requests[1], "2026/12/14/00/00")
+        assertEquals(planning.requests[1], planning.requests[2])
+        assertEquals(GenerationState.Success(plan, isDemo = false), vm.generation.value)
+        assertEquals(1, questionRepo.calls)
     }
 }
