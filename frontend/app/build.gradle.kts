@@ -43,6 +43,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // JVM unit-test JaCoCo reports for CI (create<Flavor>DebugUnitTestCoverageReport).
+            enableUnitTestCoverage = true
+        }
         release {
             optimization {
                 enable = false

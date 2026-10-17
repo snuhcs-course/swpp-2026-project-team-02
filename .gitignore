@@ -5,3 +5,4 @@
 backend/config/user_availability.json
 **/.idea
 backend/license_planner/output/
+/backend/coverage-results/

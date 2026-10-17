@@ -1,0 +1,27 @@
+# Offline unittest coverage for CI. Run from backend/; see "Checks and coverage" in README.md.
+[run]
+branch = True
+relative_files = True
+# Measure the whole backend so production modules no test imports still count as unexecuted.
+source = .
+data_file = coverage-results/.coverage
+
+[report]
+# Production code only: tests, scenario runners, generated outputs and caches are left out.
+include =
+    api_service.py
+    api_server.py
+    assessment_service.py
+    license_planner/*
+    schedule_adjuster/*
+    assessment_questionnaire/*
+    certification_selector/*
+omit =
+    */output/*
+    */__pycache__/*
+
+[xml]
+output = coverage-results/coverage.xml
+
+[html]
+directory = coverage-results/html

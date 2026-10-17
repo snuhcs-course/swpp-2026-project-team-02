@@ -1,0 +1,2 @@
+# CI-only test tooling. The backend application itself uses only the standard library.
+coverage==7.16.2

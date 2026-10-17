@@ -130,6 +130,34 @@ python run_schedule_adjuster_test_cases.py
 
 See `schedule_adjuster/README.md` for behavior assumptions and the integration test format.
 
+## Checks and coverage
+
+CI ([`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the
+offline unit tests under coverage with Python 3.14:
+
+```bash
+python -m pip install -r requirements-ci.txt   # CI-only: pinned coverage.py
+python -c "import sys; import api_service; print(sys.executable)"
+python -m coverage erase
+python -m coverage run -m unittest discover -s license_planner_tests -v
+python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
+python -m coverage report -m
+python -m coverage xml
+python -m coverage html
+```
+
+The application has no third-party dependencies; to reproduce this locally,
+install `requirements-ci.txt` into a separate virtual environment rather than the
+`swpp` runtime environment. `.coveragerc` measures branch coverage over the
+production modules, including HTTP and Gemini agent code that no unit test runs,
+and writes `coverage-results/coverage.xml` and `coverage-results/html/`
+(generated; do not commit them). CI uploads both as the `backend-coverage`
+artifact, kept 7 days. No minimum percentage is enforced; agree on any threshold
+from measured baselines.
+
+These tests use no Gemini key or running server, so passing them does not verify
+Gemini planning or the HTTP server.
+
 ## Gemini configuration
 
 Put `GEMINI_API_KEY` in `backend/.env` file or the appropriate process environment. The key is read by the Gemini Agent and is not written to generated traces. Model and tool runtime settings are configured in each program's settings/agent module.

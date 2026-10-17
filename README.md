@@ -38,6 +38,16 @@ the app.
 
 Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
+pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the backend
+unit tests with coverage, and the Android unit tests, request contract check,
+coverage, debug APK builds, and lint. Commands and report locations are in
+[`backend/README.md`](backend/README.md#checks-and-coverage) and
+[`frontend/README.md`](frontend/README.md#checks). CI uses no Gemini key, running
+backend, or emulator, so it does not verify live Gemini planning or the Android UI.
+
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently

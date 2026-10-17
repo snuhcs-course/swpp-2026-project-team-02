@@ -16,6 +16,7 @@ diagnostic.
 Open this `frontend/` directory (not the repository root) in Android Studio and
 let Gradle sync. Pick a build variant: `demoDebug` (default) or `liveDebug`.
 
+The Gradle daemon requires Java 25 (`gradle/gradle-daemon-jvm.properties`).
 From the command line, using Android Studio's bundled Java runtime:
 
 ```bash
@@ -25,6 +26,38 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew testDemoDebugUnitTest testLiveDebugUnitTest   # unit tests
 ./gradlew installDemoDebug                              # install on a running emulator
 ```
+
+## Checks
+
+CI runs these in order (Java 25, Android SDK platform 36 and build-tools
+36.0.0, Python 3.14):
+
+```bash
+# from frontend/
+bash ./gradlew --no-daemon testDemoDebugUnitTest testLiveDebugUnitTest
+
+# from the repository root; uses the request exported by the unit tests above
+python frontend/contract_checks/verify_request.py --backend-ref HEAD \
+    --request frontend/app/build/contract-check/study-plan-request.json
+
+# from frontend/
+bash ./gradlew --no-daemon createDemoDebugUnitTestCoverageReport createLiveDebugUnitTestCoverageReport
+bash ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug lintDemoDebug lintLiveDebug
+```
+
+Debug builds enable JVM unit-test coverage. JaCoCo HTML and `report.xml` are
+written to `app/build/reports/coverage/test/demo/debug/` and
+`app/build/reports/coverage/test/live/debug/`. Each covers `main` plus that
+flavor's and `debug` source sets, including Compose UI code that JVM tests do
+not run; AGP leaves generated `R` and `BuildConfig` classes out. Coverage
+measures JVM tests only, not on-device or instrumentation tests.
+
+CI uploads the unit-test results, lint reports, and both coverage reports as the
+`android-reports` artifact, and the two debug APKs as `android-debug-apks` when
+the job succeeds; both are kept 7 days. No minimum coverage is enforced.
+
+Gradle may report test tasks as `UP-TO-DATE` and skip them when nothing
+changed; CI starts from a fresh checkout, so its tests always run.
 
 ## Flavors
 
@@ -70,9 +103,14 @@ Planning runs Gemini synchronously and can take tens of seconds (request timeout
 
 - Unit tests pass for both flavors (JVM, with MockWebServer for HTTP).
 - `contract_checks/verify_request.py` checks the request the app serializes
-  against the pinned backend source, offline (no server or Gemini).
+  against a backend revision's source, offline (no server or Gemini). CI uses
+  `--backend-ref HEAD`, the backend in the same checkout.
 - Demo and live flows were run end to end on an emulator and compared with the
   Figma design.
+
+Passing CI (unit tests, contract check, coverage, build, and lint) is offline
+evidence only. It does not run the backend server, Gemini planning, an emulator,
+or the UI; those still need the manual live and emulator checks above.
 
 ## Known limitations
 

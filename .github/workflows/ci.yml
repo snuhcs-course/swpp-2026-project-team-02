@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Daily 00:00 UTC (09:00 Asia/Seoul) on the default branch.
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Including the event keeps push and scheduled runs on main from cancelling each other.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install CI coverage tool
+        run: python -m pip install -r requirements-ci.txt
+
+      - name: Check interpreter and imports
+        run: python -c "import sys; import api_service; print(sys.executable)"
+
+      - name: Reset coverage data
+        id: coverage-erase
+        run: python -m coverage erase
+
+      - name: License planner unit tests
+        run: python -m coverage run -m unittest discover -s license_planner_tests -v
+
+      - name: Schedule adjuster unit tests
+        if: ${{ !cancelled() && steps.coverage-erase.outcome == 'success' }}
+        run: python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
+
+      - name: Coverage reports
+        if: ${{ always() && steps.coverage-erase.outcome == 'success' }}
+        run: |
+          python -m coverage report -m
+          python -m coverage xml
+          python -m coverage html
+
+      - name: Validate coverage reports
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          index = Path("coverage-results/html/index.html")
+          if not index.is_file() or index.stat().st_size == 0:
+              raise SystemExit(f"Missing or empty {index}")
+          root = ET.parse("coverage-results/coverage.xml").getroot()
+          lines = int(root.get("lines-valid", "0"))
+          files = {node.get("filename") for node in root.iter("class")}
+          if lines <= 0 or "api_server.py" not in files:
+              raise SystemExit("coverage.xml lacks the production source denominator")
+          print(f"{len(files)} files, {lines} lines, line rate {root.get('line-rate')}, "
+                f"branch rate {root.get('branch-rate')}")
+          EOF
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage-results/coverage.xml
+            backend/coverage-results/html/
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+
+      # Sole Gradle cache; by default it writes only from the default branch, so PR runs never write.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Unit tests (demo and live)
+        run: bash ./gradlew --no-daemon testDemoDebugUnitTest testLiveDebugUnitTest
+
+      - name: Contract check against this checkout's backend
+        working-directory: .
+        run: >-
+          python frontend/contract_checks/verify_request.py
+          --backend-ref HEAD
+          --request frontend/app/build/contract-check/study-plan-request.json
+
+      - name: Unit test coverage reports (demo and live)
+        run: bash ./gradlew --no-daemon createDemoDebugUnitTestCoverageReport createLiveDebugUnitTestCoverageReport
+
+      - name: Validate coverage reports
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          for flavor in ("demo", "live"):
+              report = Path("app/build/reports/coverage/test") / flavor / "debug"
+              index = report / "index.html"
+              if not index.is_file() or index.stat().st_size == 0:
+                  raise SystemExit(f"Missing or empty {index}")
+              root = ET.parse(report / "report.xml").getroot()
+              classes = [c for c in root.iter("class") if c.get("name", "").startswith("com/swpp/licenseplanner/")]
+              line = next((c for c in root.findall("counter") if c.get("type") == "LINE"), None)
+              lines = int(line.get("missed")) + int(line.get("covered")) if line is not None else 0
+              if not classes or lines <= 0:
+                  raise SystemExit(f"{report / 'report.xml'} lacks project classes or lines")
+              print(f"{flavor}Debug: {len(classes)} classes, {line.get('covered')}/{lines} lines covered")
+          EOF
+
+      - name: Build debug APKs and lint
+        run: bash ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug lintDemoDebug lintLiveDebug
+
+      - name: Upload test, lint and coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-reports
+          path: |
+            frontend/app/build/test-results/test*DebugUnitTest/
+            frontend/app/build/reports/tests/test*DebugUnitTest/
+            frontend/app/build/reports/lint-results-*Debug.*
+            frontend/app/build/reports/coverage/test/demo/debug/
+            frontend/app/build/reports/coverage/test/live/debug/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-debug-apks
+          path: |
+            frontend/app/build/outputs/apk/demo/debug/app-demo-debug.apk
+            frontend/app/build/outputs/apk/live/debug/app-live-debug.apk
+          if-no-files-found: error
+          retention-days: 7
