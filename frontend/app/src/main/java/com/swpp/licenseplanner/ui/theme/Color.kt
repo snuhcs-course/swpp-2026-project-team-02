@@ -2,7 +2,7 @@ package com.swpp.licenseplanner.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Grayscale tokens from the Figma frames listed in design D10.
+// Grayscale tokens from the Figma frames.
 val Ink = Color(0xFF1A1A1A)
 val InkBody = Color(0xFF3D3D3D)
 val InkSecondary = Color(0xFF525252)

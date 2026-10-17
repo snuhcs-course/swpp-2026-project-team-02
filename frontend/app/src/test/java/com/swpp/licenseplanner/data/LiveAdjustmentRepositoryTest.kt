@@ -20,7 +20,7 @@ import org.junit.Test
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
-/** REPLAN-04/05 transport against a local mock server; not Task 2 backend verification. */
+/** Transport against a local mock server; not backend verification. */
 class LiveAdjustmentRepositoryTest {
     private lateinit var server: MockWebServer
 
@@ -155,7 +155,7 @@ class LiveAdjustmentRepositoryTest {
 
     /**
      * One call sends once and reports [first]'s failure even with another response queued; only an
-     * explicit retry sends the unchanged snapshot again (REPLAN-05).
+     * explicit retry sends the unchanged snapshot again.
      */
     private fun assertNotReplayed(first: MockResponse, expected: ApiError) {
         server.enqueue(first)
@@ -186,7 +186,7 @@ class LiveAdjustmentRepositoryTest {
         ApiError.Connection,
     )
 
-    /** Task 2 has not fixed the stale/deleted-file status; any such failure stays a failure. */
+    /** The backend has not fixed the stale/deleted-file status; any such failure stays a failure. */
     @Test
     fun staleOrDeletedFileErrorsAreFailures() {
         val stale = listOf(

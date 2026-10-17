@@ -6,7 +6,7 @@ import com.swpp.licenseplanner.domain.DemoScheduleAdjuster
 
 /**
  * Demo-flavor adjustment: a local, labeled calculation using the plan's original windows and
- * exam date (design D5). No HTTP, no AI summary, and nothing is saved outside the app process.
+ * exam date. No HTTP, no AI summary, and nothing is saved outside the app process.
  */
 class DemoAdjustmentRepository : AdjustmentRepository {
     override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome =

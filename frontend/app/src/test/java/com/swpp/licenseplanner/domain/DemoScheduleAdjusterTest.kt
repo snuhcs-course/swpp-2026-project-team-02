@@ -7,7 +7,7 @@ import com.swpp.licenseplanner.data.model.TimeWindow
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** REPLAN-07 local rule (design D5). 2026-10-19 is a Monday. */
+/** Local rule. 2026-10-19 is a Monday. */
 class DemoScheduleAdjusterTest {
     private fun request(windows: Map<String, List<TimeWindow>>, exam: String = "2026/12/14/00/00") = StudyPlanRequest(
         certificationId = CERTIFICATION_ID,

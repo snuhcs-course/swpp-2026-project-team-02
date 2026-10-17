@@ -2,7 +2,7 @@ package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.BuildConfig
 
-/** Demo flavor wiring (design D2): local questions, the labeled demo planner and demo adjuster. */
+/** Demo flavor wiring: local questions, the labeled demo planner and demo adjuster. */
 object FlavorRepositories {
     init {
         check(BuildConfig.DEMO_MODE) { "demo repositories in a non-demo build" }

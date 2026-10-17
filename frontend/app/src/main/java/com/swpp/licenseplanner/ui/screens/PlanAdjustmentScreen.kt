@@ -29,7 +29,7 @@ import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.theme.Ink
 
 /**
- * REPLAN-03/05/06/08: the selected plan's schedules by week with one selectable failed study
+ * The selected plan's schedules by week with one selectable failed study
  * session, then progress, error with retry, or the updated rows. Day and session cards reuse
  * the plan screen's rendering (frame 2007:253). While a request runs, back and every other
  * action are held so the mutation is neither abandoned nor repeated.
@@ -50,7 +50,7 @@ fun PlanAdjustmentScreen(
 
     val weeks = remember(plan.current.schedules) { PlanGrouping.weeks(plan.current.schedules) }
     var weekIndex by rememberSaveable(plan.ordinal) { mutableIntStateOf(0) }
-    // Show the moved session's week after success (REPLAN-06).
+    // Show the moved session's week after success.
     LaunchedEffect(state, weeks) {
         val target = (state as? AdjustmentState.Success)?.targetScheduleId ?: return@LaunchedEffect
         val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == target } } }

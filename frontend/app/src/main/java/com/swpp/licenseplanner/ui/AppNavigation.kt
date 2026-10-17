@@ -21,7 +21,7 @@ import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
 
-/** One route per step (design D4), plus home, plan list and adjustment (REPLAN-01). */
+/** One route per step, plus home, plan list and adjustment. */
 private object Routes {
     const val HOME = "home"
     const val PLAN_LIST = "plan_list"
@@ -51,7 +51,7 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
-/** The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation (FLOW-07, REPLAN-08). */
+/** The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation. */
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
@@ -148,7 +148,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
             )
         }
-        // Reads the stored plan, so an adjustment made from the list is shown here too (design D1).
+        // Reads the stored plan, so an adjustment made from the list is shown here too.
         composable(Routes.PLAN) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()

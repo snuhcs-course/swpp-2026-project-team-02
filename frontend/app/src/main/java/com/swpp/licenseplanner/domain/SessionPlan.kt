@@ -4,7 +4,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 
 /**
- * One successful generation kept for the app process (design D1, REPLAN-02). [ordinal] is the
+ * One successful generation kept for the app process. [ordinal] is the
  * local key for lists and navigation; it is never sent to a server. [original] is the immutable
  * creation request, so later form edits never change this plan's windows or exam date.
  * [scheduleCsvFile] is the exact nonblank server identity from generation (live only).
@@ -18,7 +18,7 @@ data class SessionPlan(
 ) {
     val studyCount: Int get() = current.schedules.count { !it.scheduleId.startsWith(EXTERNAL_PREFIX) }
 
-    /** A live plan without a server identity can be viewed but not adjusted (REPLAN-03). */
+    /** A live plan without a server identity can be viewed but not adjusted. */
     val hasIdentity: Boolean get() = isDemo || scheduleCsvFile != null
 
     fun isStudy(scheduleId: String): Boolean =

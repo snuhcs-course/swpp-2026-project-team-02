@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Example-question loading (design D4): loaded once per form flow, retried only after failure. */
+/** Example-question loading: loaded once per form flow, retried only after failure. */
 sealed interface QuestionLoadState {
     data object Idle : QuestionLoadState
     data object Loading : QuestionLoadState
@@ -39,7 +39,7 @@ sealed interface QuestionLoadState {
     data class Failure(val error: ApiError) : QuestionLoadState
 }
 
-/** Plan generation lifecycle (design D4, GEN-03/04/06). */
+/** Plan generation lifecycle. */
 sealed interface GenerationState {
     data object Idle : GenerationState
     data object Loading : GenerationState
@@ -48,7 +48,7 @@ sealed interface GenerationState {
     data class DemoShortfall(val required: Int, val available: Int) : GenerationState
 }
 
-/** Failed-session adjustment lifecycle (design D1/D4, REPLAN-05/07). */
+/** Failed-session adjustment lifecycle. */
 sealed interface AdjustmentState {
     data object Idle : AdjustmentState
     data object Loading : AdjustmentState
@@ -59,7 +59,7 @@ sealed interface AdjustmentState {
     data object DemoNoSlot : AdjustmentState
 }
 
-/** The plan and failed study row chosen for adjustment, with its outcome (REPLAN-03/08). */
+/** The plan and failed study row chosen for adjustment, with its outcome. */
 data class AdjustmentSelection(
     val planOrdinal: Int? = null,
     val failedScheduleId: String? = null,
@@ -67,8 +67,8 @@ data class AdjustmentSelection(
 )
 
 /**
- * Activity-scoped state for the whole input flow (FLOW-07) and the session's generated plans
- * (design D1). Survives back navigation and configuration changes, not process death;
+ * Activity-scoped state for the whole input flow and the session's generated plans.
+ * Survives back navigation and configuration changes, not process death;
  * repositories come from the build flavor, with no runtime fallback.
  */
 class PlanFormViewModel(
@@ -89,7 +89,7 @@ class PlanFormViewModel(
     /** The request sent by the latest generate(); retry resends exactly this. */
     private var lastRequest: StudyPlanRequest? = null
 
-    /** Every successful generation in this process, oldest first; never removed (REPLAN-02). */
+    /** Every successful generation in this process, oldest first; never removed. */
     private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
     val plans: StateFlow<List<SessionPlan>> = _plans.asStateFlow()
     private var nextOrdinal = 1
@@ -148,7 +148,7 @@ class PlanFormViewModel(
     }
 
     /**
-     * Builds the request once and sends it; a second call while loading does nothing (GEN-03).
+     * Builds the request once and sends it; a second call while loading does nothing.
      * Returns whether a request was sent. A local demo result may already be set on return.
      */
     fun generate(): Boolean {
@@ -158,7 +158,7 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Resends the identical request after a failure; inputs are untouched (GEN-04). */
+    /** Resends the identical request after a failure; inputs are untouched. */
     fun retryGeneration() {
         if (_generation.value !is GenerationState.Failure || adjusting) return
         send(lastRequest ?: return)
@@ -170,7 +170,7 @@ class PlanFormViewModel(
         viewModelScope.launch {
             _generation.value = when (val outcome = planningRepository.generate(request)) {
                 is PlanOutcome.Success -> {
-                    // Registered here, once per success; never from a screen (design D1).
+                    // Registered here, once per success; never from a screen.
                     val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
                     _plans.update { it + plan }
                     _generatedPlan.value = plan.ordinal
@@ -184,7 +184,7 @@ class PlanFormViewModel(
 
     /**
      * Opens [ordinal] for adjustment. A different plan starts with no selection or outcome;
-     * the same plan keeps both. Refused while an adjustment is in flight (REPLAN-05/08).
+     * the same plan keeps both. Refused while an adjustment is in flight.
      */
     fun selectPlan(ordinal: Int): Boolean {
         if (adjusting || _plans.value.none { it.ordinal == ordinal }) return false
@@ -195,7 +195,7 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Marks one study row of the selected plan as failed, replacing any earlier choice (REPLAN-03). */
+    /** Marks one study row of the selected plan as failed, replacing any earlier choice. */
     fun selectFailedSession(scheduleId: String) {
         val selection = _adjustment.value
         if (adjusting || selection.failedScheduleId == scheduleId) return
@@ -206,7 +206,7 @@ class PlanFormViewModel(
 
     /**
      * Sends the selected plan's identity, failed row, current rows and original windows; a second
-     * call while loading does nothing. Returns whether a request was sent (REPLAN-04/05).
+     * call while loading does nothing. Returns whether a request was sent.
      */
     fun submitAdjustment(): Boolean {
         if (generating || adjusting) return false
@@ -216,7 +216,7 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Resends the identical snapshot after a failure; the plan and selection are untouched (REPLAN-05). */
+    /** Resends the identical snapshot after a failure; the plan and selection are untouched. */
     fun retryAdjustment() {
         if (_adjustment.value.state !is AdjustmentState.Failure || generating) return
         val (ordinal, input) = pendingAdjustment ?: return
@@ -233,7 +233,7 @@ class PlanFormViewModel(
         viewModelScope.launch {
             when (val outcome = adjustmentRepository.adjust(input)) {
                 is AdjustmentOutcome.Success -> {
-                    // Replace only the captured plan; keep its ordinal, identity and creation request (design D4).
+                    // Replace only the captured plan; keep its ordinal, identity and creation request.
                     _plans.update { plans ->
                         plans.map { plan ->
                             if (plan.ordinal != ordinal) plan
@@ -267,7 +267,7 @@ class PlanFormViewModel(
     }
 
     companion object {
-        /** Uses the flavor's repositories (design D2). */
+        /** Uses the flavor's repositories. */
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 PlanFormViewModel(

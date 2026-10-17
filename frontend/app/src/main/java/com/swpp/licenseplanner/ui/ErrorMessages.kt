@@ -2,7 +2,7 @@ package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.ApiError
 
-/** User-facing text for design D7's error table (GEN-04); the README lists the same cases. */
+/** User-facing text for the error table in the README. */
 fun ApiError.userMessage(): String = when (this) {
     is ApiError.InvalidInput -> message?.takeIf { it.isNotBlank() } ?: "입력값을 확인해 주세요."
     ApiError.Configuration -> "연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)"
@@ -13,7 +13,7 @@ fun ApiError.userMessage(): String = when (this) {
 }
 
 /**
- * Adjustment wording (REPLAN-05): a lost connection or timeout cannot say whether the server
+ * Adjustment wording: a lost connection or timeout cannot say whether the server
  * changed the plan, and an invalid response left the shown plan untouched.
  */
 fun ApiError.adjustmentMessage(): String = when (this) {

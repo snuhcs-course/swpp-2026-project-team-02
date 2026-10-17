@@ -35,7 +35,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** FLOW-01: the only supported certification; continue stays disabled until it is selected. */
+/** The only supported certification; continue stays disabled until it is selected. */
 @Composable
 fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onContinue: () -> Unit) {
     val selected = form.certificationId == CERTIFICATION_ID
@@ -55,7 +55,7 @@ fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onConti
 }
 
 /**
- * FLOW-02, adapted from frame 2004:479 for the written-only prototype (design D14): the written
+ * Adapted from frame 2004:479 for the written-only prototype: the written
  * exam card plus preparation start and written exam date fields. The preparation period is
  * shown once the dates are valid.
  */
@@ -127,7 +127,7 @@ private fun DatePickerSheet(initial: LocalDate, onDismiss: () -> Unit, onPick: (
     }
 }
 
-/** FLOW-03: three level choices; each carries the fixed self-assessment sentence. */
+/** Three level choices; each carries the fixed self-assessment sentence. */
 @Composable
 fun LevelScreen(form: PlanFormState, onSelect: (CurrentLevel) -> Unit, onBack: () -> Unit, onContinue: () -> Unit) {
     AppScreen(

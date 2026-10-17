@@ -16,7 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
-/** GEN-02/04 transport against a local mock server; not target-backend verification. */
+/** Transport against a local mock server; not target-backend verification. */
 class LivePlanningRepositoryTest {
     private lateinit var server: MockWebServer
     private val request: StudyPlanRequest =
@@ -56,7 +56,7 @@ class LivePlanningRepositoryTest {
         assertEquals("license_planner/output/x.csv", success.response.scheduleCsvFile)
     }
 
-    /** GEN-02: missing, null or blank identity still displays the plan; nothing is derived from the URL. */
+    /** Missing, null or blank identity still displays the plan; nothing is derived from the URL. */
     @Test
     fun missingIdentityStillParses() {
         val rows = """[{"schedule_id":"study-1","start_date":"2026/10/05/18/00","end_date":"2026/10/05/19/00","topic":"t"}]"""

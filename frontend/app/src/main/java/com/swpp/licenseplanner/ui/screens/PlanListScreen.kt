@@ -30,7 +30,7 @@ import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.Paper
 
 /**
- * REPLAN-01/02: plans generated in this app process, distinguished by ordinal and dates.
+ * Plans generated in this app process, distinguished by ordinal and dates.
  * The list needs no server route and is lost when the process ends. A visual extension of
  * the existing card components; no Figma frame exists.
  */

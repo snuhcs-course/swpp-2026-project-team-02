@@ -8,7 +8,7 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
-// Wire models for the target assessment contract (design D5). Local topic labels and
+// Wire models for the target assessment contract. Local topic labels and
 // local earned scores are deliberately absent: they are never submitted.
 
 /** `GET /certifications/{id}/questions` response. */
@@ -73,7 +73,7 @@ data class ScheduleRow(
 
 /**
  * `POST /study-plans` response; `tool_calls`, the CSV URL and future fields are ignored.
- * [scheduleCsvFile] is the opaque server-issued plan identity used for adjustment (GEN-02);
+ * [scheduleCsvFile] is the opaque server-issued plan identity used for adjustment;
  * it may be absent from older servers.
  */
 @Serializable
@@ -85,7 +85,7 @@ data class StudyPlanResponse(
 )
 
 /**
- * `POST /schedules/adjust` request (REPLAN-04, design D3): the selected plan's server file,
+ * `POST /schedules/adjust` request: the selected plan's server file,
  * the failed study row, the plan's full current rows, and its original creation windows.
  */
 @Serializable

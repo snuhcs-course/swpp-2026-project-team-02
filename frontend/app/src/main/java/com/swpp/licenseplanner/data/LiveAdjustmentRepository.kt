@@ -13,9 +13,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
 /**
- * `POST <base>/schedules/adjust` with design D3's four-field body (REPLAN-04). Responses are
+ * `POST <base>/schedules/adjust` with a four-field body. Responses are
  * validated before the caller touches its plan; failures are returned as-is, with no retry
- * and no demo fallback. Success does not prove the server saved the file (Task 2 gate).
+ * and no demo fallback. Success does not prove the server saved the file.
  */
 class LiveAdjustmentRepository(
     private val baseUrl: String,
@@ -64,7 +64,7 @@ class LiveAdjustmentRepository(
         )
     }
 
-    /** Design D3's response checks; null when the response may replace the plan. */
+    /** Response checks; null when the response may replace the plan. */
     private fun problemWith(response: ScheduleAdjustmentResponse, request: ScheduleAdjustmentRequest): String? {
         if (response.action != RESCHEDULED_STUDY) return "unexpected action ${response.action}"
         if (response.targetScheduleId != request.scheduleId) return "target ${response.targetScheduleId} was not requested"
@@ -85,7 +85,7 @@ class LiveAdjustmentRepository(
 
     /**
      * Stops OkHttp from replaying the adjustment by itself (408/503 `Retry-After: 0` follow-ups,
-     * redirects, recovery after sending); only an explicit retry may send it again (REPLAN-05).
+     * redirects, recovery after sending); only an explicit retry may send it again.
      */
     private class OneShotBody(private val delegate: RequestBody) : RequestBody() {
         override fun contentType() = delegate.contentType()

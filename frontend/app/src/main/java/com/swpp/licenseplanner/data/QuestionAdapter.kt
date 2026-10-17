@@ -12,9 +12,9 @@ import kotlinx.serialization.json.JsonPrimitive
 
 class InvalidQuestionDataException(message: String) : Exception(message)
 
-/** Decodes and validates the public question response (FLOW-04, design D6). */
+/** Decodes and validates the public question response. */
 object QuestionAdapter {
-    /** @throws InvalidQuestionDataException for malformed JSON or data that breaks D6's rules. */
+    /** @throws InvalidQuestionDataException for malformed JSON or data that breaks the question rules. */
     fun parse(body: String, expectedCertificationId: String): List<Question> {
         val response = try {
             val element = ApiJson.parseToJsonElement(body)

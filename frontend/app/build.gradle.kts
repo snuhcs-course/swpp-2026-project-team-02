@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Public API base URL for the live flavor (design D2). Credentials never belong here.
+// Public API base URL for the live flavor. Credentials never belong here.
 val liveApiBaseUrl: String = providers.gradleProperty("licensePlanner.apiBaseUrl")
     .getOrElse("http://10.0.2.2:8000/api/v1")
 
@@ -63,7 +63,7 @@ android {
     }
     testOptions {
         unitTests.all {
-            // RequestMapperTest exports the serialized request here for contract_checks (task 4.3).
+            // RequestMapperTest exports the serialized request here for contract_checks.
             it.systemProperty(
                 "licensePlanner.contractCheckDir",
                 layout.buildDirectory.dir("contract-check").get().asFile.absolutePath,

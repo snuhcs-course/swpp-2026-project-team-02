@@ -1,6 +1,6 @@
 package com.swpp.licenseplanner.data
 
-/** Live failure kinds from design D7's table (GEN-04). */
+/** Live failure kinds. */
 sealed interface ApiError {
     /** HTTP 422: show the server's `error.message`. */
     data class InvalidInput(val message: String?) : ApiError

@@ -55,11 +55,11 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 /**
- * VIEW-01–VIEW-04, adapted from frame 2007:253: one Monday-based week at a time with
+ * Adapted from frame 2007:253: one Monday-based week at a time with
  * bounded previous/next, seven day sections, returned session cards, the AI-authored
  * summary when present, and the demo statement for local plans. The phase timeline,
  * on-track status and calendar export from the frame are omitted (no backing data).
- * [onHome] and [onAdjust] lead to the home and plan-list screens (REPLAN-01).
+ * [onHome] and [onAdjust] lead to the home and plan-list screens.
  */
 @Composable
 fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit, onHome: () -> Unit, onAdjust: () -> Unit) {
@@ -78,7 +78,7 @@ fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit,
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Written-only scope (VIEW-03, design D14), shown for nonempty and empty plans alike.
+            // Written-only scope, shown for nonempty and empty plans alike.
             item { Heading(CERTIFICATION_NAME, "필기 시험 준비 계획") }
             if (isDemo) {
                 item {
@@ -153,7 +153,7 @@ private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.
 
 /**
  * One day of the plan. With [onSelect], study sessions become single-choice options with
- * [selectedId] marked (REPLAN-03); existing schedules stay plain rows.
+ * [selectedId] marked; existing schedules stay plain rows.
  */
 @Composable
 internal fun DaySection(day: DayPlan, selectedId: String? = null, onSelect: ((String) -> Unit)? = null) {

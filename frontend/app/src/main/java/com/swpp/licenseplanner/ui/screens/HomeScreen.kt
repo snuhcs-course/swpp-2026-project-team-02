@@ -9,7 +9,7 @@ import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 
 /**
- * REPLAN-01: the first screen offers creation (the existing input flow) and adjustment (the
+ * The first screen offers creation (the existing input flow) and adjustment (the
  * session plan list). A visual extension of the existing components; no Figma frame exists.
  */
 @Composable

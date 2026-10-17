@@ -40,7 +40,7 @@ import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
 
-/** REPLAN-02–08 session plans and adjustment lifecycle, with fake or local repositories. */
+/** Session plans and adjustment lifecycle, with fake or local repositories. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanAdjustmentViewModelTest {
     private val dispatcher = StandardTestDispatcher()
@@ -128,7 +128,7 @@ class PlanAdjustmentViewModelTest {
         selectFailedSession(scheduleId)
     }
 
-    // --- Task 3.1: canonical session collection ---
+    // --- Canonical session collection ---
 
     @Test fun twoPlansSharingStudy1StaySeparateWithOriginalWindows() = runTest(dispatcher) {
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), FakeAdjustment())
@@ -248,7 +248,7 @@ class PlanAdjustmentViewModelTest {
         assertFalse(vm.selectPlan(99))
     }
 
-    // --- Task 3.2: adjustment lifecycle ---
+    // --- Adjustment lifecycle ---
 
     @Test fun delayedAdjustmentLocksEverythingThenReplacesOnlyItsPlan() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA)).apply { gate = CompletableDeferred() }

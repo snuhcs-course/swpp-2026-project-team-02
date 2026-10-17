@@ -5,7 +5,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 
 /**
- * One adjustment, captured before sending and reused unchanged on retry (design D3/D4).
+ * One adjustment, captured before sending and reused unchanged on retry.
  * [original] is the selected plan's creation request, so its windows and exam date never
  * come from the current form; [scheduleCsvFile] is the live server identity (null for demo).
  */
@@ -19,12 +19,12 @@ data class AdjustmentInput(
 sealed interface AdjustmentOutcome {
     /** The validated updated plan; [response] carries rows, CSV and an optional summary. */
     data class Success(val response: StudyPlanResponse) : AdjustmentOutcome
-    /** Demo-only: no permitted interval fits before the exam (REPLAN-07). */
+    /** Demo-only: no permitted interval fits before the exam. */
     data object DemoNoSlot : AdjustmentOutcome
     data class Failure(val error: ApiError) : AdjustmentOutcome
 }
 
-/** Failed-study adjustment; live and demo implementations are chosen by flavor (design D3/D5). */
+/** Failed-study adjustment; live and demo implementations are chosen by flavor. */
 interface AdjustmentRepository {
     suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome
 }

@@ -1,7 +1,7 @@
 package com.swpp.licenseplanner.domain
 
 /**
- * Local example labels keyed by the pinned bank's question IDs (design D6).
+ * Local example labels keyed by the pinned bank's question IDs.
  * These are display/demo assumptions, not server metadata, and are never submitted.
  * Review this mapping if the bank's content changes.
  */

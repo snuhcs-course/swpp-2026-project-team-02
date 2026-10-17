@@ -17,7 +17,7 @@ sealed interface DemoAdjustment {
 }
 
 /**
- * Local demonstration rule for moving one failed study session (design D5, REPLAN-07).
+ * Local demonstration rule for moving one failed study session.
  * It is not the backend's adjustment policy. The session moves to the first conflict-free
  * interval inside the plan's original weekday windows that starts at or after both its own
  * end and the latest end of every other study session with exactly the same topic, and that

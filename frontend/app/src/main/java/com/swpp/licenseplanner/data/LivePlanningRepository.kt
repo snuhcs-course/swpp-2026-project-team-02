@@ -11,7 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * `POST <base>/study-plans` with the target assessment contract (GEN-01/02/04).
+ * `POST <base>/study-plans` with the target assessment contract.
  * Failures are returned as-is: no legacy-payload retry and no demo fallback.
  */
 class LivePlanningRepository(

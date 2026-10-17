@@ -15,7 +15,7 @@ import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.MonoStyles
 import com.swpp.licenseplanner.ui.theme.Paper
 
-/** Top-bar label shown on every screen of the demo flavor (GEN-05). Renders nothing in live builds. */
+/** Top-bar label shown on every screen of the demo flavor. Renders nothing in live builds. */
 @Composable
 fun DemoBadge(modifier: Modifier = Modifier, demoMode: Boolean = BuildConfig.DEMO_MODE) {
     if (!demoMode) return

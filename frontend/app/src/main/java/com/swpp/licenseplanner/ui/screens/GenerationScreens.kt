@@ -14,7 +14,7 @@ import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.userMessage
 
 /**
- * GEN-03/04: loading while the single request is in flight (back is held so the result
+ * Loading while the single request is in flight (back is held so the result
  * is not lost), then an error with retry of the same request and a way back to edit.
  * Success and the demo shortfall are routed away by the navigation host.
  */
@@ -45,7 +45,7 @@ fun GenerateScreen(state: GenerationState, onRetry: () -> Unit, onEdit: () -> Un
 }
 
 /**
- * GEN-06, adapted from frame 2005:474: demo-only insufficient-time result with required and
+ * Adapted from frame 2005:474: demo-only insufficient-time result with required and
  * available session counts and ways back to the dates or availability. No partial plan.
  */
 @Composable

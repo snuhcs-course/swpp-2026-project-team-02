@@ -9,7 +9,7 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** OkHttp client with design D7's timeouts: 10 s connect, 120 s read and whole call (Gemini latency). */
+/** OkHttp client with timeouts of 10 s connect, 120 s read and whole call (Gemini latency). */
 fun createApiHttpClient(): OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(10, TimeUnit.SECONDS)
     .readTimeout(120, TimeUnit.SECONDS)
@@ -25,7 +25,7 @@ internal sealed interface HttpOutcome {
     data class Failed(val error: ApiError) : HttpOutcome
 }
 
-/** Executes [request] off the main thread and maps non-2xx statuses and I/O errors (GEN-04). */
+/** Executes [request] off the main thread and maps non-2xx statuses and I/O errors. */
 internal suspend fun OkHttpClient.executeApi(request: Request, io: CoroutineDispatcher = Dispatchers.IO): HttpOutcome =
     withContext(io) {
         try {
