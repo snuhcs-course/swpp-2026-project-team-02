@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, iteration-2-demo]
   workflow_dispatch:
   schedule:
     # Daily 00:00 UTC (09:00 Asia/Seoul) on the default branch.
