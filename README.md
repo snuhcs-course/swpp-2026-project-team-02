@@ -1,5 +1,7 @@
 # Team 2 Project
 
+For the integrated iteration 2 Android/API demo, see [INTEGRATION_DEMO.md](INTEGRATION_DEMO.md).
+
 This repository is organized into separate application areas:
 
 ```text

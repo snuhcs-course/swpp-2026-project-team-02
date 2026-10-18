@@ -15,7 +15,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             LicensePlannerTheme {
-                // Activity-scoped: one form state for the whole flow (design D4).
+                // Activity-scoped: one form state for the whole flow.
                 val formViewModel: PlanFormViewModel = viewModel(factory = PlanFormViewModel.Factory)
                 AppNavigation(formViewModel)
             }

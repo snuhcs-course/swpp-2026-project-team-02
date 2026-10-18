@@ -5,6 +5,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.swpp.licenseplanner.data.AdjustmentInput
+import com.swpp.licenseplanner.data.AdjustmentOutcome
+import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.MappingResult
@@ -18,6 +21,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +31,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Example-question loading (design D4): loaded once per form flow, retried only after failure. */
+/** Example-question loading: loaded once per form flow, retried only after failure. */
 sealed interface QuestionLoadState {
     data object Idle : QuestionLoadState
     data object Loading : QuestionLoadState
@@ -35,7 +39,7 @@ sealed interface QuestionLoadState {
     data class Failure(val error: ApiError) : QuestionLoadState
 }
 
-/** Plan generation lifecycle (design D4, GEN-03/04/06). */
+/** Plan generation lifecycle. */
 sealed interface GenerationState {
     data object Idle : GenerationState
     data object Loading : GenerationState
@@ -44,13 +48,34 @@ sealed interface GenerationState {
     data class DemoShortfall(val required: Int, val available: Int) : GenerationState
 }
 
+/** Failed-session adjustment lifecycle. */
+sealed interface AdjustmentState {
+    data object Idle : AdjustmentState
+    data object Loading : AdjustmentState
+    /** The selected plan was replaced; [targetScheduleId] is the moved row. */
+    data class Success(val targetScheduleId: String) : AdjustmentState
+    data object Refreshed : AdjustmentState
+    data class Failure(val error: ApiError) : AdjustmentState
+    /** Demo-only: no permitted interval fits before the exam. */
+    data object DemoNoSlot : AdjustmentState
+}
+
+/** The plan and failed study row chosen for adjustment, with its outcome. */
+data class AdjustmentSelection(
+    val planOrdinal: Int? = null,
+    val failedScheduleId: String? = null,
+    val state: AdjustmentState = AdjustmentState.Idle,
+)
+
 /**
- * Activity-scoped state for the whole input flow (FLOW-07). Survives back navigation and
- * configuration changes; repositories come from the build flavor, with no runtime fallback.
+ * Activity-scoped state for the whole input flow and the session's generated plans.
+ * Survives back navigation and configuration changes, not process death;
+ * repositories come from the build flavor, with no runtime fallback.
  */
 class PlanFormViewModel(
     private val questionRepository: QuestionRepository,
     private val planningRepository: PlanningRepository,
+    private val adjustmentRepository: AdjustmentRepository,
     today: LocalDate = LocalDate.now(),
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
@@ -64,6 +89,24 @@ class PlanFormViewModel(
 
     /** The request sent by the latest generate(); retry resends exactly this. */
     private var lastRequest: StudyPlanRequest? = null
+
+    /** Every successful generation in this process, oldest first; never removed. */
+    private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
+    val plans: StateFlow<List<SessionPlan>> = _plans.asStateFlow()
+    private var nextOrdinal = 1
+
+    /** Ordinal of the plan shown by the generated-result screen; null after form edits. */
+    private val _generatedPlan = MutableStateFlow<Int?>(null)
+    val generatedPlan: StateFlow<Int?> = _generatedPlan.asStateFlow()
+
+    private val _adjustment = MutableStateFlow(AdjustmentSelection())
+    val adjustment: StateFlow<AdjustmentSelection> = _adjustment.asStateFlow()
+
+    /** Plan ordinal and input of the latest adjustment; retry resends exactly this. */
+    private var pendingAdjustment: Pair<Int, AdjustmentInput>? = null
+
+    private val generating get() = _generation.value == GenerationState.Loading
+    private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
 
     fun selectCertification(id: String) = edit { it.copy(certificationId = id) }
     fun setPreparationStart(date: LocalDate) = edit { it.copy(preparationStart = date) }
@@ -106,19 +149,19 @@ class PlanFormViewModel(
     }
 
     /**
-     * Builds the request once and sends it; a second call while loading does nothing (GEN-03).
+     * Builds the request once and sends it; a second call while loading does nothing.
      * Returns whether a request was sent. A local demo result may already be set on return.
      */
     fun generate(): Boolean {
-        if (_generation.value == GenerationState.Loading) return false
+        if (generating || adjusting) return false
         val request = (RequestMapper.map(_form.value) as? MappingResult.Ready)?.request ?: return false
         send(request)
         return true
     }
 
-    /** Resends the identical request after a failure; inputs are untouched (GEN-04). */
+    /** Resends the identical request after a failure; inputs are untouched. */
     fun retryGeneration() {
-        if (_generation.value !is GenerationState.Failure) return
+        if (_generation.value !is GenerationState.Failure || adjusting) return
         send(lastRequest ?: return)
     }
 
@@ -127,20 +170,101 @@ class PlanFormViewModel(
         _generation.value = GenerationState.Loading
         viewModelScope.launch {
             _generation.value = when (val outcome = planningRepository.generate(request)) {
-                is PlanOutcome.Success -> GenerationState.Success(outcome.response, outcome.isDemo)
+                is PlanOutcome.Success -> {
+                    // Registered here, once per success; never from a screen.
+                    val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
+                    _plans.update { it + plan }
+                    _generatedPlan.value = plan.ordinal
+                    GenerationState.Success(outcome.response, outcome.isDemo)
+                }
                 is PlanOutcome.DemoShortfall -> GenerationState.DemoShortfall(outcome.required, outcome.available)
                 is PlanOutcome.Failure -> GenerationState.Failure(outcome.error)
             }
         }
     }
 
-    /** Form edits are ignored during generation and clear any earlier result. */
+    /**
+     * Opens [ordinal] for adjustment. A different plan starts with no selection or outcome;
+     * the same plan keeps both. Refused while an adjustment is in flight.
+     */
+    fun selectPlan(ordinal: Int): Boolean {
+        if (adjusting || _plans.value.none { it.ordinal == ordinal }) return false
+        if (_adjustment.value.planOrdinal != ordinal) {
+            _adjustment.value = AdjustmentSelection(planOrdinal = ordinal)
+            pendingAdjustment = null
+        }
+        return true
+    }
+
+    /** Marks one study row of the selected plan as failed, replacing any earlier choice. */
+    fun selectFailedSession(scheduleId: String) {
+        val selection = _adjustment.value
+        if (adjusting || selection.failedScheduleId == scheduleId) return
+        if (selectedPlan()?.isStudy(scheduleId) != true) return
+        _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle)
+        pendingAdjustment = null
+    }
+
+    /**
+     * Sends the selected plan's identity, failed row, current rows and original windows; a second
+     * call while loading does nothing. Returns whether a request was sent.
+     */
+    fun submitAdjustment(): Boolean {
+        if (generating || adjusting) return false
+        val plan = selectedPlan()?.takeIf { it.hasIdentity } ?: return false
+        val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
+        sendAdjustment(plan.ordinal, AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target))
+        return true
+    }
+
+    /** Resends the identical snapshot after a failure; the plan and selection are untouched. */
+    fun retryAdjustment() {
+        if (_adjustment.value.state !is AdjustmentState.Failure || generating) return
+        val (ordinal, input) = pendingAdjustment ?: return
+        sendAdjustment(ordinal, input)
+    }
+
+    private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let { ordinal ->
+        _plans.value.firstOrNull { it.ordinal == ordinal }
+    }
+
+    private fun sendAdjustment(ordinal: Int, input: AdjustmentInput) {
+        pendingAdjustment = ordinal to input
+        _adjustment.update { it.copy(state = AdjustmentState.Loading) }
+        viewModelScope.launch {
+            when (val outcome = adjustmentRepository.adjust(input)) {
+                is AdjustmentOutcome.Refreshed -> {
+                    _plans.update { plans -> plans.map { plan ->
+                        if (plan.ordinal == ordinal) plan.copy(current = outcome.response) else plan
+                    } }
+                    pendingAdjustment = null
+                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Refreshed) }
+                }
+                is AdjustmentOutcome.Success -> {
+                    // Replace only the captured plan; keep its ordinal, identity and creation request.
+                    _plans.update { plans ->
+                        plans.map { plan ->
+                            if (plan.ordinal != ordinal) plan
+                            else plan.copy(current = outcome.response.copy(scheduleCsvFile = plan.current.scheduleCsvFile))
+                        }
+                    }
+                    pendingAdjustment = null
+                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
+                }
+                AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
+                is AdjustmentOutcome.Failure -> _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
+            }
+        }
+    }
+
+    /** Form edits are ignored during generation and clear any earlier result, never the stored plans. */
     private fun edit(transform: (PlanFormState) -> PlanFormState) {
-        if (_generation.value == GenerationState.Loading) return
+        if (generating) return
         val before = _form.value
         _form.update(transform)
         if (_form.value != before) {
             _generation.value = GenerationState.Idle
+            _generatedPlan.value = null
             lastRequest = null
         }
     }
@@ -151,10 +275,14 @@ class PlanFormViewModel(
     }
 
     companion object {
-        /** Uses the flavor's repositories (design D2). */
+        /** Uses the flavor's repositories. */
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                PlanFormViewModel(FlavorRepositories.questionRepository(), FlavorRepositories.planningRepository())
+                PlanFormViewModel(
+                    FlavorRepositories.questionRepository(),
+                    FlavorRepositories.planningRepository(),
+                    FlavorRepositories.adjustmentRepository(),
+                )
             }
         }
     }

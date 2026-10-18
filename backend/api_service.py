@@ -128,13 +128,13 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
     )
 
 
-def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
+def create_study_plan(payload: dict[str, Any], *, agent=None) -> dict[str, Any]:
     """입력 값: 학습 계획 API 요청 JSON 객체
     출력 값: 생성 CSV와 일정 행을 포함한 JSON 객체
     기능: JSON 요청을 검증하고 Gemini Agent로 계획을 만듭니다.
     """
     request = build_plan_request(payload, require_assessment=True)
-    tools, summary = GeminiToolAgent().run(request)
+    tools, summary = (agent if agent is not None else GeminiToolAgent()).run(request)
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
     csv_text = render_schedule_csv(request.busy_periods, tools.schedule)
@@ -154,7 +154,7 @@ def _csv_rows(content: str) -> list[dict[str, str]]:
 
 
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
-def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
+def adjust_schedule(payload: dict[str, Any], *, agent=None) -> dict[str, Any]:
     """Adjust a snapshot and optionally update its existing generated file."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be an object")
@@ -182,7 +182,7 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))
     expected_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
     request = AdjustmentRequest(target_id, entries, availability)
-    tools, summary = GeminiAdjustmentAgent().adjust(request)
+    tools, summary = (agent if agent is not None else GeminiAdjustmentAgent()).adjust(request)
     if (tools.outcome is None or tools.outcome.schedule_id != target_id
             or tools.outcome.action != expected_action):
         raise RuntimeError("Agent did not apply the requested schedule adjustment")

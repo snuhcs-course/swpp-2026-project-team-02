@@ -1,11 +1,11 @@
 package com.swpp.licenseplanner.domain
 
-/** Local earned/possible points for one example label (FLOW-05). */
+/** Local earned/possible points for one example label. */
 data class TopicScore(val topic: String, val earned: Double, val possible: Double) {
     val percent: Double get() = if (possible > 0) earned / possible * 100 else 0.0
 }
 
-/** Local scoring of example answers (FLOW-04/05); not the backend's weighted statistics. */
+/** Local scoring of example answers; not the backend's weighted statistics. */
 object Scoring {
     /** A normal answer is correct when it equals the correct key; UNKNOWN is never correct. */
     fun isCorrect(question: Question, answer: String?): Boolean =

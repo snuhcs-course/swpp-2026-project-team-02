@@ -28,7 +28,7 @@ object TestFixtures {
          ]}
     """.trimIndent()
 
-    /** GEN-01 scenario: Mon 18:00+2h, Wed 18:00+1h, Sat 10:00+3h; 2026-10-05 → 2026-11-16. */
+    /** Scenario: Mon 18:00+2h, Wed 18:00+1h, Sat 10:00+3h; 2026-10-05 → 2026-11-16. */
     fun gen01Availability(): Map<Weekday, DayAvailability> = defaultAvailability() + mapOf(
         Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120),
         Weekday.WEDNESDAY to DayAvailability(true, LocalTime.of(18, 0), 60),

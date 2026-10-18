@@ -4,9 +4,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Public API base URL for the live flavor (design D2). Credentials never belong here.
+// Public API base URL for the live flavor. Credentials never belong here.
 val liveApiBaseUrl: String = providers.gradleProperty("licensePlanner.apiBaseUrl")
     .getOrElse("http://10.0.2.2:8000/api/v1")
+val backendTestApi: String = providers.environmentVariable("LICENSE_PLANNER_TEST_API").getOrElse("")
 
 android {
     namespace = "com.swpp.licenseplanner"
@@ -22,6 +23,7 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "INTEGRATION_DEMO", "false")
     }
 
     flavorDimensions += "mode"
@@ -38,6 +40,14 @@ android {
         create("live") {
             dimension = "mode"
             buildConfigField("boolean", "DEMO_MODE", "false")
+            buildConfigField("String", "API_BASE_URL", "\"$liveApiBaseUrl\"")
+        }
+        create("integration") {
+            dimension = "mode"
+            applicationIdSuffix = ".integration"
+            versionNameSuffix = "-integration-demo"
+            buildConfigField("boolean", "DEMO_MODE", "false")
+            buildConfigField("boolean", "INTEGRATION_DEMO", "true")
             buildConfigField("String", "API_BASE_URL", "\"$liveApiBaseUrl\"")
         }
     }
@@ -63,7 +73,9 @@ android {
     }
     testOptions {
         unitTests.all {
-            // RequestMapperTest exports the serialized request here for contract_checks (task 4.3).
+            it.environment("LICENSE_PLANNER_TEST_API", backendTestApi)
+            it.inputs.property("backendTestApi", backendTestApi)
+            // RequestMapperTest exports the serialized request here for contract_checks.
             it.systemProperty(
                 "licensePlanner.contractCheckDir",
                 layout.buildDirectory.dir("contract-check").get().asFile.absolutePath,
