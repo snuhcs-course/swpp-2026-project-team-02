@@ -109,6 +109,16 @@ Planning runs Gemini synchronously and can take tens of seconds (request timeout
 120 s). The matching routes and JSON contract are documented in
 [`backend/FRONTEND_INTEGRATION_GUIDE.md`](../backend/FRONTEND_INTEGRATION_GUIDE.md).
 
+**Connections.** Every API request is sent with `Connection: close`, so each
+exchange opens its own TCP connection. The backend (Python's default HTTP/1.0
+request handler) closes the socket after every response without a `Connection`
+header; reusing that socket shortly afterwards made an adjustment sent right
+after another response fail before reaching the server, which the app then
+had to treat as an unknown result. The extra connection per request is
+acceptable for local use. Nothing else changed: there is still no automatic
+retry, and a lost or timed-out adjustment still needs 최신 계획 불러오기 (see
+[Plan adjustment](#plan-adjustment)).
+
 ## Plan adjustment
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
@@ -238,6 +248,15 @@ pending.
   adjustment with no repeated POST. Emulator checks use the controlled server
   in [Controlled adjustment server](#controlled-adjustment-server). Neither is
   evidence about the real backend or Gemini.
+- Successive requests: JVM tests (`ApiHttpTest`) send requests back to back on
+  one shared client to a local server that answers HTTP/1.0 and closes the
+  connection after every response without saying so: an immediate identical
+  retry after a route 404, a fresh adjustment right after a reload, and
+  adjustments right after loading questions and generating a plan. Each
+  request must reach the server once, and the adjustment is still never
+  resent automatically. The emulator retest at normal speed is described
+  under [Controlled adjustment server](#controlled-adjustment-server); the real
+  backend has not been checked for this.
 
 ### Controlled adjustment server
 
@@ -281,6 +300,21 @@ status and scripted event (for example `saved`, `not-saved`,
 `changed-elsewhere`) is appended to `requests.jsonl` in the output directory;
 count POSTs and GETs there, since a screenshot cannot show that nothing was
 resent. Stop the server with Ctrl+C and start it again for the next case.
+
+The server closes the connection after every response, like the backend, so
+it also exercises quick successive requests. Run these without waiting
+between actions (each tap within about 5 s of the previous result):
+
+- `route-not-found`: after the route error, tap 다시 시도 twice. Each tap adds
+  one `POST /api/v1/schedules/adjust` with status 404 and the same body to
+  `requests.jsonl`, and the route message stays; the plan never asks for a
+  reload.
+- `conflict`: after the 409, reload (500), reload again (200), then choose a
+  session and adjust straight away. The log shows POST 409, GET 500, GET 200,
+  POST 200, and the last POST carries the reloaded rows and A's original
+  windows.
+- `normal`: generate a plan, adjust a session, then adjust another one right
+  away; both POSTs return 200.
 
 These checks show how the app handles the scripted responses. They are not
 evidence about the real backend or Gemini.

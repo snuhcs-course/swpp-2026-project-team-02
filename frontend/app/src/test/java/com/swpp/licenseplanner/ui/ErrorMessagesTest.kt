@@ -72,6 +72,21 @@ class ErrorMessagesTest {
         )
     }
 
+    @Test
+    fun notEnoughTimeCodeIsReplacedAndTheServerExplanationKept() {
+        val detail = "준비 시작부터 시험일까지 공부할 수 있는 시간이 1분이라 진단된 학습 주제 3개에 주제마다 최소 1분씩 배정할 수 없습니다. " +
+            "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요."
+        val shown = ApiError.InvalidInput("NOT_ENOUGH_TIME: $detail").userMessage()
+
+        assertEquals("시험일 전까지 공부할 시간이 부족해요.\n$detail", shown)
+        assertFalse(shown.contains("NOT_ENOUGH_TIME"))
+        assertEquals(
+            "시험일 전까지 공부할 시간이 부족해요.\n공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요.",
+            ApiError.InvalidInput("NOT_ENOUGH_TIME:").userMessage(),
+        )
+        assertEquals("exam_date is invalid", ApiError.InvalidInput("exam_date is invalid").userMessage())
+    }
+
     /** Generation and question loading keep their earlier wording. */
     @Test
     fun generalMessagesAreUnchanged() {

@@ -28,6 +28,10 @@ internal sealed interface HttpOutcome {
 /**
  * Executes [request] off the main thread and maps non-2xx statuses and I/O errors.
  * [planErrors] enables the stored-plan codes, which only the adjustment route returns.
+ *
+ * Every exchange asks for `Connection: close`: the API server closes the socket after each
+ * response without saying so, and a pooled connection reused shortly afterwards fails on send,
+ * which a one-shot adjustment body cannot recover from.
  */
 internal suspend fun OkHttpClient.executeApi(
     request: Request,
@@ -36,7 +40,7 @@ internal suspend fun OkHttpClient.executeApi(
 ): HttpOutcome =
     withContext(io) {
         try {
-            newCall(request).execute().use { response ->
+            newCall(request.newBuilder().header("Connection", "close").build()).execute().use { response ->
                 val body = response.body.string()
                 if (response.isSuccessful) HttpOutcome.Ok(body)
                 else HttpOutcome.Failed(errorForStatus(response.code, body, planErrors))

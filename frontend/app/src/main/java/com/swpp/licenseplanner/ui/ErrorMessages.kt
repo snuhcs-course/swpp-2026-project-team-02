@@ -4,7 +4,7 @@ import com.swpp.licenseplanner.data.ApiError
 
 /** User-facing text for the error table in the README. */
 fun ApiError.userMessage(): String = when (this) {
-    is ApiError.InvalidInput -> message?.takeIf { it.isNotBlank() } ?: "입력값을 확인해 주세요."
+    is ApiError.InvalidInput -> invalidInputMessage(message)
     ApiError.Configuration -> "연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)"
     ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
     ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
@@ -42,6 +42,19 @@ fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있
     else -> userMessage()
 }
 
+/**
+ * A 422 shows the server's explanation, except that the backend's `NOT_ENOUGH_TIME:` code is
+ * replaced by app wording; the server's capacity and advice text after the code is kept.
+ */
+private fun invalidInputMessage(message: String?): String {
+    if (message.isNullOrBlank()) return "입력값을 확인해 주세요."
+    if (!message.startsWith(NOT_ENOUGH_TIME_CODE)) return message
+    val detail = message.removePrefix(NOT_ENOUGH_TIME_CODE).trim()
+        .ifEmpty { "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요." }
+    return "시험일 전까지 공부할 시간이 부족해요.\n$detail"
+}
+
+private const val NOT_ENOUGH_TIME_CODE = "NOT_ENOUGH_TIME:"
 private const val PLAN_NOT_FOUND_MESSAGE =
     "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."
 private const val PLAN_CONFLICT_MESSAGE = "서버의 계획이 변경되었어요. 최신 계획을 불러온 뒤 일정을 다시 선택해 주세요."
