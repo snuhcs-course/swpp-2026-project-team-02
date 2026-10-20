@@ -1,0 +1,12 @@
+{
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "metric_tests": 9,
+  "metric_test_exit_code": 0,
+  "original_metrics_recomputed": 77,
+  "original_raw_files_checked": 85,
+  "pdf_pages_reviewed": 8,
+  "backend_tests_rerun": false,
+  "live_rerun": false,
+  "powershell_helper_syntax_checked": true,
+  "api_key_pattern_hits": 0
+}

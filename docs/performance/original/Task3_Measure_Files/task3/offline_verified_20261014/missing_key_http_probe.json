@@ -1,0 +1,12 @@
+{
+  "kind": "offline_local_HTTP_probe",
+  "http_status": 503,
+  "body": {
+    "error": {
+      "code": "UPSTREAM_ERROR",
+      "message": "GEMINI_API_KEY is required for online agent mode"
+    }
+  },
+  "elapsed_seconds": 0.02390410000225529,
+  "gemini_request_count": 0
+}

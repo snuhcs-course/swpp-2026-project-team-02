@@ -1,0 +1,35 @@
+test_agent_schema_exposes_topic_context_tool (test_schedule_adjuster.AdjustmentToolTests.test_agent_schema_exposes_topic_context_tool)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_cancelled_external_removed_but_other_rows_kept (test_schedule_adjuster.AdjustmentToolTests.test_cancelled_external_removed_but_other_rows_kept)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_change_tool_requires_inspection (test_schedule_adjuster.AdjustmentToolTests.test_change_tool_requires_inspection)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_failed_multi_hour_study_preserves_duration_and_avoids_conflict (test_schedule_adjuster.AdjustmentToolTests.test_failed_multi_hour_study_preserves_duration_and_avoids_conflict)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_failed_session_moves_after_existing_session_for_same_topic (test_schedule_adjuster.AdjustmentToolTests.test_failed_session_moves_after_existing_session_for_same_topic)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_failed_study_moves_to_first_conflict_free_datetime (test_schedule_adjuster.AdjustmentToolTests.test_failed_study_moves_to_first_conflict_free_datetime)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_failed_study_moves_to_next_personal_availability_window (test_schedule_adjuster.AdjustmentToolTests.test_failed_study_moves_to_next_personal_availability_window)
+입력 값: 주제 일정과 다음 날만 가능한 주간 시간표 ... ok
+test_missing_personal_availability_keeps_legacy_rescheduling (test_schedule_adjuster.AdjustmentToolTests.test_missing_personal_availability_keeps_legacy_rescheduling)
+입력 값: 개인 시간표가 없는 공부 일정 조정 요청 ... ok
+test_study_move_reports_when_availability_cannot_fit_session (test_schedule_adjuster.AdjustmentToolTests.test_study_move_reports_when_availability_cannot_fit_session)
+입력 값: 두 시간 공부 일정과 한 시간 길이의 개인 가능 시간 ... ok
+test_topic_study_must_be_inspected_before_rescheduling (test_schedule_adjuster.AdjustmentToolTests.test_topic_study_must_be_inspected_before_rescheduling)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_trace_records_tool_calls_in_order (test_schedule_adjuster.AdjustmentToolTests.test_trace_records_tool_calls_in_order)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_wrong_type_unknown_id_and_wrong_target_are_rejected (test_schedule_adjuster.AdjustmentToolTests.test_wrong_type_unknown_id_and_wrong_target_are_rejected)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_accepts_korean_header_and_datetime_values (test_schedule_adjuster.CsvAdjustmentTests.test_accepts_korean_header_and_datetime_values)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_rejects_unknown_prefix_duplicate_id_bad_timestamp_and_empty_interval (test_schedule_adjuster.CsvAdjustmentTests.test_rejects_unknown_prefix_duplicate_id_bad_timestamp_and_empty_interval)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+test_round_trip_preserves_datetime_header_and_rows (test_schedule_adjuster.CsvAdjustmentTests.test_round_trip_preserves_datetime_header_and_rows)
+입력 값: 테스트 픽스처와 해당 시나리오의 입력 ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.008s
+
+OK

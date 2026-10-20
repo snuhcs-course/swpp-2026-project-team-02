@@ -1,0 +1,9 @@
+﻿priority,owner_proposed,proposal,evidence,reproduction,acceptance_criterion
+P0,Task3,Gemini 실생성 baseline 확보,실생성 0회; 키/접근 미확인,smoke 1회 이후 기존 4x5와 추가 13x5,원본 요청/응답/CSV와 실패·skipped·유효 n 기록
+P0,Task2/backend,시험일·현재 시각·계획별 가용 시간 검증,시험 종료 뒤 이동 직접 재현,offline_probes.py task2_exam_deadline_probe,시험일 후 일정 0; 불가능하면 명시적 용량 부족
+P1,backend,7요일 저장 정규화 계약 합의,기존 테스트 1개 실패,license_planner_tests unittest,7요일/빈 요일 의미 보존 및 왕복 테스트 통과
+P1,진단/Task3,문항·분류 검토 및 균형 확대,고정 라벨 2·2·1; 차트 한 문항,5문항과 15문항 동일 정오 패턴 실험,새 10문항 내용 검토; 정확도/난이도 차이 보고
+P1,Task1/Task2,계획 상태·버전·실제/남은 분수 저장,완료/실패 상태 계약 부재,재시작·중복 조정·부분 수행 케이스,미확인을 실패로 확정하지 않음; 완료 기록 보존; 중복 적용 0
+P1,생성기/Task3,시간 균등화 및 취약 과목 배정 검증,scripted sigma 27.95pp/0pp 모두 수용; r+1 수용,offline_probes.py 및 실생성 전후 비교,동일 총량/과목 목표량/제약에서 sigma 감소; 이용률 유지
+P2,Task2,긴 세션 분할·구조화된 용량 부족,150분 세션은 120분 창으로 조정 불가,task2_long_block_probe,분할 시 총 남은 분수·과목 보존; 충돌0
+P2,Task1/backend,생성 작업 ID·진행 조회,앱120초와 backend 여러45초 요청 차이,실생성 시간 및 Android 후속 검사,대기/중복/취소를 일관되게 처리; 실제 지연 확인 후 설계

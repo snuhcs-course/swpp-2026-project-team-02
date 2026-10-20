@@ -1,0 +1,18 @@
+﻿case_id,group,question_count,branch,commit,model_config,live_generation_attempts,gemini_requests,population_std,pearson,failure_rate,generation_seconds,utilization,conflicts,status,reason
+license_planner_case_01_beginner_weak_charts,existing_unchanged_request,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+license_planner_case_02_advanced_weak_functions,existing_unchanged_request,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+license_planner_case_03_weak_charts,existing_unchanged_request,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+license_planner_case_04_personal_availability_api,existing_unchanged_request,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled5_weak_basic,controlled5,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled5_weak_functions,controlled5,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled5_weak_charts,controlled5,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled5_all_correct,controlled5,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled5_all_wrong,controlled5,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+availability_unequal_windows,availability,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+availability_overlapping_busy,availability,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+availability_tiny_capacity,availability,5,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled15_weak_basic,controlled15_draft,15,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled15_weak_functions,controlled15_draft,15,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled15_weak_charts,controlled15_draft,15,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled15_all_correct,controlled15_draft,15,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A
+controlled15_all_wrong,controlled15_draft,15,iteration-1-demo,d706ad2ea66aaed6faeebea1c21dc358ace0ecf2,gemini-3.5-flash-lite,0,0,,,,,,,NOT_RUN,GEMINI_API_KEY 없음; Live 측정값 전부 N/A

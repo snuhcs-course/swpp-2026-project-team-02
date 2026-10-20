@@ -1,0 +1,265 @@
+[
+  {
+    "case_id": "controlled15_weak_functions",
+    "group": "controlled15_draft",
+    "contrast": "동일 기간/자기평가/가용 시간; 새 문항 10개 추가, 5·5·5",
+    "fixed_topic_map": {
+      "1": "스프레드시트 기본",
+      "2": "함수와 데이터 관리",
+      "3": "함수와 데이터 관리",
+      "4": "차트와 분석",
+      "5": "스프레드시트 기본",
+      "101": "스프레드시트 기본",
+      "102": "스프레드시트 기본",
+      "103": "스프레드시트 기본",
+      "104": "함수와 데이터 관리",
+      "105": "함수와 데이터 관리",
+      "106": "함수와 데이터 관리",
+      "107": "차트와 분석",
+      "108": "차트와 분석",
+      "109": "차트와 분석",
+      "110": "차트와 분석"
+    },
+    "request": {
+      "self_assessment": "기본 기능은 사용해 보았고 시험 준비를 시작합니다.",
+      "preparation_start": "2026/10/19/18/00",
+      "exam_date": "2026/11/02/18/00",
+      "busy_schedules": [],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "end": "20:00"
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "18:00",
+            "end": "20:00"
+          }
+        ],
+        "friday": [
+          {
+            "start": "18:00",
+            "end": "20:00"
+          }
+        ]
+      },
+      "assessment_results": {
+        "certification_id": "computer_specialist_level_2",
+        "results": [
+          {
+            "problem_id": 1,
+            "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+            "choices": {
+              "A": "A1",
+              "B": "$A$1",
+              "C": "A$",
+              "D": "#A1"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 2,
+            "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+            "choices": {
+              "A": "=COUNT(A1:A5)",
+              "B": "=SUM(A1:A5)",
+              "C": "=MAX(A1:A5)",
+              "D": "=AVERAGE(A1:A5)"
+            },
+            "correct_answer": "B",
+            "user_answer": "A",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 3,
+            "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+            "choices": {
+              "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+              "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+              "C": "=COUNTIF(A1,60,\"통과\")",
+              "D": "=AVERAGE(A1>=60)"
+            },
+            "correct_answer": "A",
+            "user_answer": "B",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 4,
+            "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "분산형 차트",
+              "C": "주식형 차트",
+              "D": "표면형 차트"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 5,
+            "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+            "choices": {
+              "A": "영구 삭제됩니다",
+              "B": "다른 워크시트로 이동합니다",
+              "C": "화면에서 일시적으로 숨겨집니다",
+              "D": "셀 수식이 값으로 바뀝니다"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 101,
+            "question": "셀 A1의 값을 다른 셀로 복사할 때 사용하는 일반적인 단축키 조합은?",
+            "choices": {
+              "A": "Ctrl+C 후 Ctrl+V",
+              "B": "Ctrl+P 후 Ctrl+S",
+              "C": "Ctrl+F 후 Ctrl+H",
+              "D": "Alt+F4"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 102,
+            "question": "열 너비를 내용에 맞게 자동 조정하려면 일반적으로 어디를 두 번 클릭하나요?",
+            "choices": {
+              "A": "상태 표시줄",
+              "B": "열 머리글 오른쪽 경계",
+              "C": "수식 입력줄",
+              "D": "시트 탭"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 103,
+            "question": "숫자 0.25를 값 변경 없이 25%로 표시하려면 어떤 표시 형식을 적용하나요?",
+            "choices": {
+              "A": "텍스트",
+              "B": "날짜",
+              "C": "백분율",
+              "D": "통화"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 104,
+            "question": "숫자가 들어 있는 셀의 개수를 구하는 함수는?",
+            "choices": {
+              "A": "SUM",
+              "B": "MAX",
+              "C": "MIN",
+              "D": "COUNT"
+            },
+            "correct_answer": "D",
+            "user_answer": "A",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 105,
+            "question": "A1:A10에서 60 이상인 값의 개수를 구하는 수식은?",
+            "choices": {
+              "A": "=COUNTIF(A1:A10,\">=60\")",
+              "B": "=SUM(A1:A10)",
+              "C": "=MAX(A1:A10)",
+              "D": "=AVERAGE(A1:A10)"
+            },
+            "correct_answer": "A",
+            "user_answer": "B",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 106,
+            "question": "B열 값을 오름차순 정렬할 때 관련 A열 데이터와의 대응을 유지하려면?",
+            "choices": {
+              "A": "B열만 잘라내기",
+              "B": "관련 전체 표 범위를 함께 정렬",
+              "C": "A열 삭제",
+              "D": "B열 수식을 모두 지우기"
+            },
+            "correct_answer": "B",
+            "user_answer": "A",
+            "is_correct": false,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 107,
+            "question": "월별 매출의 시간에 따른 변화를 표시하기에 적합한 차트는?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "도넛 차트",
+              "C": "꺾은선형 차트",
+              "D": "주식형 차트"
+            },
+            "correct_answer": "C",
+            "user_answer": "C",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 108,
+            "question": "키와 몸무게 같은 두 수치 변수의 관계를 살펴볼 때 적합한 차트는?",
+            "choices": {
+              "A": "원형 차트",
+              "B": "도넛 차트",
+              "C": "주식형 차트",
+              "D": "분산형 차트"
+            },
+            "correct_answer": "D",
+            "user_answer": "D",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 109,
+            "question": "차트의 범례가 주로 알려 주는 것은?",
+            "choices": {
+              "A": "색이나 기호에 대응하는 데이터 계열",
+              "B": "파일 저장 위치",
+              "C": "시트 보호 암호",
+              "D": "셀의 실제 수식"
+            },
+            "correct_answer": "A",
+            "user_answer": "A",
+            "is_correct": true,
+            "possible_score": 1
+          },
+          {
+            "problem_id": 110,
+            "question": "항목별 판매 수량의 크기를 비교할 때 적합한 차트는?",
+            "choices": {
+              "A": "주식형 차트",
+              "B": "세로 막대형 차트",
+              "C": "표면형 차트",
+              "D": "도넛 차트"
+            },
+            "correct_answer": "B",
+            "user_answer": "B",
+            "is_correct": true,
+            "possible_score": 1
+          }
+        ]
+      }
+    }
+  }
+]

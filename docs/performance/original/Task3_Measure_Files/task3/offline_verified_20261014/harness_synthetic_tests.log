@@ -1,0 +1,8 @@
+controlled5_weak_functions 1 success
+test_live_pipeline_retries_and_accepted_build_statistics (__main__.HarnessTests.test_live_pipeline_retries_and_accepted_build_statistics) ... ok
+test_missing_key_is_skipped_not_zero_performance (__main__.HarnessTests.test_missing_key_is_skipped_not_zero_performance) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.544s
+
+OK

@@ -1,0 +1,30 @@
+{
+  "existing_four_requests_unchanged": true,
+  "case_count": 17,
+  "expanded_question_count": 15,
+  "expanded_distinct_prompts": 15,
+  "expanded_topic_counts": {
+    "스프레드시트 기본": 5,
+    "함수와 데이터 관리": 5,
+    "차트와 분석": 5
+  },
+  "answer_correctness_consistent": true,
+  "added_metric_and_harness_tests": [
+    {
+      "test": "metrics_tests",
+      "exit_code": 0,
+      "synthetic": true
+    },
+    {
+      "test": "harness_synthetic_tests",
+      "exit_code": 0,
+      "synthetic": true
+    }
+  ],
+  "git_status_porcelain": "",
+  "team_tracked_files_modified": false,
+  "committed": false,
+  "pushed": false,
+  "actual_gemini_generation_attempts": 0,
+  "actual_gemini_requests": 0
+}

@@ -1,0 +1,44 @@
+test_availability_profile_is_saved_and_loaded (test_license_planner.AvailabilityAndInputTests.test_availability_profile_is_saved_and_loaded) ... FAIL
+test_busy_csv_round_trip_preserves_external_schedule (test_license_planner.AvailabilityAndInputTests.test_busy_csv_round_trip_preserves_external_schedule) ... ok
+test_overlapping_or_invalid_availability_is_rejected (test_license_planner.AvailabilityAndInputTests.test_overlapping_or_invalid_availability_is_rejected) ... ok
+test_topic_statistics_aggregate_weighted_results (test_license_planner.AvailabilityAndInputTests.test_topic_statistics_aggregate_weighted_results) ... ok
+test_api_rejects_preparation_start_after_exam_date (test_license_planner.PlanningApiContractTests.test_api_rejects_preparation_start_after_exam_date) ... ok
+test_api_request_maps_one_question_to_multiple_catalog_topics (test_license_planner.PlanningApiContractTests.test_api_request_maps_one_question_to_multiple_catalog_topics) ... ok
+test_api_requires_preparation_exam_and_weekly_availability (test_license_planner.PlanningApiContractTests.test_api_requires_preparation_exam_and_weekly_availability) ... ok
+test_planner_tool_builds_schedule_after_question_topic_analysis (test_license_planner.PlanningApiContractTests.test_planner_tool_builds_schedule_after_question_topic_analysis) ... ok
+test_planning_tools_do_not_offer_readiness_levels (test_license_planner.PlanningApiContractTests.test_planning_tools_do_not_offer_readiness_levels) ... ok
+test_busy_period_splits_a_plan_only_at_the_unavailable_interval (test_license_planner.PlanningScheduleTests.test_busy_period_splits_a_plan_only_at_the_unavailable_interval) ... ok
+test_one_study_block_can_exceed_one_hour (test_license_planner.PlanningScheduleTests.test_one_study_block_can_exceed_one_hour) ... ok
+test_requested_minutes_cannot_exceed_available_capacity (test_license_planner.PlanningScheduleTests.test_requested_minutes_cannot_exceed_available_capacity) ... ok
+test_schedule_requires_personal_weekly_availability (test_license_planner.PlanningScheduleTests.test_schedule_requires_personal_weekly_availability) ... ok
+
+======================================================================
+FAIL: test_availability_profile_is_saved_and_loaded (test_license_planner.AvailabilityAndInputTests.test_availability_profile_is_saved_and_loaded)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\winni\Documents\Codex\2026-10-14\referenced-chatgpt-conversation-this-is-an-2\work\license-planner\backend\license_planner_tests\test_license_planner.py", line 83, in test_availability_profile_is_saved_and_loaded
+    self.assertEqual(document["weekly_availability"], expected)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'mon[40 chars]}], 'tuesday': [], 'wednesday': [], 'thursday'[78 chars]: []} != {'mon[40 chars]}], 'saturday': [{'start': '10:00', 'end': '12:00'}]}
+- {'friday': [],
+-  'monday': [{'end': '21:00', 'start': '18:00'}],
+? ^
+
++ {'monday': [{'end': '21:00', 'start': '18:00'}],
+? ^
+
+-  'saturday': [{'end': '12:00', 'start': '10:00'}],
+?                                                  ^
+
++  'saturday': [{'end': '12:00', 'start': '10:00'}]}
+?                                                  ^
+
+-  'sunday': [],
+-  'thursday': [],
+-  'tuesday': [],
+-  'wednesday': []}
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.011s
+
+FAILED (failures=1)
