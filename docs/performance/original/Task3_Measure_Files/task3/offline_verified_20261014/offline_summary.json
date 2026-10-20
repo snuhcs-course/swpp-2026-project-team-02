@@ -1,0 +1,16 @@
+{
+  "suites": [
+    {
+      "suite": "license_planner_tests",
+      "exit_code": 1
+    },
+    {
+      "suite": "schedule_adjuster_tests",
+      "exit_code": 0
+    }
+  ],
+  "valid_inputs": 17,
+  "gemini_generation_attempts": 0,
+  "live_metrics": null,
+  "reason": "GEMINI_API_KEY absent"
+}

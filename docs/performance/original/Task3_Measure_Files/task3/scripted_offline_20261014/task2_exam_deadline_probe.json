@@ -1,0 +1,9 @@
+{
+  "kind": "OFFLINE_SCRIPTED_TASK2_PROBE_NOT_GEMINI",
+  "exam_date_for_evaluation": "2026-10-21T19:00:00",
+  "target_id": "study-1",
+  "moved_start": "2026-10-21T19:00:00",
+  "moved_end": "2026-10-21T20:00:00",
+  "past_exam": true,
+  "cause": "AdjustmentRequest and move_study_entry accept no exam deadline"
+}

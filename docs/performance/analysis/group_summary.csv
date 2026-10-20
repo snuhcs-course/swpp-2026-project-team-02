@@ -1,0 +1,5 @@
+﻿group,runs,success,failure,success_rate
+Controlled 15,25,24,1,0.96
+Controlled 5,25,24,1,0.96
+가용 시간 예외,15,9,6,0.6
+기본 시나리오,20,20,0,1.0

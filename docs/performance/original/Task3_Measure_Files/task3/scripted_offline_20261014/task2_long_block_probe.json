@@ -1,0 +1,7 @@
+{
+  "kind": "OFFLINE_SCRIPTED_TASK2_PROBE_NOT_GEMINI",
+  "session_minutes": 150,
+  "max_window_minutes": 120,
+  "outcome": "NO_AVAILABILITY_WINDOW: no personal window is long enough for this study session.",
+  "note": "총 가용 시간 충분 여부와 별개로 한 창에 원래 길이를 유지해야 함; 부분 수행/분할 인터페이스 필요"
+}

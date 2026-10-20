@@ -1,0 +1,14 @@
+test_assessed_topic_without_study_counts_zero (__main__.MetricTests.test_assessed_topic_without_study_counts_zero) ... ok
+test_busy_union_not_double_subtracted (__main__.MetricTests.test_busy_union_not_double_subtracted) ... ok
+test_clip_start_exam_boundaries (__main__.MetricTests.test_clip_start_exam_boundaries) ... ok
+test_conflicts_and_outside_and_duplicate (__main__.MetricTests.test_conflicts_and_outside_and_duplicate) ... ok
+test_half_open_touching_is_no_conflict (__main__.MetricTests.test_half_open_touching_is_no_conflict) ... ok
+test_no_available_time_is_na (__main__.MetricTests.test_no_available_time_is_na) ... ok
+test_pearson_negative_and_undefined (__main__.MetricTests.test_pearson_negative_and_undefined) ... ok
+test_population_std_includes_unused_window (__main__.MetricTests.test_population_std_includes_unused_window) ... ok
+test_zero_capacity_excluded_and_missing_study_zero (__main__.MetricTests.test_zero_capacity_excluded_and_missing_study_zero) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.005s
+
+OK

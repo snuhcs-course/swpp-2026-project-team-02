@@ -1,0 +1,599 @@
+{
+  "request": {
+    "self_assessment": "기본 기능은 사용해 보았고 시험 준비를 시작합니다.",
+    "preparation_start": "2026/10/19/18/00",
+    "exam_date": "2026/11/02/18/00",
+    "busy_schedules": [],
+    "weekly_availability": {
+      "monday": [
+        {
+          "start": "18:00",
+          "end": "20:00"
+        }
+      ],
+      "wednesday": [
+        {
+          "start": "18:00",
+          "end": "20:00"
+        }
+      ],
+      "friday": [
+        {
+          "start": "18:00",
+          "end": "20:00"
+        }
+      ]
+    },
+    "assessment_results": {
+      "certification_id": "computer_specialist_level_2",
+      "results": [
+        {
+          "problem_id": 1,
+          "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+          "choices": {
+            "A": "A1",
+            "B": "$A$1",
+            "C": "A$",
+            "D": "#A1"
+          },
+          "correct_answer": "B",
+          "user_answer": "B",
+          "is_correct": true,
+          "possible_score": 1
+        },
+        {
+          "problem_id": 2,
+          "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+          "choices": {
+            "A": "=COUNT(A1:A5)",
+            "B": "=SUM(A1:A5)",
+            "C": "=MAX(A1:A5)",
+            "D": "=AVERAGE(A1:A5)"
+          },
+          "correct_answer": "B",
+          "user_answer": "B",
+          "is_correct": true,
+          "possible_score": 1
+        },
+        {
+          "problem_id": 3,
+          "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+          "choices": {
+            "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+            "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+            "C": "=COUNTIF(A1,60,\"통과\")",
+            "D": "=AVERAGE(A1>=60)"
+          },
+          "correct_answer": "A",
+          "user_answer": "A",
+          "is_correct": true,
+          "possible_score": 1
+        },
+        {
+          "problem_id": 4,
+          "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+          "choices": {
+            "A": "원형 차트",
+            "B": "분산형 차트",
+            "C": "주식형 차트",
+            "D": "표면형 차트"
+          },
+          "correct_answer": "A",
+          "user_answer": "A",
+          "is_correct": true,
+          "possible_score": 1
+        },
+        {
+          "problem_id": 5,
+          "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+          "choices": {
+            "A": "영구 삭제됩니다",
+            "B": "다른 워크시트로 이동합니다",
+            "C": "화면에서 일시적으로 숨겨집니다",
+            "D": "셀 수식이 값으로 바뀝니다"
+          },
+          "correct_answer": "C",
+          "user_answer": "C",
+          "is_correct": true,
+          "possible_score": 1
+        }
+      ]
+    }
+  },
+  "response": {
+    "schedules": [
+      {
+        "schedule_id": "study-1",
+        "start_date": "2026/10/19/18/00",
+        "end_date": "2026/10/19/19/00",
+        "topic": "스프레드시트 기본"
+      },
+      {
+        "schedule_id": "study-2",
+        "start_date": "2026/10/21/18/00",
+        "end_date": "2026/10/21/19/00",
+        "topic": "함수와 데이터 관리"
+      },
+      {
+        "schedule_id": "study-3",
+        "start_date": "2026/10/23/18/00",
+        "end_date": "2026/10/23/19/00",
+        "topic": "차트와 분석"
+      },
+      {
+        "schedule_id": "study-4",
+        "start_date": "2026/10/26/18/00",
+        "end_date": "2026/10/26/19/00",
+        "topic": "스프레드시트 기본"
+      },
+      {
+        "schedule_id": "study-5",
+        "start_date": "2026/10/28/18/00",
+        "end_date": "2026/10/28/19/00",
+        "topic": "함수와 데이터 관리"
+      },
+      {
+        "schedule_id": "study-6",
+        "start_date": "2026/10/30/18/00",
+        "end_date": "2026/10/30/19/00",
+        "topic": "차트와 분석"
+      }
+    ],
+    "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-1,2026/10/19/18/00,2026/10/19/19/00,스프레드시트 기본\nstudy-2,2026/10/21/18/00,2026/10/21/19/00,함수와 데이터 관리\nstudy-3,2026/10/23/18/00,2026/10/23/19/00,차트와 분석\nstudy-4,2026/10/26/18/00,2026/10/26/19/00,스프레드시트 기본\nstudy-5,2026/10/28/18/00,2026/10/28/19/00,함수와 데이터 관리\nstudy-6,2026/10/30/18/00,2026/10/30/19/00,차트와 분석\n",
+    "schedule_csv_file": "license_planner/output/study_plan_20261015T031410675673+0900_25df1b81.csv",
+    "schedule_csv_url": "/api/v1/study-plans/study_plan_20261015T031410675673+0900_25df1b81.csv",
+    "agent_summary": "시험 결과 분석과 학습 일정 생성이 완료되었습니다. 애플리케이션에서 결과 CSV를 반환합니다.",
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {
+          "problem_topics": [
+            {
+              "problem_id": 1,
+              "topics": [
+                {
+                  "topic": "스프레드시트 기본",
+                  "weight": 1
+                }
+              ]
+            },
+            {
+              "problem_id": 2,
+              "topics": [
+                {
+                  "topic": "함수와 데이터 관리",
+                  "weight": 1
+                }
+              ]
+            },
+            {
+              "topics": [
+                {
+                  "weight": 1,
+                  "topic": "함수와 데이터 관리"
+                }
+              ],
+              "problem_id": 3
+            },
+            {
+              "problem_id": 4,
+              "topics": [
+                {
+                  "topic": "차트와 분석",
+                  "weight": 1
+                }
+              ]
+            },
+            {
+              "problem_id": 5,
+              "topics": [
+                {
+                  "weight": 1,
+                  "topic": "차트와 분석"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {
+          "daily_topic_minutes": [
+            {
+              "topic": "스프레드시트 기본",
+              "date": "2026/10/20",
+              "minutes": 30
+            },
+            {
+              "date": "2026/10/22",
+              "minutes": 30,
+              "topic": "함수와 데이터 관리"
+            },
+            {
+              "topic": "차트와 분석",
+              "minutes": 30,
+              "date": "2026/10/23"
+            },
+            {
+              "topic": "스프레드시트 기본",
+              "date": "2026/10/27",
+              "minutes": 30
+            },
+            {
+              "topic": "함수와 데이터 관리",
+              "minutes": 30,
+              "date": "2026/10/29"
+            },
+            {
+              "minutes": 30,
+              "topic": "차트와 분석",
+              "date": "2026/10/30"
+            }
+          ]
+        }
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {
+          "daily_topic_minutes": [
+            {
+              "minutes": 60,
+              "date": "2026/10/19",
+              "topic": "스프레드시트 기본"
+            },
+            {
+              "minutes": 60,
+              "date": "2026/10/21",
+              "topic": "함수와 데이터 관리"
+            },
+            {
+              "topic": "차트와 분석",
+              "date": "2026/10/23",
+              "minutes": 60
+            },
+            {
+              "topic": "스프레드시트 기본",
+              "minutes": 60,
+              "date": "2026/10/26"
+            },
+            {
+              "topic": "함수와 데이터 관리",
+              "minutes": 60,
+              "date": "2026/10/28"
+            },
+            {
+              "minutes": 60,
+              "topic": "차트와 분석",
+              "date": "2026/10/30"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "tool_observations": [
+    {
+      "tool": "get_certification_profile",
+      "arguments": {
+        "certification_id": "computer_specialist_level_2"
+      },
+      "result": {
+        "certification_id": "computer_specialist_level_2",
+        "name": "컴퓨터활용능력 2급",
+        "topics": [
+          "스프레드시트 기본",
+          "함수와 데이터 관리",
+          "차트와 분석"
+        ]
+      },
+      "elapsed_seconds": 8.030000026337802e-05,
+      "accepted_build_statistics": null
+    },
+    {
+      "tool": "analyze_exam_results",
+      "arguments": {
+        "problem_topics": [
+          {
+            "problem_id": 1,
+            "topics": [
+              {
+                "topic": "스프레드시트 기본",
+                "weight": 1
+              }
+            ]
+          },
+          {
+            "problem_id": 2,
+            "topics": [
+              {
+                "topic": "함수와 데이터 관리",
+                "weight": 1
+              }
+            ]
+          },
+          {
+            "topics": [
+              {
+                "weight": 1,
+                "topic": "함수와 데이터 관리"
+              }
+            ],
+            "problem_id": 3
+          },
+          {
+            "problem_id": 4,
+            "topics": [
+              {
+                "topic": "차트와 분석",
+                "weight": 1
+              }
+            ]
+          },
+          {
+            "problem_id": 5,
+            "topics": [
+              {
+                "weight": 1,
+                "topic": "차트와 분석"
+              }
+            ]
+          }
+        ]
+      },
+      "result": {
+        "total_possible_score": 5.0,
+        "total_earned_score": 5.0,
+        "overall_score_percent": 100.0,
+        "topic_statistics": [
+          {
+            "topic": "스프레드시트 기본",
+            "possible_score": 1.0,
+            "earned_score": 1.0,
+            "score_percent": 100.0,
+            "problem_count": 1.0
+          },
+          {
+            "topic": "차트와 분석",
+            "possible_score": 2.0,
+            "earned_score": 2.0,
+            "score_percent": 100.0,
+            "problem_count": 2.0
+          },
+          {
+            "topic": "함수와 데이터 관리",
+            "possible_score": 2.0,
+            "earned_score": 2.0,
+            "score_percent": 100.0,
+            "problem_count": 2.0
+          }
+        ]
+      },
+      "elapsed_seconds": 0.000334700001985766,
+      "accepted_build_statistics": null
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {
+        "daily_topic_minutes": [
+          {
+            "topic": "스프레드시트 기본",
+            "date": "2026/10/20",
+            "minutes": 30
+          },
+          {
+            "date": "2026/10/22",
+            "minutes": 30,
+            "topic": "함수와 데이터 관리"
+          },
+          {
+            "topic": "차트와 분석",
+            "minutes": 30,
+            "date": "2026/10/23"
+          },
+          {
+            "topic": "스프레드시트 기본",
+            "date": "2026/10/27",
+            "minutes": 30
+          },
+          {
+            "topic": "함수와 데이터 관리",
+            "minutes": 30,
+            "date": "2026/10/29"
+          },
+          {
+            "minutes": 30,
+            "topic": "차트와 분석",
+            "date": "2026/10/30"
+          }
+        ]
+      },
+      "result": "SCHEDULE_ERROR: NOT_ENOUGH_TIME: 30 planned minutes exceed 0 available minutes on 2026-10-20",
+      "elapsed_seconds": 0.0010953000019071624,
+      "accepted_build_statistics": null
+    },
+    {
+      "tool": "build_study_schedule",
+      "arguments": {
+        "daily_topic_minutes": [
+          {
+            "minutes": 60,
+            "date": "2026/10/19",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "minutes": 60,
+            "date": "2026/10/21",
+            "topic": "함수와 데이터 관리"
+          },
+          {
+            "topic": "차트와 분석",
+            "date": "2026/10/23",
+            "minutes": 60
+          },
+          {
+            "topic": "스프레드시트 기본",
+            "minutes": 60,
+            "date": "2026/10/26"
+          },
+          {
+            "topic": "함수와 데이터 관리",
+            "minutes": 60,
+            "date": "2026/10/28"
+          },
+          {
+            "minutes": 60,
+            "topic": "차트와 분석",
+            "date": "2026/10/30"
+          }
+        ]
+      },
+      "result": {
+        "study_block_count": 6,
+        "total_planned_minutes": 360,
+        "daily_topic_minutes": [
+          {
+            "date": "2026/10/19",
+            "topic": "스프레드시트 기본",
+            "minutes": 60
+          },
+          {
+            "date": "2026/10/21",
+            "topic": "함수와 데이터 관리",
+            "minutes": 60
+          },
+          {
+            "date": "2026/10/23",
+            "topic": "차트와 분석",
+            "minutes": 60
+          },
+          {
+            "date": "2026/10/26",
+            "topic": "스프레드시트 기본",
+            "minutes": 60
+          },
+          {
+            "date": "2026/10/28",
+            "topic": "함수와 데이터 관리",
+            "minutes": 60
+          },
+          {
+            "date": "2026/10/30",
+            "topic": "차트와 분석",
+            "minutes": 60
+          }
+        ],
+        "uses_personal_availability": true,
+        "schedule": [
+          {
+            "schedule_id": "study-1",
+            "topic": "스프레드시트 기본",
+            "start_date": "2026/10/19/18/00",
+            "end_date": "2026/10/19/19/00"
+          },
+          {
+            "schedule_id": "study-2",
+            "topic": "함수와 데이터 관리",
+            "start_date": "2026/10/21/18/00",
+            "end_date": "2026/10/21/19/00"
+          },
+          {
+            "schedule_id": "study-3",
+            "topic": "차트와 분석",
+            "start_date": "2026/10/23/18/00",
+            "end_date": "2026/10/23/19/00"
+          },
+          {
+            "schedule_id": "study-4",
+            "topic": "스프레드시트 기본",
+            "start_date": "2026/10/26/18/00",
+            "end_date": "2026/10/26/19/00"
+          },
+          {
+            "schedule_id": "study-5",
+            "topic": "함수와 데이터 관리",
+            "start_date": "2026/10/28/18/00",
+            "end_date": "2026/10/28/19/00"
+          },
+          {
+            "schedule_id": "study-6",
+            "topic": "차트와 분석",
+            "start_date": "2026/10/30/18/00",
+            "end_date": "2026/10/30/19/00"
+          }
+        ]
+      },
+      "elapsed_seconds": 0.0015617000026395544,
+      "accepted_build_statistics": [
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1.0,
+          "earned_score": 1.0,
+          "score_percent": 100.0,
+          "problem_count": 1.0
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 2.0,
+          "earned_score": 2.0,
+          "score_percent": 100.0,
+          "problem_count": 2.0
+        },
+        {
+          "topic": "함수와 데이터 관리",
+          "possible_score": 2.0,
+          "earned_score": 2.0,
+          "score_percent": 100.0,
+          "problem_count": 2.0
+        }
+      ]
+    }
+  ],
+  "model_calls": [
+    {
+      "model": "gemini-3.5-flash-lite",
+      "success": true,
+      "elapsed_seconds": 1.0470628000039142
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "success": true,
+      "elapsed_seconds": 0.9451840999972774
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "success": true,
+      "elapsed_seconds": 1.235838299995521
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "success": true,
+      "elapsed_seconds": 1.3307264000031864
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "success": true,
+      "elapsed_seconds": 0.8303181999945082
+    }
+  ],
+  "record": {
+    "case_id": "controlled5_all_correct",
+    "run_id": 4,
+    "order": 1,
+    "commit": "d706ad2ea66aaed6faeebea1c21dc358ace0ecf2",
+    "model": "gemini-3.5-flash-lite",
+    "mode": "live",
+    "question_count": 5,
+    "http_status": 200,
+    "elapsed_seconds": 5.465599400005885,
+    "model_request_count": 5,
+    "outcome": "success",
+    "error": ""
+  }
+}

@@ -1,0 +1,18 @@
+﻿folder,group,case_id,repeats
+Task3_Controlled15_AllCorrect,Controlled 15,controlled15_all_correct,5
+Task3_Controlled15_AllWrong,Controlled 15,controlled15_all_wrong,5
+Task3_Controlled15_Basic,Controlled 15,controlled15_weak_basic,5
+Task3_Controlled15_Charts,Controlled 15,controlled15_weak_charts,5
+Task3_Controlled15_Functions,Controlled 15,controlled15_weak_functions,5
+Task3_Controlled5_AllCorrect,Controlled 5,controlled5_all_correct,5
+Task3_Controlled5_AllWrong,Controlled 5,controlled5_all_wrong,5
+Task3_Controlled5_Basic,Controlled 5,controlled5_weak_basic,5
+Task3_Controlled5_Charts,Controlled 5,controlled5_weak_charts,5
+Task3_Controlled5_Functions,Controlled 5,controlled5_weak_functions,5
+Task3_Overlapping_Busy,가용 시간 예외,availability_overlapping_busy,5
+Task3_Paid_Case02,기본 시나리오,license_planner_case_02_advanced_weak_functions,5
+Task3_Paid_Case03,기본 시나리오,license_planner_case_03_weak_charts,5
+Task3_Paid_Case04,기본 시나리오,license_planner_case_04_personal_availability_api,5
+Task3_Paid_Repeat5,기본 시나리오,license_planner_case_01_beginner_weak_charts,5
+Task3_Tiny_Capacity,가용 시간 예외,availability_tiny_capacity,5
+Task3_Unequal_Windows,가용 시간 예외,availability_unequal_windows,5

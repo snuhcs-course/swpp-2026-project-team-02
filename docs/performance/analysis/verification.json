@@ -1,0 +1,43 @@
+{
+  "row_count": 85,
+  "outcomes": {
+    "success": 77,
+    "failure": 8
+  },
+  "checks": {
+    "raw_files": 85,
+    "tool_calls": 310,
+    "recomputed_success": 77
+  },
+  "issues": [],
+  "timing": {
+    "all": {
+      "n": 85,
+      "mean": 5.649593355294885,
+      "median": 5.300673399993684,
+      "p95_nearest_rank": 7.301432200009003,
+      "max": 18.286418100004084
+    },
+    "success": {
+      "n": 77,
+      "mean": 5.528351470130509,
+      "median": 5.124904800002696,
+      "p95_nearest_rank": 7.245590199992876,
+      "max": 18.286418100004084
+    },
+    "failure": {
+      "n": 8,
+      "mean": 6.816546500002005,
+      "median": 6.232538500007649,
+      "p95_nearest_rank": 8.913718900003005,
+      "max": 8.913718900003005
+    }
+  },
+  "model_request_count": 387,
+  "model_seconds_sum": 477.56165360021987,
+  "tool_seconds_sum": 0.22540960008336697,
+  "http_seconds_sum": 480.21543520006526,
+  "fixed_corr_difference_runs": 10,
+  "input_sha256": "27ff8db8a18c18d606a300f8f0ed210dcdefe902feee9041d2c3492c7a1e0e23",
+  "p95_method": "nearest rank: sorted_values[ceil(0.95*n)-1]"
+}

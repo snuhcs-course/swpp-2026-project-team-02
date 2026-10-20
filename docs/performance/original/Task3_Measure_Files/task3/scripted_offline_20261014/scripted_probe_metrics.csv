@@ -1,0 +1,5 @@
+﻿kind,scenario,accepted,time_ratio_population_std,window_count,zero_capacity_window_count,score_minutes_pearson,pearson_na_reason,total_study_minutes,available_minutes,utilization,study_overlap_pairs,busy_conflict_pairs,outside_free_window_blocks,invalid_duration_blocks,duplicate_schedule_ids,error
+OFFLINE_SCRIPTED_TOOL_PROBE_NOT_GEMINI,concentrated,True,0.2795084971874737,6,0,,zero_variance_scores_or_minutes,90.0,720.0,0.125,0,0,0,0,0,
+OFFLINE_SCRIPTED_TOOL_PROBE_NOT_GEMINI,distributed,True,0.0,6,0,,zero_variance_scores_or_minutes,90.0,720.0,0.125,0,0,0,0,0,
+OFFLINE_SCRIPTED_TOOL_PROBE_NOT_GEMINI,strong_topic_more_time,True,0.2795084971874737,6,0,1.0,,90.0,720.0,0.125,0,0,0,0,0,
+OFFLINE_SCRIPTED_TOOL_PROBE_NOT_GEMINI,over_capacity,False,,,,,,,,,,,,,,SCHEDULE_ERROR: NOT_ENOUGH_TIME: 123 planned minutes exceed 120 available minutes on 2026-10-19

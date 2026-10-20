@@ -1,0 +1,17 @@
+{
+  "time_ratio_population_std": 0.11785113019775792,
+  "window_count": 6,
+  "zero_capacity_window_count": 0,
+  "score_minutes_pearson": -0.8660254037844386,
+  "pearson_na_reason": "",
+  "total_study_minutes": 120.0,
+  "available_minutes": 720.0,
+  "utilization": 0.16666666666666666,
+  "study_overlap_pairs": 0,
+  "busy_conflict_pairs": 0,
+  "outside_free_window_blocks": 0,
+  "invalid_duration_blocks": 0,
+  "duplicate_schedule_ids": 0,
+  "empty_study_plan": false,
+  "unassessed_study_topics": []
+}

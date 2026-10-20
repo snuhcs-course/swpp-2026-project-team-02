@@ -1,0 +1,5 @@
+# Measurement harness and analysis use Python standard library only.
+# No pip packages are required for the supplied scripts.
+# The target backend source is external; review its pinned source before running.
+# Live experiment Python: 3.14.7 (Anaconda, Windows AMD64).
+# Original offline experiment Python: 3.13.15.

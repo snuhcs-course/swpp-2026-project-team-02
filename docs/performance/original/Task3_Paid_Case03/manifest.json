@@ -1,0 +1,17 @@
+{
+  "target_branch": "iteration-1-demo",
+  "commit": "d706ad2ea66aaed6faeebea1c21dc358ace0ecf2",
+  "mode": "live",
+  "started_at_kst": "2026-10-15T02:42:10.920921+09:00",
+  "python": "3.14.7 | packaged by Anaconda, Inc. | (main, Aug 14 2026, 10:12:46) [MSC v.1942 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+  "model": "gemini-3.5-flash-lite",
+  "key_present": true,
+  "cases": 1,
+  "repeats_planned": 5,
+  "seed": 20261014,
+  "case_file_sha256": "27ff8db8a18c18d606a300f8f0ed210dcdefe902feee9041d2c3492c7a1e0e23",
+  "timing_scope": "local HTTP round trip including Gemini, tools, CSV saving; excludes server startup",
+  "instrumentation": "wrapper calls original tools and model method unchanged; captures accepted build statistics"
+}
