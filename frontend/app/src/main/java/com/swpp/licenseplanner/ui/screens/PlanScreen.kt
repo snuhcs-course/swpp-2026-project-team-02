@@ -156,7 +156,12 @@ private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.
  * [selectedId] marked; existing schedules stay plain rows.
  */
 @Composable
-internal fun DaySection(day: DayPlan, selectedId: String? = null, onSelect: ((String) -> Unit)? = null) {
+internal fun DaySection(
+    day: DayPlan,
+    selectedId: String? = null,
+    onSelect: ((String) -> Unit)? = null,
+    selectionEnabled: Boolean = true,
+) {
     if (day.sessions.isEmpty()) {
         MutedBox {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -172,7 +177,7 @@ internal fun DaySection(day: DayPlan, selectedId: String? = null, onSelect: ((St
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (session in day.sessions) {
                     if (onSelect == null || session.isExternal) SessionRow(session)
-                    else SelectableSession(session, day.date, session.scheduleId == selectedId) { onSelect(session.scheduleId) }
+                    else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled) { onSelect(session.scheduleId) }
                 }
             }
         }
@@ -188,9 +193,9 @@ private fun DayStamp(date: LocalDate) {
 }
 
 @Composable
-private fun SelectableSession(session: PlanSession, date: LocalDate, selected: Boolean, onClick: () -> Unit) {
+private fun SelectableSession(session: PlanSession, date: LocalDate, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}"
-    ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label) {
+    ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
         Box(Modifier.weight(1f)) { SessionRow(session) }
     }
 }

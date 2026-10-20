@@ -101,6 +101,16 @@ class LivePlanningRepositoryTest {
         assertEquals(4, server.requestCount)
     }
 
+    /** Stored-plan codes belong to adjustment; generation keeps its generic categories. */
+    @Test
+    fun planCodesKeepGenericCategories() {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
+        assertEquals(PlanOutcome.Failure(ApiError.Configuration), generate())
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
+        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(409)), generate())
+        assertEquals(2, server.requestCount)
+    }
+
     @Test
     fun malformedBodyIsInvalidResponse() {
         server.enqueue(MockResponse().setBody("{\"schedules\": [oops"))

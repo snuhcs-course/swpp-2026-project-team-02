@@ -2,8 +2,8 @@ package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.data.model.ScheduleAdjustmentRequest
 import com.swpp.licenseplanner.data.model.ScheduleAdjustmentResponse
+import com.swpp.licenseplanner.data.model.StudyPlanListResponse
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
-import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
@@ -13,9 +13,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
 /**
- * `POST <base>/schedules/adjust` with a four-field body. Responses are
- * validated before the caller touches its plan; failures are returned as-is, with no retry
- * and no demo fallback. Success does not prove the server saved the file.
+ * `POST <base>/schedules/adjust` with a four-field body, and `GET <base>/study-plans` to read
+ * one plan back. Responses are validated before the caller touches its plan; failures are
+ * returned as-is, with no retry and no demo fallback. Success does not prove the server saved the file.
  */
 class LiveAdjustmentRepository(
     private val baseUrl: String,
@@ -40,7 +40,7 @@ class LiveAdjustmentRepository(
             .url(apiUrl(baseUrl, "/schedules/adjust"))
             .post(body)
             .build()
-        return when (val outcome = client.executeApi(httpRequest, io)) {
+        return when (val outcome = client.executeApi(httpRequest, io, planErrors = true)) {
             is HttpOutcome.Failed -> AdjustmentOutcome.Failure(outcome.error)
             is HttpOutcome.Ok -> parse(outcome.body, request)
         }
@@ -71,16 +71,40 @@ class LiveAdjustmentRepository(
         if (response.scheduleCsvFile != null && response.scheduleCsvFile != request.scheduleCsvFile) {
             return "schedule_csv_file does not match the requested plan"
         }
-        val ids = response.schedules.map { it.scheduleId }
-        if (ids.any { it.isBlank() }) return "blank schedule_id"
-        if (ids.toSet().size != ids.size) return "duplicate schedule_id"
-        if (request.scheduleId !in ids) return "target row ${request.scheduleId} is missing"
-        val badRow = response.schedules.firstOrNull { row ->
-            val start = WireDateTime.parseOrNull(row.startDate)
-            val end = WireDateTime.parseOrNull(row.endDate)
-            start == null || end == null || !end.isAfter(start)
+        scheduleRowProblem(response.schedules)?.let { return it }
+        if (response.schedules.none { it.scheduleId == request.scheduleId }) return "target row ${request.scheduleId} is missing"
+        return null
+    }
+
+    /**
+     * Lists the stored plans and keeps only the one whose `schedule_csv_file` equals [scheduleCsvFile]
+     * exactly; other plans are never returned. A route 404 is a configuration error, not a missing plan.
+     */
+    override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
+        val file = scheduleCsvFile?.takeIf { it.isNotBlank() }
+            ?: return ReloadOutcome.Failure(ApiError.InvalidInput(MISSING_IDENTITY))
+        val httpRequest = Request.Builder()
+            .url(apiUrl(baseUrl, "/study-plans"))
+            .get()
+            .build()
+        return when (val outcome = client.executeApi(httpRequest, io)) {
+            is HttpOutcome.Failed -> ReloadOutcome.Failure(outcome.error)
+            is HttpOutcome.Ok -> parseList(outcome.body, file)
         }
-        return badRow?.let { "invalid schedule row ${it.scheduleId}" }
+    }
+
+    private fun parseList(body: String, file: String): ReloadOutcome {
+        val list = try {
+            ApiJson.decodeFromString(StudyPlanListResponse.serializer(), body)
+        } catch (error: Exception) {
+            return ReloadOutcome.Failure(ApiError.InvalidResponse(error.message))
+        }
+        val matches = list.plans.filter { it.scheduleCsvFile == file }
+        if (matches.isEmpty()) return ReloadOutcome.Missing
+        if (matches.size > 1) return ReloadOutcome.Failure(ApiError.InvalidResponse("duplicate schedule_csv_file"))
+        val rows = matches.single().schedules
+        scheduleRowProblem(rows)?.let { return ReloadOutcome.Failure(ApiError.InvalidResponse(it)) }
+        return ReloadOutcome.Loaded(rows)
     }
 
     /**

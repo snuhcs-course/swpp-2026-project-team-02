@@ -6,6 +6,8 @@ import com.swpp.licenseplanner.data.ApiError
 fun ApiError.userMessage(): String = when (this) {
     is ApiError.InvalidInput -> message?.takeIf { it.isNotBlank() } ?: "입력값을 확인해 주세요."
     ApiError.Configuration -> "연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)"
+    ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
+    ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
     is ApiError.ServerUnavailable -> "서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요. (HTTP 503)"
     is ApiError.ServerFailure -> "서버에서 요청을 처리하지 못했어요. 다시 시도해 주세요. (HTTP $status)"
     ApiError.Connection -> "서버에 연결할 수 없어요. 네트워크와 서버 상태를 확인한 뒤 다시 시도해 주세요."
@@ -13,11 +15,34 @@ fun ApiError.userMessage(): String = when (this) {
 }
 
 /**
- * Adjustment wording: a lost connection or timeout cannot say whether the server
- * changed the plan, and an invalid response left the shown plan untouched.
+ * Whether a live adjustment failure leaves the stored plan unknown, so only reading the latest
+ * saved plan (never resending the mutation) may follow: any 409, a lost connection or timeout,
+ * or a 200 that could not be read or did not match the request.
  */
-fun ApiError.adjustmentMessage(): String = when (this) {
-    ApiError.Connection -> "서버 응답을 받지 못해 조정 결과를 확인할 수 없어요. 화면의 기존 계획은 그대로 두었어요."
-    is ApiError.InvalidResponse -> "서버 응답을 읽을 수 없거나 요청과 맞지 않아 계획을 바꾸지 않았어요."
+fun ApiError.requiresReload(): Boolean = when (this) {
+    ApiError.PlanConflict, ApiError.Connection, is ApiError.InvalidResponse -> true
+    is ApiError.ServerFailure -> status == 409
+    else -> false
+}
+
+/**
+ * Adjustment wording. An uncertain result never claims the server applied or undid anything,
+ * and a route 404 is not reported as a deleted plan.
+ */
+fun ApiError.adjustmentMessage(): String = when {
+    this == ApiError.Configuration -> ROUTE_NOT_FOUND_MESSAGE
+    this == ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
+    requiresReload() -> "조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
     else -> userMessage()
 }
+
+/** Latest-plan reload failure; the shown plan is still the earlier local copy. */
+fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있어요. " + when (this) {
+    ApiError.Configuration -> ROUTE_NOT_FOUND_MESSAGE
+    else -> userMessage()
+}
+
+private const val PLAN_NOT_FOUND_MESSAGE =
+    "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."
+private const val PLAN_CONFLICT_MESSAGE = "서버의 계획이 변경되었어요. 최신 계획을 불러온 뒤 일정을 다시 선택해 주세요."
+private const val ROUTE_NOT_FOUND_MESSAGE = "API 경로를 찾을 수 없어요. API 주소와 서버 버전을 확인해 주세요. (HTTP 404)"

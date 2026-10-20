@@ -15,12 +15,14 @@ import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
+import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.RequestMapper
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +59,12 @@ sealed interface AdjustmentState {
     data class Failure(val error: ApiError) : AdjustmentState
     /** Demo-only: no permitted interval fits before the exam. */
     data object DemoNoSlot : AdjustmentState
+    /** Reading the selected plan's latest saved rows. */
+    data object Reloading : AdjustmentState
+    /** The reload failed; the plan still needs one before it can be adjusted. */
+    data class ReloadFailure(val error: ApiError) : AdjustmentState
+    /** The latest saved rows replaced the plan; a fresh selection is needed. */
+    data object Reloaded : AdjustmentState
 }
 
 /** The plan and failed study row chosen for adjustment, with its outcome. */
@@ -101,11 +109,18 @@ class PlanFormViewModel(
     private val _adjustment = MutableStateFlow(AdjustmentSelection())
     val adjustment: StateFlow<AdjustmentSelection> = _adjustment.asStateFlow()
 
-    /** Plan ordinal and input of the latest adjustment; retry resends exactly this. */
+    /**
+     * Plan ordinal and input of the latest adjustment; retry resends exactly this. Dropped once
+     * the server's copy is uncertain, so a possibly applied or stale mutation is never resent.
+     */
     private var pendingAdjustment: Pair<Int, AdjustmentInput>? = null
 
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
+    private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
+
+    /** An adjustment or reload is in flight; it must finish on the plan it started from. */
+    private val busy get() = adjusting || reloading
 
     fun selectCertification(id: String) = edit { it.copy(certificationId = id) }
     fun setPreparationStart(date: LocalDate) = edit { it.copy(preparationStart = date) }
@@ -152,7 +167,7 @@ class PlanFormViewModel(
      * Returns whether a request was sent. A local demo result may already be set on return.
      */
     fun generate(): Boolean {
-        if (generating || adjusting) return false
+        if (generating || busy) return false
         val request = (RequestMapper.map(_form.value) as? MappingResult.Ready)?.request ?: return false
         send(request)
         return true
@@ -160,7 +175,7 @@ class PlanFormViewModel(
 
     /** Resends the identical request after a failure; inputs are untouched. */
     fun retryGeneration() {
-        if (_generation.value !is GenerationState.Failure || adjusting) return
+        if (_generation.value !is GenerationState.Failure || busy) return
         send(lastRequest ?: return)
     }
 
@@ -184,10 +199,11 @@ class PlanFormViewModel(
 
     /**
      * Opens [ordinal] for adjustment. A different plan starts with no selection or outcome;
-     * the same plan keeps both. Refused while an adjustment is in flight.
+     * the same plan keeps both, and every plan keeps its [SessionPlan.recovery].
+     * Refused while an adjustment or reload is in flight.
      */
     fun selectPlan(ordinal: Int): Boolean {
-        if (adjusting || _plans.value.none { it.ordinal == ordinal }) return false
+        if (busy || _plans.value.none { it.ordinal == ordinal }) return false
         if (_adjustment.value.planOrdinal != ordinal) {
             _adjustment.value = AdjustmentSelection(planOrdinal = ordinal)
             pendingAdjustment = null
@@ -195,11 +211,15 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Marks one study row of the selected plan as failed, replacing any earlier choice. */
+    /**
+     * Marks one study row of the selected plan as failed, replacing any earlier choice.
+     * Ignored while the plan needs a reload or is missing, so the recovery state stays.
+     */
     fun selectFailedSession(scheduleId: String) {
         val selection = _adjustment.value
-        if (adjusting || selection.failedScheduleId == scheduleId) return
-        if (selectedPlan()?.isStudy(scheduleId) != true) return
+        if (busy || selection.failedScheduleId == scheduleId) return
+        val plan = selectedPlan() ?: return
+        if (plan.recovery != PlanRecovery.Ready || !plan.isStudy(scheduleId)) return
         _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle)
         pendingAdjustment = null
     }
@@ -209,23 +229,63 @@ class PlanFormViewModel(
      * call while loading does nothing. Returns whether a request was sent.
      */
     fun submitAdjustment(): Boolean {
-        if (generating || adjusting) return false
-        val plan = selectedPlan()?.takeIf { it.hasIdentity } ?: return false
+        if (generating || busy) return false
+        val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
         val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
         sendAdjustment(plan.ordinal, AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target))
         return true
     }
 
-    /** Resends the identical snapshot after a failure; the plan and selection are untouched. */
+    /**
+     * Resends the identical snapshot after a confirmed failure; the plan and selection are untouched.
+     * Does nothing for a plan that needs a reload or is missing.
+     */
     fun retryAdjustment() {
         if (_adjustment.value.state !is AdjustmentState.Failure || generating) return
         val (ordinal, input) = pendingAdjustment ?: return
+        if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
         sendAdjustment(ordinal, input)
     }
 
-    private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let { ordinal ->
-        _plans.value.firstOrNull { it.ordinal == ordinal }
+    /**
+     * Reads the selected plan's latest saved rows when it needs a reload; a second call while
+     * reading does nothing. Never resends the adjustment. Returns whether a request was sent.
+     */
+    fun reloadPlan(): Boolean {
+        if (generating || busy) return false
+        val plan = selectedPlan()?.takeIf { it.recovery == PlanRecovery.ReloadRequired } ?: return false
+        val ordinal = plan.ordinal
+        _adjustment.update { it.copy(state = AdjustmentState.Reloading) }
+        viewModelScope.launch {
+            when (val outcome = adjustmentRepository.reload(plan.scheduleCsvFile)) {
+                is ReloadOutcome.Loaded -> {
+                    // The list has no CSV text or summary for these rows, so the old ones are dropped.
+                    updatePlan(ordinal) {
+                        it.copy(
+                            current = it.current.copy(schedules = outcome.schedules, scheduleCsv = "", agentSummary = null),
+                            recovery = PlanRecovery.Ready,
+                        )
+                    }
+                    pendingAdjustment = null
+                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Reloaded) }
+                }
+                ReloadOutcome.Missing -> {
+                    updatePlan(ordinal) { it.copy(recovery = PlanRecovery.Missing) }
+                    _adjustment.update { it.copy(state = AdjustmentState.Idle) }
+                }
+                is ReloadOutcome.Failure -> _adjustment.update { it.copy(state = AdjustmentState.ReloadFailure(outcome.error)) }
+            }
+        }
+        return true
     }
+
+    private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
+
+    private fun plan(ordinal: Int): SessionPlan? = _plans.value.firstOrNull { it.ordinal == ordinal }
+
+    /** Changes only the entry [ordinal]; every other plan stays as it is. */
+    private fun updatePlan(ordinal: Int, transform: (SessionPlan) -> SessionPlan) =
+        _plans.update { plans -> plans.map { if (it.ordinal == ordinal) transform(it) else it } }
 
     private fun sendAdjustment(ordinal: Int, input: AdjustmentInput) {
         pendingAdjustment = ordinal to input
@@ -234,19 +294,29 @@ class PlanFormViewModel(
             when (val outcome = adjustmentRepository.adjust(input)) {
                 is AdjustmentOutcome.Success -> {
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
-                    _plans.update { plans ->
-                        plans.map { plan ->
-                            if (plan.ordinal != ordinal) plan
-                            else plan.copy(current = outcome.response.copy(scheduleCsvFile = plan.current.scheduleCsvFile))
-                        }
-                    }
+                    updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
-                is AdjustmentOutcome.Failure -> _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
+                is AdjustmentOutcome.Failure -> {
+                    val recovery = recoveryAfter(outcome.error, input)
+                    if (recovery != PlanRecovery.Ready) {
+                        pendingAdjustment = null
+                        updatePlan(ordinal) { it.copy(recovery = recovery) }
+                    }
+                    _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
+                }
             }
         }
+    }
+
+    /** A live failure that leaves the server's copy unknown or gone blocks further adjustment of that plan. */
+    private fun recoveryAfter(error: ApiError, input: AdjustmentInput): PlanRecovery = when {
+        input.scheduleCsvFile == null -> PlanRecovery.Ready
+        error == ApiError.PlanNotFound -> PlanRecovery.Missing
+        error.requiresReload() -> PlanRecovery.ReloadRequired
+        else -> PlanRecovery.Ready
     }
 
     /** Form edits are ignored during generation and clear any earlier result, never the stored plans. */

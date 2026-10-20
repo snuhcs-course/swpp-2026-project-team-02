@@ -12,12 +12,15 @@ import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
+import com.swpp.licenseplanner.data.ReloadOutcome
+import com.swpp.licenseplanner.data.createApiHttpClient
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -28,9 +31,12 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +45,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
+import java.util.concurrent.TimeUnit
 
 /** Session plans and adjustment lifecycle, with fake or local repositories. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -58,15 +65,26 @@ class PlanAdjustmentViewModelTest {
         }
     }
 
-    /** Records every input; each call waits for [gate] when set (the delayed fake). */
+    /**
+     * Records every input and reload identity; each call waits for [gate] or [reloadGate]
+     * when set (the delayed fake).
+     */
     private class FakeAdjustment(vararg replies: AdjustmentOutcome) : AdjustmentRepository {
         val queue = ArrayDeque(replies.toList())
         val inputs = mutableListOf<AdjustmentInput>()
         var gate: CompletableDeferred<Unit>? = null
+        val reloads = ArrayDeque<ReloadOutcome>()
+        val reloadIdentities = mutableListOf<String?>()
+        var reloadGate: CompletableDeferred<Unit>? = null
         override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
             inputs += input
             gate?.await()
             return queue.removeFirst()
+        }
+        override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
+            reloadIdentities += scheduleCsvFile
+            reloadGate?.await()
+            return reloads.removeFirst()
         }
     }
 
@@ -299,24 +317,27 @@ class PlanAdjustmentViewModelTest {
     }
 
     @Test fun failuresKeepPlanSelectionAndIdentity() = runTest(dispatcher) {
-        val failures = listOf(
-            ApiError.InvalidResponse("unexpected action cancelled_external"),
-            ApiError.InvalidInput("unknown schedule_csv_file"), // a stale/deleted file
-            ApiError.Configuration,
-            ApiError.ServerFailure(500),
-            ApiError.Connection,
+        val failures = mapOf(
+            ApiError.InvalidResponse("unexpected action cancelled_external") to PlanRecovery.ReloadRequired,
+            ApiError.InvalidInput("unknown schedule_csv_file") to PlanRecovery.Ready,
+            ApiError.Configuration to PlanRecovery.Ready,
+            ApiError.ServerFailure(500) to PlanRecovery.Ready,
+            ApiError.ServerUnavailable("busy") to PlanRecovery.Ready,
+            ApiError.Connection to PlanRecovery.ReloadRequired,
+            ApiError.PlanConflict to PlanRecovery.ReloadRequired,
+            ApiError.ServerFailure(409) to PlanRecovery.ReloadRequired,
+            ApiError.PlanNotFound to PlanRecovery.Missing,
         )
-        for (error in failures) {
+        for ((error, recovery) in failures) {
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), FakeAdjustment(AdjustmentOutcome.Failure(error)))
             vm.generate()
             advanceUntilIdle()
-            val before = vm.plans.value
+            val before = vm.plan(1)
             vm.select(1, "study-1")
             vm.submitAdjustment()
             advanceUntilIdle()
             assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
-            assertEquals(before, vm.plans.value)
-            assertEquals(fileA, vm.plan(1).scheduleCsvFile)
+            assertEquals(before.copy(recovery = recovery), vm.plan(1))
         }
     }
 
@@ -325,14 +346,14 @@ class PlanAdjustmentViewModelTest {
         val server = MockWebServer().apply { start() }
         try {
             server.enqueue(MockResponse().setBody(
-                """{"schedules":${ApiJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(ScheduleRow.serializer()), rowsA)},
+                """{"schedules":${ApiJson.encodeToString(ListSerializer(ScheduleRow.serializer()), rowsA)},
                    "schedule_csv":"","action":"cancelled_external","target_schedule_id":"study-1"}""",
             ))
             val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), live)
             vm.generate()
             advanceUntilIdle()
-            val before = vm.plans.value
+            val before = vm.plan(1)
             vm.select(1, "study-1")
             vm.switchToWednesday()
             vm.submitAdjustment()
@@ -340,7 +361,7 @@ class PlanAdjustmentViewModelTest {
 
             assertTrue((vm.adjustment.value.state as AdjustmentState.Failure).error is ApiError.InvalidResponse)
             assertEquals("study-1", vm.adjustment.value.failedScheduleId)
-            assertEquals(before, vm.plans.value)
+            assertEquals(before.copy(recovery = PlanRecovery.ReloadRequired), vm.plan(1))
             val sent = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
             assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
         } finally {
@@ -349,7 +370,7 @@ class PlanAdjustmentViewModelTest {
     }
 
     @Test fun retryResendsTheIdenticalSnapshotAfterFormEdits() = runTest(dispatcher) {
-        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Success(adjustedA))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerUnavailable("busy")), AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
         vm.generate()
         advanceUntilIdle()
@@ -370,7 +391,7 @@ class PlanAdjustmentViewModelTest {
     }
 
     @Test fun changingSelectionAfterFailureBuildsANewRequest() = runTest(dispatcher) {
-        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Success(adjustedA))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerFailure(502)), AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
         vm.generate()
         advanceUntilIdle()
@@ -442,5 +463,336 @@ class PlanAdjustmentViewModelTest {
         advanceUntilIdle()
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.DemoNoSlot), vm.adjustment.value)
         assertEquals(before, vm.plans.value)
+    }
+
+    // --- Recovery after an uncertain, conflicting or missing-plan failure ---
+
+    /** Generates A (Monday) and B (Wednesday), then fails A's study-1 adjustment with [error]. */
+    private fun TestScope.failA(error: ApiError, adjustment: FakeAdjustment): PlanFormViewModel {
+        adjustment.queue.addFirst(AdjustmentOutcome.Failure(error))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        return vm
+    }
+
+    /** Neither retry nor a normal submission (even with a new row) sends anything for plan 1. */
+    private fun TestScope.assertAdjustmentBlocked(vm: PlanFormViewModel, adjustment: FakeAdjustment) {
+        val sent = adjustment.inputs.size
+        val selection = vm.adjustment.value
+        vm.retryAdjustment()
+        vm.selectFailedSession("study-2")
+        assertFalse(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(sent, adjustment.inputs.size)
+        assertEquals(selection, vm.adjustment.value)
+    }
+
+    @Test fun uncertainFailuresRequireReloadInsteadOfRetry() = runTest(dispatcher) {
+        for (error in listOf(ApiError.PlanConflict, ApiError.ServerFailure(409), ApiError.Connection, ApiError.InvalidResponse("x"))) {
+            val adjustment = FakeAdjustment()
+            val vm = failA(error, adjustment)
+            assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+            assertEquals(rowsA, vm.plan(1).current.schedules)
+            assertEquals("study-1", vm.adjustment.value.failedScheduleId)
+            assertAdjustmentBlocked(vm, adjustment)
+            assertEquals(1, adjustment.inputs.size)
+            assertTrue(adjustment.reloadIdentities.isEmpty()) // never automatic
+        }
+    }
+
+    @Test fun failedThenSuccessfulReloadRequiresAFreshSelection() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val vm = failA(ApiError.PlanConflict, adjustment)
+        val planBBefore = vm.plan(2)
+        vm.switchToWednesday()
+
+        adjustment.reloads += ReloadOutcome.Failure(ApiError.ServerFailure(503))
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.ReloadFailure(ApiError.ServerFailure(503))), vm.adjustment.value)
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertAdjustmentBlocked(vm, adjustment)
+
+        adjustment.reloads += ReloadOutcome.Loaded(movedA)
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(listOf(fileA, fileA), adjustment.reloadIdentities)
+        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
+        val reloaded = vm.plan(1)
+        assertEquals(PlanRecovery.Ready, reloaded.recovery)
+        assertEquals(movedA, reloaded.current.schedules)
+        assertEquals("", reloaded.current.scheduleCsv) // no stale CSV or summary
+        assertNull(reloaded.current.agentSummary)
+        assertEquals(fileA, reloaded.scheduleCsvFile)
+        assertEquals(fileA, reloaded.current.scheduleCsvFile)
+        assertEquals(mondayWindows, reloaded.original.weeklyAvailability)
+        assertEquals(planBBefore, vm.plan(2))
+        assertEquals(2, vm.plans.value.size)
+        assertFalse(vm.reloadPlan()) // nothing left to reload
+
+        // The old pending request is gone: nothing is sent until a new row is chosen and submitted.
+        vm.retryAdjustment()
+        assertFalse(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+        vm.selectFailedSession("study-1") // the same row is still a fresh choice
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val fresh = adjustment.inputs[1]
+        assertEquals(movedA, fresh.schedules)
+        assertEquals(mondayWindows, fresh.original.weeklyAvailability)
+        assertEquals(fileA, fresh.scheduleCsvFile)
+    }
+
+    @Test fun reloadIsSingleFlightAndLocksOtherActions() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment().apply { reloadGate = CompletableDeferred() }
+        val vm = failA(ApiError.Connection, adjustment)
+        adjustment.reloads += ReloadOutcome.Loaded(movedA)
+
+        assertTrue(vm.reloadPlan())
+        assertFalse(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(AdjustmentState.Reloading, vm.adjustment.value.state)
+        assertFalse(vm.reloadPlan())
+        assertFalse(vm.selectPlan(2))
+        assertFalse(vm.generate())
+        vm.selectFailedSession("study-2")
+        assertFalse(vm.submitAdjustment())
+        vm.retryAdjustment()
+        assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Reloading), vm.adjustment.value)
+
+        adjustment.reloadGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, adjustment.reloadIdentities.size)
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(AdjustmentState.Reloaded, vm.adjustment.value.state)
+        assertTrue(vm.selectPlan(2))
+    }
+
+    @Test fun navigationAwayAndBackKeepsTheReloadRequirement() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val vm = failA(ApiError.Connection, adjustment)
+
+        assertTrue(vm.selectPlan(2)) // B with the same study IDs still adjusts normally
+        assertEquals(PlanRecovery.Ready, vm.plan(2).recovery)
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(fileB, adjustment.inputs[1].scheduleCsvFile)
+        assertEquals(wednesdayWindows, adjustment.inputs[1].original.weeklyAvailability)
+
+        assertTrue(vm.selectPlan(1)) // reopened A starts without transient state but keeps its gate
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertAdjustmentBlocked(vm, adjustment)
+        vm.selectFailedSession("study-1")
+        assertNull(vm.adjustment.value.failedScheduleId)
+        assertEquals(2, adjustment.inputs.size)
+        assertTrue(adjustment.reloadIdentities.isEmpty())
+    }
+
+    @Test fun planNotFoundMarksOnlyThatPlanMissingForTheSession() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment()
+        val vm = failA(ApiError.PlanNotFound, adjustment)
+        assertEquals(listOf(PlanRecovery.Missing, PlanRecovery.Ready), vm.plans.value.map { it.recovery })
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertFalse(vm.reloadPlan())
+        assertAdjustmentBlocked(vm, adjustment)
+
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+        assertAdjustmentBlocked(vm, adjustment)
+        assertEquals(1, adjustment.inputs.size)
+        assertTrue(adjustment.reloadIdentities.isEmpty())
+    }
+
+    @Test fun reloadWithoutTheExactPlanMarksItMissing() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment()
+        val vm = failA(ApiError.PlanConflict, adjustment)
+        val planBBefore = vm.plan(2)
+        adjustment.reloads += ReloadOutcome.Missing
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+
+        assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+        assertEquals(rowsA, vm.plan(1).current.schedules) // the local snapshot stays
+        assertEquals(AdjustmentState.Idle, vm.adjustment.value.state)
+        assertEquals(planBBefore, vm.plan(2)) // never substituted
+        assertFalse(vm.reloadPlan())
+        assertAdjustmentBlocked(vm, adjustment)
+    }
+
+    @Test fun reloadedPlansWithoutTheOldTargetOrStudyRows() = runTest(dispatcher) {
+        val withoutTarget = rowsA.filter { it.scheduleId != "study-1" }
+        val externalOnly = rowsA.filter { it.scheduleId.startsWith("external-") }
+        for (rows in listOf(withoutTarget, externalOnly, emptyList())) {
+            val adjustment = FakeAdjustment()
+            val vm = failA(ApiError.Connection, adjustment)
+            adjustment.reloads += ReloadOutcome.Loaded(rows)
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            assertEquals(rows, vm.plan(1).current.schedules)
+            assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
+            vm.selectFailedSession("study-1") // removed from the saved plan
+            assertNull(vm.adjustment.value.failedScheduleId)
+            assertFalse(vm.submitAdjustment())
+        }
+    }
+
+    /** Two entries from separate generations may share a file; only the reloaded entry changes. */
+    @Test fun reloadChangesOnlyTheCapturedEntryWhenIdentitiesMatch() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planA, false)), adjustment)
+        repeat(2) { vm.generate(); advanceUntilIdle() }
+        vm.select(2, "study-1")
+        vm.submitAdjustment()
+        advanceUntilIdle()
+        val first = vm.plan(1)
+        adjustment.reloads += ReloadOutcome.Loaded(movedA)
+        vm.reloadPlan()
+        advanceUntilIdle()
+
+        assertEquals(first, vm.plan(1))
+        assertEquals(movedA, vm.plan(2).current.schedules)
+        assertEquals(listOf(fileA), adjustment.reloadIdentities)
+    }
+
+    @Test fun demoFailuresNeverRequireReload() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Success(adjustedA))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true)), adjustment)
+        vm.generate()
+        advanceUntilIdle()
+        vm.select(1, "study-1")
+        vm.submitAdjustment()
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+        assertFalse(vm.reloadPlan())
+        vm.retryAdjustment()
+        advanceUntilIdle()
+        assertEquals(2, adjustment.inputs.size)
+        assertTrue(adjustment.reloadIdentities.isEmpty())
+    }
+
+    // --- Recovery through the real live repository ---
+
+    private fun rowsJson(rows: List<ScheduleRow>) =
+        ApiJson.encodeToString(ListSerializer(ScheduleRow.serializer()), rows)
+
+    private fun listJson(vararg plans: Pair<String, List<ScheduleRow>>) = plans.joinToString(",", """{"plans":[""", "]}") { (file, rows) ->
+        """{"schedule_csv_file":"$file","schedule_csv_url":"/api/v1/study-plans/x.csv","schedules":${rowsJson(rows)}}"""
+    }
+
+    private fun adjustedJson(rows: List<ScheduleRow>, target: String) =
+        """{"schedules":${rowsJson(rows)},"schedule_csv":"x","action":"rescheduled_study","target_schedule_id":"$target","schedule_csv_file":"$fileA"}"""
+
+    private fun MockWebServer.requests(): List<RecordedRequest> = List(requestCount) { takeRequest() }
+
+    /**
+     * Fails A's POST with [failure], tries both mutation paths, fails one GET, reloads A from a list
+     * that also holds B and an unrelated plan, then adjusts from the refreshed rows.
+     */
+    private fun TestScope.liveRecovery(failure: MockResponse, client: OkHttpClient? = null) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val base = server.url("/api/v1/").toString()
+            val live = if (client == null) LiveAdjustmentRepository(base, io = dispatcher) else LiveAdjustmentRepository(base, client, dispatcher)
+            val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), live)
+            generateAB(vm)
+            val planBBefore = vm.plan(2)
+            val savedA = movedA
+            val unrelated = "license_planner/output/study_plan_c.csv"
+            server.enqueue(failure)
+            server.enqueue(MockResponse().setResponseCode(503).setBody("""{"error":{"code":"UPSTREAM_ERROR","message":"x"}}"""))
+            server.enqueue(MockResponse().setBody(listJson(fileB to rowsB, unrelated to rowsB, fileA to savedA)))
+            val final = savedA.map { if (it.scheduleId == "study-2") it.copy(startDate = "2026/10/12/19/00", endDate = "2026/10/12/20/00") else it }
+            server.enqueue(MockResponse().setBody(adjustedJson(final, "study-2")))
+
+            vm.select(1, "study-1")
+            vm.submitAdjustment()
+            advanceUntilIdle()
+            assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+            vm.retryAdjustment()
+            vm.selectFailedSession("study-2")
+            assertFalse(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(1, server.requestCount)
+
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            assertTrue(vm.adjustment.value.state is AdjustmentState.ReloadFailure)
+            assertEquals(rowsA, vm.plan(1).current.schedules)
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            assertEquals(savedA, vm.plan(1).current.schedules)
+            assertEquals(planBBefore, vm.plan(2))
+            assertEquals(2, vm.plans.value.size)
+            assertFalse(vm.submitAdjustment())
+            assertEquals(3, server.requestCount)
+
+            vm.switchToWednesday()
+            vm.selectFailedSession("study-2")
+            assertTrue(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(final, vm.plan(1).current.schedules)
+
+            val requests = server.requests()
+            assertEquals(listOf("POST", "GET", "GET", "POST"), requests.map { it.method })
+            assertEquals(listOf("/api/v1/schedules/adjust", "/api/v1/study-plans", "/api/v1/study-plans", "/api/v1/schedules/adjust"), requests.map { it.path })
+            val sent = ApiJson.parseToJsonElement(requests[3].body.readUtf8()).jsonObject
+            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
+            assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])
+            assertEquals(ApiJson.parseToJsonElement("\"study-2\""), sent["schedule_id"])
+            assertEquals(ApiJson.parseToJsonElement(rowsJson(savedA)), sent["schedules"])
+            assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test fun liveConflictRecovery() = runTest(dispatcher) {
+        liveRecovery(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
+    }
+
+    @Test fun liveUnknownConflictRecovery() = runTest(dispatcher) {
+        liveRecovery(MockResponse().setResponseCode(409).setBody("not json"))
+    }
+
+    @Test fun liveInvalidResponseRecovery() = runTest(dispatcher) {
+        liveRecovery(MockResponse().setBody(adjustedJson(rowsA, "study-2")))
+    }
+
+    @Test fun liveTimeoutRecovery() = runTest(dispatcher) {
+        val shortClient = createApiHttpClient().newBuilder()
+            .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
+        liveRecovery(MockResponse().setBody(adjustedJson(movedA, "study-1")).setHeadersDelay(2, TimeUnit.SECONDS), shortClient)
+    }
+
+    @Test fun livePlanNotFoundSendsNothingMore() = runTest(dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
+            val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), live)
+            vm.generate()
+            advanceUntilIdle()
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"$fileA"}}"""))
+            vm.select(1, "study-1")
+            vm.submitAdjustment()
+            advanceUntilIdle()
+            assertEquals(AdjustmentState.Failure(ApiError.PlanNotFound), vm.adjustment.value.state)
+            assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+            vm.retryAdjustment()
+            assertFalse(vm.reloadPlan())
+            assertFalse(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
     }
 }

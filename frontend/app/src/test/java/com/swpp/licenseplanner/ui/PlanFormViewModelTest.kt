@@ -64,6 +64,7 @@ class PlanFormViewModelTest {
     /** These tests never adjust; PlanAdjustmentViewModelTest covers adjustment. */
     private class UnusedAdjustment : AdjustmentRepository {
         override suspend fun adjust(input: AdjustmentInput) = error("not used")
+        override suspend fun reload(scheduleCsvFile: String?) = error("not used")
     }
 
     private val questions = TestFixtures.publicQuestions()

@@ -17,4 +17,8 @@ class DemoAdjustmentRepository : AdjustmentRepository {
             DemoAdjustment.NoSlot -> AdjustmentOutcome.DemoNoSlot
             DemoAdjustment.InvalidTarget -> AdjustmentOutcome.Failure(ApiError.InvalidInput(null))
         }
+
+    /** Demo plans live only in the app and never need a reload; nothing is read. */
+    override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome =
+        ReloadOutcome.Failure(ApiError.InvalidInput(null))
 }

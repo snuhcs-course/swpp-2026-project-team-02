@@ -24,7 +24,19 @@ sealed interface AdjustmentOutcome {
     data class Failure(val error: ApiError) : AdjustmentOutcome
 }
 
+/** Reading one plan's latest saved rows back from the server. */
+sealed interface ReloadOutcome {
+    /** The single exactly matching plan's validated rows; may hold no study rows at all. */
+    data class Loaded(val schedules: List<ScheduleRow>) : ReloadOutcome
+    /** A valid plan list without the requested identity. */
+    data object Missing : ReloadOutcome
+    data class Failure(val error: ApiError) : ReloadOutcome
+}
+
 /** Failed-study adjustment; live and demo implementations are chosen by flavor. */
 interface AdjustmentRepository {
     suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome
+
+    /** Reads the latest saved rows of the plan stored as [scheduleCsvFile]; never changes the server. */
+    suspend fun reload(scheduleCsvFile: String?): ReloadOutcome
 }

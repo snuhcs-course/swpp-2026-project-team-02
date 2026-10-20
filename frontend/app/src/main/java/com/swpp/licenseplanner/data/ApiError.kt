@@ -6,6 +6,10 @@ sealed interface ApiError {
     data class InvalidInput(val message: String?) : ApiError
     /** HTTP 404: wrong API URL or route. */
     data object Configuration : ApiError
+    /** HTTP 404 `PLAN_NOT_FOUND` from adjustment: the selected server plan no longer exists. */
+    data object PlanNotFound : ApiError
+    /** HTTP 409 `PLAN_CONFLICT` from adjustment: the stored plan no longer matches the sent rows. */
+    data object PlanConflict : ApiError
     /** HTTP 503: server not ready (for example key setup). */
     data class ServerUnavailable(val message: String?) : ApiError
     /** HTTP 500, 502 and any other unexpected status. */

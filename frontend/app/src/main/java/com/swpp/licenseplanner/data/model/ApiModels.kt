@@ -107,6 +107,19 @@ data class ScheduleAdjustmentResponse(
     @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
 )
 
+/**
+ * `GET /study-plans` response. Both lists are required, so a missing property is
+ * invalid rather than an empty store; the download URL and future fields are ignored.
+ */
+@Serializable
+data class StudyPlanListResponse(val plans: List<StoredStudyPlan>)
+
+@Serializable
+data class StoredStudyPlan(
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    val schedules: List<ScheduleRow>,
+)
+
 @Serializable
 data class ApiErrorEnvelope(val error: ApiErrorBody? = null)
 

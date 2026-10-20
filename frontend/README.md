@@ -74,7 +74,7 @@ changed; CI starts from a fresh checkout, so its tests always run.
 | Flavor | Needs backend | Questions | Plans | Adjustment |
 | --- | --- | --- | --- | --- |
 | `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen | Local rule, no network |
-| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) | `POST /schedules/adjust` |
+| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
 calculation, not backend or AI output. The live flavor never falls back to demo
@@ -116,7 +116,8 @@ and 계획 조정 (a list of the plans generated in this app process). Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
 match. Editing the form or a failed generation never removes an entry. The
 list is held in memory only: it survives rotation and navigation but is lost
-when the process ends. There is no server listing route.
+when the process ends. The app never imports plans from the server; it reads
+the server's plan list only to reload one plan it already has (see below).
 
 On a plan, choose exactly one missed study session (`study-N`); existing
 schedules (`external-N`) are shown but cannot be chosen. A live plan whose
@@ -129,10 +130,47 @@ Other plans never change, even when they share schedule IDs.
 While an adjustment request runs, the screen shows progress; system back,
 the top-bar back, and every other action are held, and rotation keeps the same
 request. A second tap sends nothing. On failure the plan and the chosen session
-stay as they were, and 다시 시도 resends the identical request; choosing another
-session builds a new one. There is no automatic retry and no demo fallback in
-the live build. A lost connection or timeout says the result could not be
-confirmed, not that the server undid anything.
+stay as they were. There is no automatic retry and no demo fallback in the live
+build. What follows depends on the failure:
+
+| Live failure | Message | Next step |
+| --- | --- | --- |
+| 422, 500, 502, 503, other statuses | Server message or a generic error | 다시 시도 resends the identical request; choosing another session builds a new one |
+| 404 without `PLAN_NOT_FOUND` (wrong URL or old server) | API 경로를 찾을 수 없어요 … (HTTP 404) | 다시 시도, as above; the plan is not treated as deleted |
+| 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted for the rest of the session; 목록으로 or 새 계획 만들기 |
+| 409 `PLAN_CONFLICT` | 서버의 계획이 변경되었어요 … | 최신 계획 불러오기 |
+| Any other 409, lost connection or timeout, unreadable or mismatched 200 | 조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 … | 최신 계획 불러오기 |
+
+The last two rows mean the server's copy is unknown (a timed-out request may
+already have been saved), so the app never resends that request. The plan
+keeps showing its earlier rows and selection as an unconfirmed copy, and the
+plan cannot be adjusted (neither 다시 시도 nor a new selection) until a reload
+succeeds. This requirement stays on the plan when the user picks another row,
+rotates, goes back to the list or home, or adjusts another plan and returns.
+Screen entry and rotation send nothing; only the explicit button does.
+
+**Reload.** 최신 계획 불러오기 sends `GET /api/v1/study-plans` and nothing
+else. The app takes the single item whose `schedule_csv_file` equals the plan's
+own identity exactly (no filename, suffix, order or schedule-ID matching; other
+plans are never imported) and checks its rows the same way as an adjustment
+response (nonblank unique IDs, `YYYY/MM/DD/HH/MM` timestamps, end after start).
+Unknown fields and the CSV URL are ignored. While it runs, back and every other
+action are held, a second tap does nothing, and rotation keeps the same request.
+
+- Success replaces only that plan's rows in place (shown with 최신 저장 계획을
+  불러왔어요), keeps its number, identity and original creation inputs
+  (windows, dates), drops the old CSV text and AI summary that no longer
+  describe the rows, clears the old selection and request, and shows the first
+  week. A new adjustment needs a fresh selection and an explicit tap, even for
+  the same row. An empty or external-only saved plan is valid and shows the
+  no-study state. This is not an adjustment success and does not show which
+  request changed the plan.
+- A valid list without that identity (including an empty list) marks the plan
+  unavailable, as for `PLAN_NOT_FOUND`; similarly named plans are never used.
+- Any other failure (route 404, other statuses, connection or timeout,
+  malformed JSON, missing `plans`/`schedules`, two matching items, invalid
+  rows) keeps the earlier rows and the reload requirement; 최신 계획 다시
+  불러오기 tries the GET again and return navigation is available.
 
 **Demo:** a local demonstration rule, not the backend's policy and not AI
 output. The session moves to the first free interval inside the plan's
@@ -169,9 +207,17 @@ The app never sends the availability profile (`PUT /availability`).
 supplied valid availability instead of the saved profile; omission keeps the
 saved-profile fallback. Explicit null, invalid or all-empty windows return 422
 without changing the plan or profile. Android always sends the selected plan's
-original non-null windows. Android/Gemini same-file verification is still
-pending. The backend's 409 conflict, 404 missing-plan and reload recovery flow
-also needs client handling; a live 200 alone proves none of these.
+original non-null windows. It returns 404 `PLAN_NOT_FOUND` for a pruned plan
+and 409 `PLAN_CONFLICT` when the sent rows no longer match the stored file,
+and lists stored plans (up to about 100, newest first) at
+`GET /api/v1/study-plans` as
+`{"plans":[{"schedule_csv_file":"…","schedule_csv_url":"…","schedules":[…]}]}`;
+an unreadable stored plan makes the whole list fail (500). An older server
+without the list route answers the reload with a route 404, which the app
+reports as such and keeps the plan blocked. The client recovery flow above is
+checked against MockWebServer and a scripted local server only;
+Android/Gemini same-file verification against the real backend is still
+pending.
 
 ## Verification
 
@@ -186,6 +232,58 @@ also needs client handling; a live 200 alone proves none of these.
   (against a scripted local test server, not the backend or Gemini) were run on
   an emulator. Adjustment against a real backend is not verified yet (see the
   backend dependency above).
+- Adjustment error recovery: JVM tests (MockWebServer) cover the 404/409
+  mapping, the reload GET and its identity matching and validation, and
+  request sequences such as conflict → failed reload → reload → fresh
+  adjustment with no repeated POST. Emulator checks use the controlled server
+  in [Controlled adjustment server](#controlled-adjustment-server). Neither is
+  evidence about the real backend or Gemini.
+
+### Controlled adjustment server
+
+`test_support/adjustment_server.py` is a test-only stand-in for the API, for
+repeating adjustment error and recovery cases on an emulator. It uses the
+Python standard library only, calls no AI service, reads no backend settings,
+profile or `.env`, and keeps plans in memory: every start begins from the same
+state, so restarting it is the reset. It serves the example questions (the
+unit-test fixture), plan generation, adjustment and the plan list.
+
+Generation returns plan A first and plan B second (then A, B again). Both use
+generated-plan identities, B has the same study IDs as A, A has a long quoted
+topic and external rows, and a third stored plan C is never generated, so it
+must never appear in the app. Unscripted adjustments behave like the backend:
+404 `PLAN_NOT_FOUND` for an unknown file, 409 `PLAN_CONFLICT` when the sent
+rows differ from the stored ones, otherwise the chosen study row moves 7 days
+later and is saved.
+
+| `--scenario` | Scripted behavior |
+| --- | --- |
+| `normal` | No scripted failures |
+| `plan-not-found` | A is pruned before its first adjustment: 404 `PLAN_NOT_FOUND` |
+| `route-not-found` | Adjustment and plan list answer 404 `NOT_FOUND` (old server or wrong URL) |
+| `conflict` | First adjustment: another client changes A, then 409 `PLAN_CONFLICT`; first list read 500; later reads list the changed A |
+| `unknown-conflict` | First adjustment 409 with an unknown code, second 409 with an HTML body; nothing changes |
+| `timeout-after-save` | First adjustment saves A, then withholds the response for 125 s (past the app's 120 s deadline) |
+| `timeout-without-save` | First adjustment saves nothing, withholds for 125 s, then closes without a response |
+| `invalid-readback` | First adjustment 409; list reads 1–4 are malformed JSON, no `plans`, duplicate row IDs, A listed twice; then valid |
+| `readback-missing` | First adjustment 409 and A disappears; the list holds B, C and a similarly named plan |
+
+```bash
+# from frontend/: build a live APK for the server, start it, install
+bash ./gradlew assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://10.0.2.2:8765/api/v1
+python3 -I test_support/adjustment_server.py --scenario conflict --port 8765 --output-dir "$(mktemp -d)"
+adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
+```
+
+In the app, create two plans (A, then B with different windows), open A from
+계획 조정, choose a study session and adjust it. Every request, response
+status and scripted event (for example `saved`, `not-saved`,
+`changed-elsewhere`) is appended to `requests.jsonl` in the output directory;
+count POSTs and GETs there, since a screenshot cannot show that nothing was
+resent. Stop the server with Ctrl+C and start it again for the next case.
+
+These checks show how the app handles the scripted responses. They are not
+evidence about the real backend or Gemini.
 
 Passing CI (unit tests, contract check, coverage, build, and lint) is offline
 evidence only. It does not run the backend server, Gemini planning, an emulator,

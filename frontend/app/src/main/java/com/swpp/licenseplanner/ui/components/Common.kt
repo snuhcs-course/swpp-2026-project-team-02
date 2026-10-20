@@ -271,6 +271,7 @@ fun OutlinedCard(
 /**
  * Selectable option card; the selected card gets a 2dp Ink border and a filled indicator.
  * A non-null [choiceLabel] exposes it as a labeled radio option (assessment answers).
+ * A disabled card keeps showing its selection but ignores taps.
  */
 @Composable
 fun ChoiceCard(
@@ -278,11 +279,13 @@ fun ChoiceCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     choiceLabel: String? = null,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     OptionSurface(
         choice = choiceLabel?.let { SingleChoice(it, selected) },
         onClick = onClick,
+        enabled = enabled,
         shape = MaterialTheme.shapes.medium,
         color = Paper,
         border = BorderStroke(if (selected) 2.dp else 1.5.dp, if (selected) Ink else Outline),

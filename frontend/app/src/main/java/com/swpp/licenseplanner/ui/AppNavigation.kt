@@ -88,6 +88,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onSelect = viewModel::selectFailedSession,
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
+                    onReload = { viewModel.reloadPlan() },
                     onBack = { nav.popBackStack() },
                     onCreate = { nav.fromHome(Routes.CERTIFICATION) },
                 )
