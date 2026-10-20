@@ -13,7 +13,9 @@ frontend's `live` flavor. The Android Emulator reaches the default backend at
 `http://10.0.2.2:8000/api/v1`; configure a different public API URL with the
 Gradle property `licensePlanner.apiBaseUrl`. Backend bind address, port, browser
 origins, and request-size limit are in `config/api_server.json` and can be
-overridden with `APP_API_HOST` and `APP_API_PORT`. Gemini credentials stay in
+overridden with `APP_API_HOST` and `APP_API_PORT`. Generated plan CSVs are
+stored in `license_planner/output/`; set `APP_STUDY_PLAN_DIR` to use another
+directory, for example a disposable one for tests. Gemini credentials stay in
 the backend root `.env`; never copy them into frontend configuration.
 
 Start the API from the backend directory:

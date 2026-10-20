@@ -81,8 +81,8 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(status, 422, body)
         self.assertEqual(body["error"]["code"], "INVALID_INPUT")
         message = body["error"]["message"]
-        self.assertRegex(message, f"^NOT_ENOUGH_TIME: .*cannot cover {topics_phrase}")
-        self.assertIn("Add study windows, start preparation earlier, or choose a later exam date", message)
+        self.assertRegex(message, f"^NOT_ENOUGH_TIME: .*{topics_phrase}")
+        self.assertIn("공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요", message)
         self.assertFalse(SUCCESS_FIELDS & body.keys())
         self.assertEqual(self.saved_files(), [])
         self.assertEqual(self.existing.read_text(encoding="utf-8"), "schedule_id,start_date,end_date,topic\n")
@@ -94,7 +94,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         with patch("license_planner.agent.GEMINI_API_KEY", ""):
             status, body = self.post(payload)
 
-        self.assert_infeasible(status, body, "even 1 assessed topic")
+        self.assert_infeasible(status, body, "학습 주제 1개에도")
         self.assertEqual(self.model_requests, 0)
 
     def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
@@ -103,8 +103,8 @@ class PlanGenerationHttpTests(unittest.TestCase):
 
         status, body = self.post(recorded["request"])
 
-        self.assert_infeasible(status, body, "3 assessed topics")
-        self.assertIn("1 usable minute ", body["error"]["message"])
+        self.assert_infeasible(status, body, "학습 주제 3개에")
+        self.assertIn("시간이 1분이라", body["error"]["message"])
         self.assertEqual(self.model_requests, 2)
 
     def test_recorded_builds_on_the_last_request_are_saved_and_returned(self):

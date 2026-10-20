@@ -109,7 +109,7 @@ configuration, and `500` for unexpected server errors. Error bodies use
 
 When the available time provably cannot give every required topic at least one
 minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
-that starts with `NOT_ENOUGH_TIME`. The message states the usable minutes and the
+that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the
 topic basis, and advises adding study windows, starting preparation earlier, or
 choosing a later exam date. No schedule fields are returned and no plan file is
 saved. The check runs in two stages. Before any Gemini call the exact topic count

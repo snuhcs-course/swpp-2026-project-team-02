@@ -144,8 +144,8 @@ class InitialCapacityTests(unittest.TestCase):
         no_minutes = make_request(start=at(MONDAY, 17), exam=at(MONDAY, 18),
                                   windows={"monday": [{"start": "18:00", "end": "20:00"}]})
         with self.assertRaisesRegex(InsufficientCapacityError,
-                                    "NOT_ENOUGH_TIME: 0 usable minutes .* cannot cover even 1 assessed topic"
-                                    ".*Add study windows, start preparation earlier, or choose a later exam date"):
+                                    "NOT_ENOUGH_TIME: .*시간이 0분이라 학습 주제 1개에도"
+                                    ".*공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요"):
             check_initial_capacity(no_minutes)
 
     def test_zero_capacity_stops_before_any_model_request(self):
@@ -160,7 +160,7 @@ class InitialCapacityTests(unittest.TestCase):
         results = (ProblemResult(1, CHARTS, 1, 0), ProblemResult(2, CHARTS, 1, 1), ProblemResult(3, BASICS, 1, 0))
         request = one_minute_request(questions=0, problem_results=results)
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "cannot cover 2 assessed topics") as raised:
+        with self.assertRaisesRegex(InsufficientCapacityError, "학습 주제 2개에") as raised:
             run_agent(request, [])
         self.assertEqual(raised.exception.ask_model.call_count, 0)
         two_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), problem_results=results,
@@ -177,7 +177,7 @@ class InitialCapacityTests(unittest.TestCase):
             return make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, minute), questions=0,
                                 windows={"monday": [{"start": "18:00", "end": "20:00"}]})
 
-        with self.assertRaisesRegex(InsufficientCapacityError, f"cannot cover {len(CERT.topics)} assessed topics"):
+        with self.assertRaisesRegex(InsufficientCapacityError, f"학습 주제 {len(CERT.topics)}개에"):
             check_initial_capacity(request_until(len(CERT.topics) - 1))
         check_initial_capacity(request_until(len(CERT.topics)))
 
@@ -201,7 +201,7 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
                 with self.subTest(topics=len(topics), capacity=capacity):
                     if capacity < len(topics):
                         with self.assertRaisesRegex(InsufficientCapacityError,
-                                                    f"{capacity} usable minutes? .* cannot cover {len(topics)} assessed topics"):
+                                                    f"시간이 {capacity}분이라 .*학습 주제 {len(topics)}개에"):
                             tools.call("analyze_exam_results", {"problem_topics": mapping(*topics)})
                         with self.assertRaises(InsufficientCapacityError):
                             tools.call("build_study_schedule", {"daily_topic_minutes": minutes(
@@ -224,7 +224,7 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
                             ("build_study_schedule", {"daily_topic_minutes": minutes(
                                 ("2026/10/19", CHARTS, 1), ("2026/10/19", BASICS, 1))}))
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "cannot cover 2 assessed topics") as raised:
+        with self.assertRaisesRegex(InsufficientCapacityError, "학습 주제 2개에") as raised:
             run_agent(one_minute_request(), [reply, reply])
         self.assertEqual(raised.exception.ask_model.call_count, 1)
 

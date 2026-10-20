@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,8 @@ from study_plan_store import StudyPlanStore, PlanConflictError, plan_fields
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
-STUDY_PLAN_OUTPUT_DIR = BACKEND_ROOT / "license_planner" / "output"
+STUDY_PLAN_OUTPUT_DIR = Path(os.getenv("APP_STUDY_PLAN_DIR",
+                                       BACKEND_ROOT / "license_planner" / "output"))
 
 
 def _save_study_plan_csv(content: str) -> str:

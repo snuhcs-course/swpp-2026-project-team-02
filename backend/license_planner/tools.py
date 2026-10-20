@@ -20,12 +20,12 @@ def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool)
     usable = available_minutes(request)
     if usable >= topic_count:
         return
-    topics = (f"{topic_count} assessed topic{'s' if topic_count != 1 else ''}" if exact
-              else "even 1 assessed topic")
+    topics = (f"진단된 학습 주제 {topic_count}개에 주제마다 최소 1분씩" if exact
+              else "학습 주제 1개에도 최소 1분을")
     raise InsufficientCapacityError(
-        f"NOT_ENOUGH_TIME: {usable} usable minute{'s' if usable != 1 else ''} between "
-        f"preparation_start and exam_date cannot cover {topics} (at least 1 minute each). "
-        "Add study windows, start preparation earlier, or choose a later exam date."
+        f"NOT_ENOUGH_TIME: 준비 시작부터 시험일까지 공부할 수 있는 시간이 {usable}분이라 "
+        f"{topics} 배정할 수 없습니다. "
+        "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요."
     )
 
 

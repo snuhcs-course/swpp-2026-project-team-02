@@ -279,7 +279,7 @@ class PlannerAgentLoopTests(unittest.TestCase):
         reply = model_tool_call("analyze_exam_results", {"problem_topics": self.CHART_AND_BASICS})
 
         with (patch.object(GeminiToolAgent, "_ask_model", return_value=reply) as ask_model,
-              self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: 1 usable minute .* cannot cover 2 assessed topics")):
+              self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: .*시간이 1분이라 .*학습 주제 2개에")):
             GeminiToolAgent(api_key="test-key").run(request)
 
         self.assertEqual(ask_model.call_count, 1)

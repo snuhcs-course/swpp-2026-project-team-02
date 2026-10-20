@@ -27,6 +27,7 @@ live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니
 | Android live API 주소 | Gradle `licensePlanner.apiBaseUrl` 속성 | live 앱이 요청할 공개 API 주소 |
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
+| 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 생성·조정된 계획 CSV 디렉터리 변경. 테스트용 임시 디렉터리 지정에 사용 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
 | API 비밀 키 | `backend/.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
 
@@ -83,7 +84,8 @@ Planning API는 재채점하지 않고, Agent가 문항마다 자격증의 고�
 
 API를 실행하는 명령은 `python api_server.py`입니다. 기본 서버 설정은
 `config/api_server.json`에서 바꾸고, 호스트·포트는 `APP_API_HOST`와
-`APP_API_PORT` 환경 변수로 덮어쓸 수 있습니다. 현재 저장된 가능 시간은
+`APP_API_PORT` 환경 변수로 덮어쓸 수 있습니다. 계획 CSV 저장 위치는
+`APP_STUDY_PLAN_DIR`로 바꿀 수 있습니다. 현재 저장된 가능 시간은
 개인용 단일 JSON 파일이므로 다중 사용자 배포 전에 사용자별 저장소가
 필요한지 검토해야 합니다.
 
@@ -253,7 +255,7 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 | 503 | `UPSTREAM_ERROR` | Gemini API 키 등 서버 측 upstream 설정이 누락됨 |
 | 500 | `INTERNAL_ERROR` | 예측하지 못한 서버 오류 |
 
-가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(Gemini 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 호환 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, Gemini 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
+가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 코드 뒤의 한국어 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(Gemini 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 호환 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, Gemini 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
 
 ## 점수와 일정 계산
 
@@ -319,6 +321,25 @@ python run_license_planner_test_cases.py --case-id license_planner_case_04_perso
 - `license_planner_test_summary.json`: 모든 케이스의 요약
 
 통합 테스트 통과 기준은 HTTP 200, 프로필 조회 → 시험 결과 분석 → 수준 평가 → 일정 생성 순서, 예상 취약 토픽·시작 시각, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음입니다. 케이스에는 초급/고급 사용자와 카탈로그 밖의 시험 토픽을 넣어 확장 가능성을 확인합니다.
+
+### 가용 시간 사전 확인·종료 흐름 개선 전후 비교
+
+개선 전 값은 License Planner Task 3 보고서에 있는 백엔드 `d706ad2`의 측정 결과로, 케이스마다 5번 실행했습니다. 개선 후 값은 `1d0e3c0` 이후 코드에 같은 입력을 넣어 2026-10-20에 케이스마다 한 번 실행한 결과입니다. 두 측정의 모델(`gemini-3.5-flash-lite`)과 모델 요청 한도(6회)는 같습니다. 개선 전 코드는 다시 실행하지 않았습니다.
+
+| 케이스 | 개선 전 (5회) | 개선 후 (1회) |
+| --- | --- | --- |
+| Tiny Capacity (가용 1분) | 5회 모두 모델 요청 6회 후 HTTP 502 | 모델 요청 2회 후 HTTP 422 `NOT_ENOUGH_TIME`, 일정 생성 시도 없음 |
+| Controlled5 Basic | 4회 성공(모델 요청 4–6회). run02는 6번째 요청에서 일정이 만들어졌는데도 HTTP 502 | 모델 요청 3회, HTTP 200 |
+| Overlapping Busy | 4회 성공(모델 요청 4–5회). run05는 run02와 같은 이유로 HTTP 502 | 모델 요청 3회, HTTP 200 |
+| Controlled15 Charts | 4회 성공(모델 요청 4–6회). run03은 과목 누락, 오타 과목명, 가용 시간이 0분인 날짜 배정이 이어지다 모델 요청 6회 후 HTTP 502 | 모델 요청 5회, HTTP 200. 거절된 일정 제안 2개를 모델이 고친 뒤 성공 |
+
+일정이 만들어지면 서버는 모델에 더 묻지 않고 바로 응답합니다. 개선 후 성공한 세 실행 모두 일정 생성 뒤 모델 요청이 없었습니다. `api_tests/test_plan_generation.py`는 run02와 run05의 도구 호출 기록을 재생해 이 경로가 HTTP 200으로 끝나는지 확인합니다. Tiny Capacity에서는 모델이 문항을 학습 주제 3개로 분류한 직후 서버가 멈춥니다. 1분으로는 주제 3개에 1분씩 줄 수 없기 때문입니다.
+
+Controlled15 Charts run03 같은 실패는 아직 남아 있습니다. Task 3 보고서는 이 경로를 P1(과목·날짜를 구조화해 전달)로 분류했습니다. 새 반복 오류 검사는 같은 인자로 같은 오류가 다시 날 때만 멈추는데, run03의 일정 제안 4개는 인자가 모두 달라 걸리지 않습니다. 모델이 같은 제안을 하면 지금도 모델 요청 6회 후 HTTP 502가 됩니다. `build_study_schedule`의 `topic`은 자유 문자열이라 오타 과목명이 들어올 수 있습니다. `analyze_exam_results`는 과목 목록을 enum으로 제한합니다. 이제 날짜별 가용 시간(분)도 모델에 전달하지만, 그 덕에 0분 날짜 배정이 줄었는지는 측정하지 않았습니다. 개선 후 Controlled15 Charts의 성공은 모델이 이번에 제안을 고쳤다는 뜻일 뿐, 이 실패가 해결됐다는 근거는 아닙니다.
+
+모델 요청 1회에 걸린 시간은 약 1초에서 9–28초로 늘었고, 요청 하나를 처리하는 데 41–109초가 걸렸습니다. 원인은 확인하지 못했습니다. 모델 이름은 같고 프롬프트에는 날짜별 가용 시간만 추가됐습니다. Android 앱은 요청을 120초에 끊습니다. 이 속도로 모델 요청이 6회까지 가면 앱에는 연결 오류가 뜨지만 서버는 계획을 저장할 수 있습니다.
+
+개선 후 값은 케이스당 한 번 실행한 결과라 성공률이나 평균을 비교하는 근거로 쓸 수 없습니다.
 
 ## 자격증 추가와 확장
 
