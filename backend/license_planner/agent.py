@@ -7,8 +7,9 @@ import urllib.request
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
+from .scheduler import usable_minutes_by_date
 from .settings import DATETIME_FORMAT, GEMINI_API_KEY
-from .tools import PlannerTools, tool_schemas
+from .tools import PlannerTools, check_initial_capacity, tool_schemas
 
 # Agent/API settings: move these values here when changing Gemini or its behavior.
 GEMINI_MODEL = "gemini-3.5-flash-lite"  # Gemini model ID used for tool selection.
@@ -32,6 +33,16 @@ AGENT_SYSTEM_PROMPT = (
     "as about 60 minutes per date, not all 120 on one date. If a tool reports an error, explain it. "
     "When tools succeed, briefly summarize that the application will return the CSV."
 )  # Agent role and tool-use constraints.
+
+def _build_summary(result: dict) -> str:
+    """입력 값: 성공한 build_study_schedule 결과
+    출력 값: 생성 일정의 짧은 요약 문장
+    기능: 모델을 다시 호출하지 않고 수용된 일정 수치로 요약을 만듭니다.
+    """
+    topic_count = len({item["topic"] for item in result["daily_topic_minutes"]})
+    return (f"{topic_count}개 과목에 총 {result['total_planned_minutes']}분을 "
+            f"학습 일정 {result['study_block_count']}개로 배치했습니다.")
+
 
 class GeminiToolAgent:
     """Gemini 함수 호출을 이용해 도구를 실행하는 ReAct Agent입니다."""
@@ -91,6 +102,7 @@ class GeminiToolAgent:
         cert_ids = sorted(CERTIFICATIONS)  # 현재 사용 가능한 자격증 ID 목록입니다.
         if request.certification_id not in cert_ids:
             raise ValueError(f"Unsupported certification {request.certification_id!r}; choose from {cert_ids}")
+        check_initial_capacity(request)
         tools = PlannerTools(request, ToolTrace())  # 상태를 공유하는 로컬 도구 집합입니다.
         weekday_names = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
         availability = ({day: [{"start": window.start_time.strftime("%H:%M"),
@@ -117,6 +129,12 @@ class GeminiToolAgent:
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
                 "busy_schedules": busy_schedules,
                 "weekly_availability": availability}
+        if request.preparation_start and request.exam_date and request.weekly_availability:
+            # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
+            user["usable_minutes_by_date"] = {
+                day.strftime("%Y/%m/%d"): minutes
+                for day, minutes in usable_minutes_by_date(request).items() if minutes > 0}
+        failed_calls: set[tuple[str, str, str]] = set()  # 마지막 성공 이후 실패한 (도구, 인자, 오류)입니다.
         contents: list[dict] = [{"role": "user", "parts": [{"text": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]}]  # Gemini 대화 기록입니다.
         for _ in range(self.max_steps):
             result = self._ask_model(contents, tool_schemas(request.certification_id))
@@ -130,8 +148,19 @@ class GeminiToolAgent:
                 return tools, answer
             responses = []
             for call in calls:
-                outcome = tools.call(call["name"], call.get("args", {}))
-                responses.append({"functionResponse": {"name": call["name"], "response": {"result": outcome}}})
+                name, arguments = call["name"], call.get("args", {})
+                outcome = tools.call(name, arguments)
+                if name == "build_study_schedule" and isinstance(outcome, dict) and tools.schedule:
+                    # 검증된 일정이 만들어지면 남은 호출이나 추가 모델 요청 없이 종료합니다.
+                    return tools, _build_summary(outcome)
+                if isinstance(outcome, str):
+                    failure = (name, json.dumps(arguments, sort_keys=True, ensure_ascii=False), outcome)
+                    if failure in failed_calls:
+                        raise RuntimeError(f"Agent repeated an unchanged failing {name} call: {outcome}")
+                    failed_calls.add(failure)
+                else:
+                    failed_calls.clear()
+                responses.append({"functionResponse": {"name": name, "response": {"result": outcome}}})
             contents.append({"role": "user", "parts": responses})
         raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; tool trace: {tools.trace.calls}")
 

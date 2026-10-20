@@ -107,6 +107,20 @@ invalid input, `502` for upstream planning errors, `503` for missing server
 configuration, and `500` for unexpected server errors. Error bodies use
 `{"error":{"code":"...","message":"..."}}`.
 
+When the available time provably cannot give every required topic at least one
+minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
+that starts with `NOT_ENOUGH_TIME`. The message states the usable minutes and the
+topic basis, and advises adding study windows, starting preparation earlier, or
+choosing a later exam date. No schedule fields are returned and no plan file is
+saved. The check runs in two stages. Before any Gemini call the exact topic count
+is unknown, so only zero usable minutes is rejected there, even when no server key
+is configured. After Gemini maps the questions to topics, the actual number of
+distinct assessed topics is checked before any schedule is built. Passing the
+check does not mean the time is enough to prepare. Invalid model allocations,
+repeated tool failures and provider errors stay `502`/`503`; they never become
+`NOT_ENOUGH_TIME`. On success, `agent_summary` is a short server-written summary
+of the accepted schedule. No response fields were added.
+
 ## Other backend endpoints
 
 The API also exposes availability profile read/write and schedule adjustment

@@ -1,15 +1,17 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from api_service import build_plan_request
+from license_planner.agent import GeminiToolAgent
 from license_planner.catalog import CERTIFICATIONS, get_certification
 from license_planner.csv_io import parse_busy_csv, render_schedule_csv
 from license_planner.models import BusyPeriod, PlanRequest, ProblemResult
-from license_planner.scheduler import generate_schedule, summarize_topic_results
+from license_planner.scheduler import available_minutes, generate_schedule, summarize_topic_results
 from license_planner.tools import PlannerTools, tool_schemas
 from license_planner.user_availability import (
     load_personal_availability,
@@ -241,6 +243,54 @@ class PlanningApiContractTests(unittest.TestCase):
         self.assertEqual(tool_names, [
             "get_certification_profile", "analyze_exam_results", "build_study_schedule",
         ])
+
+
+def model_tool_call(name, args):
+    return {"candidates": [{"content": {"role": "model", "parts": [
+        {"functionCall": {"name": name, "args": args}},
+    ]}}]}
+
+
+class PlannerAgentLoopTests(unittest.TestCase):
+    CHART_AND_BASICS = [{"problem_id": 1, "topics": [
+        {"topic": "차트와 분석", "weight": 0.5},
+        {"topic": "스프레드시트 기본", "weight": 0.5},
+    ]}]
+
+    def test_schedule_accepted_on_final_step_is_returned(self):
+        request = build_plan_request(make_api_payload(), require_assessment=True)
+        replies = [
+            model_tool_call("analyze_exam_results", {"problem_topics": self.CHART_AND_BASICS}),
+            model_tool_call("build_study_schedule", {"daily_topic_minutes": [
+                {"date": "2026/10/05", "topic": "차트와 분석", "minutes": 60},
+                {"date": "2026/10/05", "topic": "스프레드시트 기본", "minutes": 30},
+            ]}),
+        ]
+
+        with patch.object(GeminiToolAgent, "_ask_model", side_effect=replies):
+            tools, _ = GeminiToolAgent(api_key="test-key", max_steps=2).run(request)
+
+        self.assertEqual(len(tools.schedule), 2)
+
+    def test_too_little_time_for_assessed_topics_stops_without_retrying(self):
+        payload = make_api_payload()
+        payload["exam_date"] = "2026/10/05/18/01"  # one available minute, two assessed topics
+        request = build_plan_request(payload, require_assessment=True)
+        reply = model_tool_call("analyze_exam_results", {"problem_topics": self.CHART_AND_BASICS})
+
+        with (patch.object(GeminiToolAgent, "_ask_model", return_value=reply) as ask_model,
+              self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: 1 usable minute .* cannot cover 2 assessed topics")):
+            GeminiToolAgent(api_key="test-key").run(request)
+
+        self.assertEqual(ask_model.call_count, 1)
+
+    def test_available_minutes_exclude_busy_periods_and_clip_to_exam(self):
+        request = replace(make_plan_request(busy_periods=[BusyPeriod(
+            "1", datetime(2026, 10, 5, 19, 0), datetime(2026, 10, 5, 20, 0), "약속",
+        )]), exam_date=datetime(2026, 10, 12, 19, 30))
+
+        # Oct 5: 18-22 minus 19-20 = 180; Oct 12: 18:00-19:30 = 90.
+        self.assertEqual(available_minutes(request), 270)
 
 
 if __name__ == "__main__":

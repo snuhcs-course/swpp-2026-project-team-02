@@ -141,14 +141,19 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 ```text
 CLI 또는 앱 호출
   → JSON 입력 배열, 날짜, 점수, 주간 가능 시간 검증
-  → Gemini Agent에 입력과 도구 스키마 전달
+  → 모델 호출 전 최소 가용 시간 확인 (부족하면 NOT_ENOUGH_TIME)
+  → Gemini Agent에 입력, 날짜별 가용 시간(분), 도구 스키마 전달
   → get_certification_profile
-  → analyze_exam_results
-  → build_study_schedule
+  → analyze_exam_results (분석된 Topic 수만큼의 최소 시간 확인)
+  → build_study_schedule (성공하면 즉시 종료)
   → 기존 일정 + 공부 일정을 CSV로 합쳐 반환
 ```
 
 Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델은 사용자의 자기평가와 실제 점수 통계를 해석해 날짜별 공부 시간을 제안합니다. Python 도구는 입력 검증, 충돌 검사, 가용 시간 안에 일정 행 배치를 담당합니다.
+
+Agent는 최대 6번 Gemini를 호출합니다(`AGENT_MAX_STEPS`). `build_study_schedule`이 검증된 일정을 만들면 같은 응답의 남은 도구 호출을 실행하지 않고 즉시 종료하며, `agent_summary`는 모델을 다시 호출하지 않고 수용된 일정의 과목 수·총 분·블록 수로 만듭니다. 마지막 허용 호출에서 성공한 일정도 그대로 반환됩니다. 텍스트로만 완료를 주장하거나 실패한 `build_study_schedule`은 성공으로 처리하지 않습니다.
+
+마지막 성공 이후 같은 도구를 같은 JSON 인자(객체 키 순서 무시)로 다시 호출해 같은 오류를 받으면, 다음 모델 요청 없이 실행을 중단하고 upstream 실패(HTTP 502)로 반환합니다. 인자를 고친 재시도는 호출 한도 안에서 계속 허용되고, 다른 도구 호출이 성공하면 이 기록은 초기화됩니다. 이 중단은 입력이 불가능하다는 증거가 아니므로 `NOT_ENOUGH_TIME`으로 바꾸지 않습니다.
 
 ## 입력과 검증 규칙
 
@@ -248,7 +253,7 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 | 503 | `UPSTREAM_ERROR` | Gemini API 키 등 서버 측 upstream 설정이 누락됨 |
 | 500 | `INTERNAL_ERROR` | 예측하지 못한 서버 오류 |
 
-계획 생성 불가나 일정 배치 실패는 도구/Agent 실행 오류를 거쳐 현재 구현에서 HTTP 502로 반환될 수 있습니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
+가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(Gemini 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 호환 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, Gemini 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
 
 ## 점수와 일정 계산
 
@@ -256,7 +261,7 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 
 현재 `assessment_results` 경로에서는 Gemini Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단합니다. 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 내부 호환 경로만 입력 Topic 이름을 그대로 사용하며 현재 HTTP API·CLI 진단 흐름에는 사용되지 않습니다. Agent는 시험일까지의 기간, 자유형 자기평가, Topic별 점수와 사용자의 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 학습 시간을 제안합니다.
 
-Agent는 날짜별·주제별 공부 시간(분)을 직접 제안합니다. 예를 들어 총 120분이고 용량이 비슷한 공부 가능 날짜가 2일이면 날짜별 약 60분씩 배정하도록 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다.
+Agent는 날짜별·주제별 공부 시간(분)을 직접 제안합니다. 예를 들어 총 120분이고 용량이 비슷한 공부 가능 날짜가 2일이면 날짜별 약 60분씩 배정하도록 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다. 가용 시간 계산과 배치는 같은 빈 구간을 사용합니다. 준비 시작일과 시험일은 각 시각으로 잘라 내고, 바쁜 일정은 시작 포함·종료 제외 구간으로 빼며 겹치는 바쁜 일정은 한 번만 뺍니다. 각 빈 구간의 1분 미만 나머지는 버리고 정수 분만 합산합니다. 예를 들어 월요일 18:00–20:00 가능, 준비 시작 18:30, 시험 19:30, 바쁜 일정 18:45–19:05와 19:00–19:15이면 가용 시간은 30분입니다.
 
 ## 출력 형식과 일정 ID
 
@@ -305,7 +310,7 @@ python run_license_planner_availability_test_cases.py
 python run_license_planner_test_cases.py --case-id license_planner_case_04_personal_availability_api
 ```
 
-이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 Gemini에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제·시작 시각, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 결과 CSV와 상세 trace는 `license_planner_test_results/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 Gemini 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
+이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 Gemini에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제, 준비 기간 내 일정 여부, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 공부 날짜는 Gemini가 정하므로 정확한 시작 시각은 검사하지 않습니다. 결과 CSV와 상세 trace는 `license_planner_test_results/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 Gemini 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
 
 각 케이스는 `license_planner_test_inputs/license_planner_test_cases.json`에서 `request` 객체에 API 요청 필드 전체를 JSON으로 지정합니다. `assessment_results`, `busy_schedules`, `weekly_availability`를 포함해 HTTP API 계약을 확인합니다. 실제 API 응답과 일정은 통합 테스트에서 검증합니다. 실행 결과는 다음처럼 저장됩니다.
 

@@ -4,9 +4,43 @@ from __future__ import annotations
 from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
-from .models import PlanRequest, ProblemResult, ToolTrace
-from .scheduler import generate_schedule, summarize_topic_results
+from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
+from .scheduler import available_minutes, generate_schedule, summarize_topic_results
 from .settings import DATETIME_FORMAT
+
+
+def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool) -> None:
+    """입력 값: 일정 요청, 필수 토픽 수, 토픽 수가 확정 값인지 여부
+    출력 값: 없음
+    기능: 토픽마다 최소 1분을 줄 수 없으면 NOT_ENOUGH_TIME 오류를 발생시킵니다.
+    """
+    if (request.preparation_start is None or request.exam_date is None
+            or request.weekly_availability is None or request.preparation_start >= request.exam_date):
+        return  # 날짜·가능 시간 검증은 일정 생성 단계의 기존 오류가 담당합니다.
+    usable = available_minutes(request)
+    if usable >= topic_count:
+        return
+    topics = (f"{topic_count} assessed topic{'s' if topic_count != 1 else ''}" if exact
+              else "even 1 assessed topic")
+    raise InsufficientCapacityError(
+        f"NOT_ENOUGH_TIME: {usable} usable minute{'s' if usable != 1 else ''} between "
+        f"preparation_start and exam_date cannot cover {topics} (at least 1 minute each). "
+        "Add study windows, start preparation earlier, or choose a later exam date."
+    )
+
+
+def check_initial_capacity(request: PlanRequest) -> None:
+    """입력 값: 일정 요청
+    출력 값: 없음
+    기능: 모델 호출 전에 알 수 있는 필수 토픽 수로 최소 가용 시간을 확인합니다.
+    """
+    if request.assessment_items:
+        # 문항-토픽 분류는 모델이 정하므로 분류 전에는 최소 1개 토픽만 확정됩니다.
+        check_topic_capacity(request, 1, exact=False)
+    elif request.problem_results:
+        check_topic_capacity(request, len({item.topic for item in request.problem_results}), exact=True)
+    else:
+        check_topic_capacity(request, len(get_certification(request.certification_id).topics), exact=True)
 
 
 class PlannerTools:
@@ -89,6 +123,7 @@ class PlannerTools:
             return "INVALID_TOOL_CALL: problem_topics is only used with assessment_results."
         self.topic_statistics = summarize_topic_results(results)
         self.results_analyzed = True
+        self._check_required_capacity()
         possible = sum(item.possible_score for item in self.topic_statistics)
         earned = sum(item.earned_score for item in self.topic_statistics)
         return {"total_possible_score": possible, "total_earned_score": earned,
@@ -106,6 +141,7 @@ class PlannerTools:
         """
         if not self.results_analyzed:
             return "PREREQUISITE: call analyze_exam_results before build_study_schedule."
+        self._check_required_capacity()
         try:
             cert = get_certification(self.request.certification_id)
             if not isinstance(daily_topic_minutes, list) or not daily_topic_minutes:
@@ -142,6 +178,15 @@ class PlannerTools:
                      "start_date": b.start_datetime.strftime(DATETIME_FORMAT),
                      "end_date": b.end_datetime.strftime(DATETIME_FORMAT)}
                     for b in self.schedule]}
+
+    def _check_required_capacity(self) -> None:
+        """입력 값: 없음 (분석된 토픽 통계를 사용)
+        출력 값: 없음
+        기능: 분석으로 확정된 필수 토픽 수보다 가용 시간이 적으면 재시도 없이 중단합니다.
+        """
+        topic_count = (len(self.topic_statistics) if self.topic_statistics
+                       else len(get_certification(self.request.certification_id).topics))
+        check_topic_capacity(self.request, topic_count, exact=True)
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         """입력 값: 도구 이름과 JSON 인자

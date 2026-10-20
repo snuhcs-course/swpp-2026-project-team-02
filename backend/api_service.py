@@ -10,6 +10,7 @@ from typing import Any
 from license_planner.agent import GeminiToolAgent
 from license_planner.csv_io import parse_busy_csv, parse_datetime, render_schedule_csv
 from license_planner.models import PlanRequest
+from license_planner.tools import check_initial_capacity
 from assessment_service import get_public_questions, parse_assessment_results
 from license_planner.user_availability import (
     WEEKDAY_NAMES, load_personal_availability, parse_weekly_availability,
@@ -134,6 +135,7 @@ def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
     기능: JSON 요청을 검증하고 Gemini Agent로 계획을 만듭니다.
     """
     request = build_plan_request(payload, require_assessment=True)
+    check_initial_capacity(request)  # 모델 설정이나 호출 없이 0분 가용 시간을 거절합니다.
     tools, summary = GeminiToolAgent().run(request)
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
