@@ -110,8 +110,7 @@
       }
     },
     "expected_level": "beginner",
-    "expected_first_topic": "차트와 분석",
-    "expected_first_start": "2026/10/05/20/00"
+    "expected_first_topic": "차트와 분석"
   },
   {
     "case_id": "license_planner_case_02_advanced_weak_functions",
@@ -211,8 +210,7 @@
       }
     },
     "expected_level": "advanced",
-    "expected_first_topic": "함수와 데이터 관리",
-    "expected_first_start": "2026/10/06/18/00"
+    "expected_first_topic": "함수와 데이터 관리"
   },
   {
     "case_id": "license_planner_case_03_weak_charts",
@@ -318,8 +316,7 @@
       }
     },
     "expected_level": "beginner",
-    "expected_first_topic": "차트와 분석",
-    "expected_first_start": "2026/10/07/19/00"
+    "expected_first_topic": "차트와 분석"
   },
   {
     "case_id": "license_planner_case_04_personal_availability_api",
@@ -426,7 +423,6 @@
       }
     },
     "expected_level": "advanced",
-    "expected_first_topic": "함수와 데이터 관리",
-    "expected_first_start": "2026/10/05/20/00"
+    "expected_first_topic": "함수와 데이터 관리"
   }
 ]

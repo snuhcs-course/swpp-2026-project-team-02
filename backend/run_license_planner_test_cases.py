@@ -69,6 +69,14 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
              and parse_datetime(busy["start_date"]) < parse_datetime(row["end_date"]))
         for row in study_schedules for busy in request_payload.get("busy_schedules", [])
     )
+    # Gemini chooses the study dates, so any start inside the preparation period is valid.
+    preparation_start = parse_datetime(request_payload["preparation_start"])
+    exam_date = parse_datetime(request_payload["exam_date"])
+    within_preparation_period = all(
+        preparation_start <= parse_datetime(row["start_date"])
+        and parse_datetime(row["end_date"]) <= exam_date
+        for row in study_schedules
+    )
     first_schedule = study_schedules[0] if study_schedules else None
     actual_first_start = first_schedule.get("start_date") if first_schedule else None
     checks = {
@@ -76,8 +84,7 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "schedules_returned": bool(study_schedules),
         "expected_tool_sequence": called_tools == list(REQUIRED_TOOLS),
         "expected_first_topic": (first_schedule or {}).get("topic") == case["expected_first_topic"],
-        "expected_first_start": (case.get("expected_first_start") is None
-                                  or actual_first_start == case["expected_first_start"]),
+        "within_preparation_period": within_preparation_period,
         "availability_respected": availability_respected,
         "busy_schedules_conflict_free": busy_schedule_conflict_free,
         "schedule_csv_returned": isinstance(payload.get("schedule_csv"), str)
@@ -90,7 +97,6 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "checks": checks,
         "expected_first_topic": case["expected_first_topic"],
         "actual_first_topic": (first_schedule or {}).get("topic"),
-        "expected_first_start": case.get("expected_first_start"),
         "actual_first_start": actual_first_start,
         "uses_weekly_availability": availability is not None,
         "study_schedule_count": len(study_schedules),
