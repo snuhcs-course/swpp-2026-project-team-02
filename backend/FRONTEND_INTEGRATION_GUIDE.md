@@ -25,6 +25,8 @@ Check connectivity with `GET /api/v1/health`, which returns
 
 - `GET /api/v1/certifications/{certification_id}/questions`
 - `POST /api/v1/study-plans`
+- `POST /api/v1/schedules/adjust`
+- `GET /api/v1/study-plans` for explicit reload of a retained plan
 
 The current MVP uses `computer_specialist_level_2`.
 
@@ -132,18 +134,22 @@ of the accepted schedule. No response fields were added.
 
 ## Other backend endpoints
 
-The API also exposes availability profile read/write and schedule adjustment
-endpoints for other clients. The current Android MVP does not call them; it
-sends weekly availability as part of each plan request.
+The API also exposes availability profile read/write for other clients. Android
+does not call the profile endpoints; it sends availability with generation and
+uses the selected plan's original windows for adjustment. Android calls the
+adjustment endpoint and explicitly reloads a retained plan through the plan-list
+endpoint as described below; it does not import the server's plans into its list.
 
 ## Task 2: select, adjust, and update a saved plan
 
-Implementation status: added on 2026-10-17. Fifteen isolated HTTP/storage tests
+Historical backend verification (2026-10-17): Fifteen isolated HTTP/storage tests
 passed using a replacement agent that executes the real domain tools. Fifteen
 existing adjustment tests passed; the planner suite passed 12/13 with an existing
 weekday-normalization expectation mismatch. Live Gemini calls were not run
 because no key was configured. Android tests could not run because the SDK
-location was unavailable. The Android UI is not changed by this backend task.
+location was unavailable. That backend task did not change the Android UI.
+Later frontend adjustment and recovery implementation is described here and in `../frontend/README.md`; the
+old suite/SDK observations above are dated evidence, not current blockers.
 
 ### Select a plan
 
@@ -180,8 +186,8 @@ query parameters are ignored.
 
 Alternatively, retain `schedule_csv_file` and `schedules` directly from the
 existing generation response. Treat the identifier as opaque and retain it with
-the schedule; do not construct a filename. The current Android DTO ignores this
-field and must be extended by the FE integration task.
+the schedule; do not construct a filename. The Android DTO retains this
+field and uses it unchanged for adjustment and exact-identity reload.
 
 ### Adjust the selected plan
 
@@ -251,8 +257,13 @@ shape and omit the two file fields.
 | 500 / `STORAGE_ERROR` | Report storage failure |
 | 502 or 503 / `UPSTREAM_ERROR` | Report agent/configuration failure |
 
-Errors keep `{"error":{"code":"...","message":"..."}}`. The current Android
-error mapper needs a dedicated 409 path in the FE integration task.
+Errors keep `{"error":{"code":"...","message":"..."}}`. Android distinguishes
+adjustment 404 `PLAN_NOT_FOUND` and 409 `PLAN_CONFLICT` from route errors. Any
+adjustment 409, lost connection/timeout, or unreadable/mismatched success requires
+an explicit reload before a fresh selection and submission; it never replays the
+uncertain mutation. A missing plan stays viewable but unavailable for adjustment
+for the app session. These client paths have controlled-test evidence; real
+Android/Gemini same-file A/B acceptance remains pending.
 
 If a call times out, reload before retrying: the write may have completed.
 There is no idempotency key. File reads and replacements share a process lock;

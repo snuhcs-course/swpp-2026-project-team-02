@@ -102,7 +102,7 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 - 준비 시작 시각과 시험 시각 사이에 Agent가 정한 토픽별 학습 시간을 배치합니다.
 - 날짜·시간 단위의 기존 일정 CSV와 겹치지 않는 슬롯을 찾고, 기존 일정도 결과에 포함합니다.
 - CSV 출력의 일정 ID는 외부 일정 `external-번호`, 공부 일정 `study-번호` 형식입니다.
-- Gemini function calling을 통해 자격증 조회, 수준 평가, 일정 생성 도구를 호출하고, 도구 호출 기록을 확인할 수 있습니다.
+- Gemini function calling을 통해 자격증 조회, 문항별 토픽 분석, 일정 생성 도구를 호출하고, 도구 호출 기록을 확인할 수 있습니다.
 
 온라인 시험 자료 검색, 공식 시험 범위 자동 갱신, 실제 학습 콘텐츠 추천은 현재 범위에 포함하지 않습니다. 사용자별 반복 주간 공부 가능 시간은 JSON 프로필로 저장하고 일정 생성에 반영합니다.
 
@@ -116,16 +116,16 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 | `api_server.py` | 로컬/배포 환경에서 HTTP API를 실행하는 표준 라이브러리 서버 |
 | `api_service.py` | API JSON과 두 프로그램의 도메인 객체/Agent 사이 변환 |
 | `config/api_server.json` | API bind 주소·포트, 허용 origin, 요청 크기 제한 |
-| `frontend/` | Kotlin/Jetpack Compose Android 앱과 Gradle live API URL 설정 |
+| `../frontend/` | Kotlin/Jetpack Compose Android 앱과 Gradle live API URL 설정 |
 | `run_api_availability_integration_test.py` | 임시 프로필을 써서 HTTP·CORS·Agent 조정 전체 흐름 확인 |
 | `api_test_inputs/`, `api_test_results/` | API 통합 테스트 입력 fixture와 요약/CSV 결과 |
 | `run_license_planner_test_cases.py` | 여러 실제 Gemini Agent 테스트를 실행하고 케이스별 결과/trace를 저장 |
 | `run_license_planner_availability_test_cases.py` | 개인 가능 시간 저장·갱신·계획 반영을 API 없이 검증하는 테스트 러너 |
 | `license_planner/agent.py` | Gemini 모델 설정, ReAct 호출 루프, API 통신 |
-| `license_planner/tools.py` | Agent의 자격증 조회·점수 분석·수준 평가·일정 생성 도구와 스키마 |
+| `license_planner/tools.py` | Agent의 자격증 조회·가중 점수 분석·일정 생성 도구와 스키마 |
 | `config/certifications.json` | 자격증 ID별 표시 이름과 학습 Topic 목록 |
 | `license_planner/catalog.py` | JSON 자격증 설정을 읽고 검증하는 카탈로그 |
-| `license_planner/scheduler.py` | 토픽 통계, 수준 판정, 시간 슬롯 배치 규칙 |
+| `license_planner/scheduler.py` | 토픽별 가중 점수 통계, 가용 시간 계산, 시간 슬롯 배치 규칙 |
 | `license_planner/csv_io.py` | 기존 일정 CSV 파싱 및 결과 CSV 생성 |
 | `license_planner/models.py` | 사용자 요청, 일정 기간, 공부 블록 등 도메인 객체 |
 | `license_planner/settings.py` | CSV/날짜·시간 형식과 `.env` API 키 읽기 |
@@ -251,6 +251,9 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 | HTTP 상태 | 코드 | 발생 조건 |
 | --- | --- | --- |
 | 404 | `NOT_FOUND` | API 경로가 존재하지 않음 |
+| 404 | `PLAN_NOT_FOUND` | 조정할 저장 계획이 없음 |
+| 409 | `PLAN_CONFLICT` | 요청 일정이 저장된 계획과 다르거나 조정 중 파일이 변경됨 |
+| 500 | `STORAGE_ERROR` | 저장 계획 읽기·갱신 실패 |
 | 422 | `INVALID_INPUT` | 요청 JSON의 필드·형식·날짜·점수가 유효하지 않음 |
 | 502 | `UPSTREAM_ERROR` | Gemini 등 외부 서비스 통신 실패 |
 | 503 | `UPSTREAM_ERROR` | Gemini API 키 등 서버 측 upstream 설정이 누락됨 |
@@ -321,7 +324,7 @@ python run_license_planner_test_cases.py --case-id license_planner_case_04_perso
 - `<case_id>_tool_trace.json`: HTTP 상태, 실제 호출 순서/인자, 예상 및 실제 일정, 통과 여부
 - `license_planner_test_summary.json`: 모든 케이스의 요약
 
-통합 테스트 통과 기준은 HTTP 200, 프로필 조회 → 시험 결과 분석 → 수준 평가 → 일정 생성 순서, 예상 취약 토픽·시작 시각, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음입니다. 케이스에는 초급/고급 사용자와 카탈로그 밖의 시험 토픽을 넣어 확장 가능성을 확인합니다.
+통합 테스트 통과 기준은 HTTP 200, 자격증 프로필 조회 → 문항별 토픽 분석 → 일정 생성 도구 순서, 예상 첫 토픽, 준비 기간 내 일정, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음, CSV 반환입니다. Gemini가 공부 날짜를 정하므로 정확한 시작 시각은 고정하지 않습니다. 자기평가는 학습 분량의 입력이며 별도의 수준 평가 도구는 없습니다. HTTP 문항 매핑은 선택 자격증 카탈로그의 토픽을 사용합니다.
 
 ### 가용 시간 사전 확인·종료 흐름 개선 전후 비교
 
@@ -431,7 +434,7 @@ external-101,2026/10/06/18/00,2026/10/06/20/00,
 | --- | --- |
 | `INVALID_SCHEDULE_ID` | ID 접두어가 `study-`/`external-`가 아니거나 뒤에 양의 정수가 없음 |
 | `SCHEDULE_NOT_FOUND` | 대상 ID가 원본 CSV에 없음 |
-| `INVALID_CSV` | CSV가 비었거나 행의 열 수가 세 개가 아님 |
+| `INVALID_CSV` | CSV가 비었거나 행의 열 수가 세 개 또는 네 개가 아님 |
 | `DUPLICATE_SCHEDULE_ID` | 입력 CSV에 동일 ID가 두 번 이상 있음 |
 | `INVALID_DATE` | 날짜·시간이 `YYYY/MM/DD/HH/MM` 형식이 아니거나 실제 시각이 아님 |
 | `INVALID_DATE_RANGE` | 시작 시각이 종료 시각 이상임 |
