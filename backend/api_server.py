@@ -6,7 +6,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from api_service import (adjust_schedule, create_study_plan, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
@@ -149,7 +149,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             출력 값: 상태 확인 또는 사용자 가능 시간 JSON
             기능: 읽기 전용 API 경로를 처리합니다.
             """
-            path = urlparse(self.path).path
+            url = urlparse(self.path)
+            path = url.path
             try:
                 if path == f"{API_PREFIX}/health":
                     self._send_json(200, {"status": "ok"})
@@ -164,7 +165,15 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                         return
                     self._send_json(200, get_public_questions(certification_id))
                 elif path == f"{API_PREFIX}/study-plans":
-                    self._send_json(200, list_study_plans())
+                    selected = parse_qs(url.query, keep_blank_values=True).get("schedule_csv_file")
+                    try:
+                        if selected is not None and len(selected) != 1:
+                            raise ValueError("schedule_csv_file must be given at most once")
+                        result = list_study_plans(selected[0] if selected else None)
+                    except ValueError as error:
+                        self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
+                        return
+                    self._send_json(200, result)
                 elif path.startswith(f"{API_PREFIX}/study-plans/"):
                     filename = path[len(f"{API_PREFIX}/study-plans/"):]
                     content, safe_filename = read_study_plan_csv(filename)

@@ -46,8 +46,9 @@ Gemini API 키만 둡니다.
 | `GET /api/v1/availability` | 저장된 반복 가능 시간 조회 | 없음 |
 | `PUT /api/v1/availability` | 반복 가능 시간 저장 | 요일별 `start`, `end` 배열 |
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
+| `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 일정 |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability` |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:

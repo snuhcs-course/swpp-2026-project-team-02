@@ -32,6 +32,7 @@ Available routes:
 - `GET /api/v1/availability`
 - `PUT /api/v1/availability`
 - `POST /api/v1/study-plans`
+- `GET /api/v1/study-plans`
 - `GET /api/v1/study-plans/{filename}`
 - `POST /api/v1/schedules/adjust`
 

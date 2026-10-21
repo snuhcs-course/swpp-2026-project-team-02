@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from http.server import ThreadingHTTPServer
 
@@ -189,6 +190,79 @@ class PlanUpdateTests(unittest.TestCase):
         (self.root / self.filename).write_text("broken", encoding="utf-8")
         status, result = self.call("/study-plans")
         self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+
+    def call_with_file_spies(self, path):
+        """Return the response plus every file name read and directory listed."""
+        original_read, original_iterdir = Path.read_bytes, Path.iterdir
+        read, listed = [], []
+        def spy_read(file):
+            read.append(file.name)
+            return original_read(file)
+        def spy_iterdir(directory):
+            listed.append(directory)
+            return original_iterdir(directory)
+        with patch.object(Path, "read_bytes", spy_read), patch.object(Path, "iterdir", spy_iterdir):
+            return self.call(path), read, listed
+
+    def filter_query(self, identifier):
+        return "/study-plans?schedule_csv_file=" + quote(identifier, safe="")
+
+    def test_filtered_list_returns_selected_plan_despite_damaged_other_plan(self):
+        other_path = self.root / self.store.create(self.original).rsplit("/", 1)[1]
+        selected_bytes = (self.root / self.filename).read_bytes()
+        for damage in ("corrupt", "unreadable"):
+            with self.subTest(damage=damage):
+                if damage == "corrupt":
+                    other_path.write_text("broken", encoding="utf-8")
+                else:
+                    other_path.chmod(0)
+                    self.addCleanup(other_path.chmod, 0o644)
+                status, result = self.call("/study-plans")
+                self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+                (status, listing), read, listed = self.call_with_file_spies(self.filter_query(self.identifier))
+                self.assertEqual(status, 200, listing)
+                self.assertEqual(listing, {"plans": [{
+                    "schedule_csv_file": self.identifier,
+                    "schedule_csv_url": f"/api/v1/study-plans/{self.filename}",
+                    "schedules": ROWS}]})
+                self.assertEqual((read, listed), ([self.filename], []))
+                self.assertEqual((self.root / self.filename).read_bytes(), selected_bytes)
+        other_path.chmod(0o644)
+        self.assertEqual(other_path.read_text(encoding="utf-8"), "broken")
+
+    def test_filtered_list_distinguishes_corrupt_and_missing_selected_plan(self):
+        path = self.root / self.filename
+        path.write_text("broken", encoding="utf-8")
+        status, result = self.call(self.filter_query(self.identifier))
+        self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+        self.assertEqual(path.read_text(encoding="utf-8"), "broken")
+        path.unlink()
+        self.assertEqual(self.call(self.filter_query(self.identifier)), (200, {"plans": []}))
+        self.assertFalse(path.exists())
+
+    def test_filtered_list_rejects_invalid_identifiers_without_reading_files(self):
+        link = self.root / "study_plan_20261017T120000000000+0900_abcdef12.csv"
+        link.symlink_to(self.root / self.filename)
+        encoded = quote(self.identifier, safe="")
+        queries = ["schedule_csv_file=", "schedule_csv_file",
+                   f"schedule_csv_file={encoded}&schedule_csv_file={encoded}",
+                   # An unencoded '+' decodes to a space and no longer names the plan.
+                   "schedule_csv_file=" + self.identifier]
+        for identifier in ("../outside.csv", "/etc/passwd", "license_planner/output/../x.csv",
+                           self.filename, "license_planner/output/" + link.name):
+            queries.append("schedule_csv_file=" + quote(identifier, safe=""))
+        for query in queries:
+            with self.subTest(query=query):
+                (status, result), read, listed = self.call_with_file_spies("/study-plans?" + query)
+                self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+                self.assertEqual((read, listed), ([], []))
+
+    def test_unfiltered_list_ignores_unrelated_query_parameters(self):
+        other = self.store.create(self.original)
+        status, listing = self.call("/study-plans")
+        self.assertEqual(status, 200)
+        self.assertCountEqual([p["schedule_csv_file"] for p in listing["plans"]], [self.identifier, other])
+        self.assertEqual(self.call("/study-plans?page=2"), (200, listing))
 
     def test_agent_cannot_modify_unrelated_rows(self):
         from dataclasses import replace

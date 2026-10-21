@@ -152,6 +152,17 @@ Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`.
 An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
 an unreadable or malformed plan produces `500 STORAGE_ERROR`.
 
+To read back one retained plan, add the optional query
+`?schedule_csv_file=<URL-encoded identifier>` (encode it once; the `+` in the
+identifier must be sent as `%2B`). The server then reads only that file, so a
+damaged unrelated plan does not block it. The response keeps the same envelope:
+one item for the selected plan, or `{"plans": []}` when that valid identifier no
+longer exists. A selected plan that is unreadable or malformed still returns
+`500 STORAGE_ERROR`. A blank, repeated, or invalid identifier (path, symlink, or
+anything that is not a server-issued identifier) returns `422 INVALID_INPUT`
+without reading files. Without the query, listing behaves as above; other
+query parameters are ignored.
+
 ```json
 {
   "plans": [{

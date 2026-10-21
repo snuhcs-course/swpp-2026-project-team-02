@@ -98,9 +98,21 @@ class StudyPlanStore:
             except UnicodeError as error:
                 raise PlanStorageError("Stored study plan is not UTF-8") from error
 
-    def list_plans(self) -> list[dict]:
+    def _plan_item(self, identifier: str, content: bytes) -> dict:
+        self._parse(content)
+        return {**plan_fields(identifier),
+                "schedules": list(csv.DictReader(io.StringIO(content.decode("utf-8"))))}
+
+    def list_plans(self, identifier: str | None = None) -> list[dict]:
         with STUDY_PLAN_OUTPUT_LOCK:
             try:
+                if identifier is not None:
+                    # Read only the selected file so damage elsewhere cannot block it.
+                    try:
+                        content = self._read(self._resolve(identifier))
+                    except PlanNotFoundError:
+                        return []
+                    return [self._plan_item(identifier, content)]
                 if not self.directory.exists():
                     return []
                 paths = [p for p in self.directory.iterdir()
@@ -110,9 +122,7 @@ class StudyPlanStore:
                 plans = []
                 for path in paths:
                     content = self._read(self._resolve(PLAN_PREFIX + path.name))
-                    self._parse(content)
-                    plans.append({**plan_fields(PLAN_PREFIX + path.name),
-                                  "schedules": list(csv.DictReader(io.StringIO(content.decode("utf-8"))))})
+                    plans.append(self._plan_item(PLAN_PREFIX + path.name, content))
                 return plans
             except OSError as error:
                 raise PlanStorageError("Could not list study plans") from error

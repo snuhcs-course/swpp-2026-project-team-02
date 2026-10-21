@@ -41,8 +41,8 @@ def read_study_plan_csv(filename: str) -> tuple[str, str]:
     return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).download(filename)
 
 
-def list_study_plans() -> dict[str, Any]:
-    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans()}
+def list_study_plans(schedule_csv_file: str | None = None) -> dict[str, Any]:
+    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans(schedule_csv_file)}
 
 
 def _datetime(value: Any, field: str) -> datetime:
