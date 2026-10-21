@@ -86,7 +86,11 @@ fun PlanAdjustmentScreen(
     val mode = adjustmentMode(plan, state)
 
     val weeks = remember(plan.current.schedules) { PlanGrouping.weeks(plan.current.schedules) }
-    var weekIndex by rememberSaveable(plan.ordinal) { mutableIntStateOf(0) }
+    // Entering a plan that awaits reload opens its failed session's week; later browsing is free.
+    var weekIndex by rememberSaveable(plan.ordinal) {
+        val target = selection.failedScheduleId.takeIf { plan.recovery == PlanRecovery.ReloadRequired }
+        mutableIntStateOf(weekIndexOf(weeks, target).coerceAtLeast(0))
+    }
     // Show the moved session's week after success, and the first week of reloaded rows.
     LaunchedEffect(state, weeks) {
         when (state) {

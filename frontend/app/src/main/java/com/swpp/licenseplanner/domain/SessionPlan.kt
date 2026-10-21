@@ -18,6 +18,8 @@ enum class PlanRecovery {
  * creation request, so later form edits never change this plan's windows or exam date.
  * [scheduleCsvFile] is the exact nonblank server identity from generation (live only).
  * [recovery] lives on the entry, so changing selection or plan never clears it.
+ * [recoveryScheduleId] is the failed session whose uncertain adjustment requires the reload;
+ * it is set only while [recovery] is [PlanRecovery.ReloadRequired].
  */
 data class SessionPlan(
     val ordinal: Int,
@@ -26,6 +28,7 @@ data class SessionPlan(
     val current: StudyPlanResponse,
     val scheduleCsvFile: String?,
     val recovery: PlanRecovery = PlanRecovery.Ready,
+    val recoveryScheduleId: String? = null,
 ) {
     val studyCount: Int get() = current.schedules.count { !it.scheduleId.startsWith(EXTERNAL_PREFIX) }
 

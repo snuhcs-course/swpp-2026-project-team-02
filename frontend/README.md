@@ -189,6 +189,12 @@ keeps showing its earlier rows and selection as an unconfirmed copy, and the
 plan cannot be adjusted (neither 다시 시도 nor a new selection) until a reload
 succeeds. This requirement stays on the plan when the user picks another row,
 rotates, goes back to the list or home, or adjusts another plan and returns.
+The session whose request is uncertain stays with the plan too: reopening it,
+even after visiting another plan with the same schedule IDs, opens that
+session's week with the session selected but disabled, without the earlier
+error or a retry; the other weeks can still be browsed. Another
+plan's selection or outcome is never carried over, and switching between plans
+that need no reload still starts with no selection.
 Screen entry and rotation send nothing; only the explicit button does.
 
 **Reload.** 최신 계획 불러오기 sends one

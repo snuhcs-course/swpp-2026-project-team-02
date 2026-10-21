@@ -264,7 +264,38 @@ class PlanAdjustmentViewModelTest {
         assertEquals("study-2", vm.adjustment.value.failedScheduleId)
         assertTrue(vm.selectPlan(2)) // another plan starts clean
         assertEquals(AdjustmentSelection(2), vm.adjustment.value)
+        assertTrue(vm.selectPlan(1)) // and a ready plan's earlier choice is not restored
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
         assertFalse(vm.selectPlan(99))
+    }
+
+    @Test fun readyPlansRestoreNoOutcomeOrRetryOnReturn() = runTest(dispatcher) {
+        for (isDemo in listOf(false, true)) {
+            val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA), AdjustmentOutcome.Failure(ApiError.ServerFailure(502)))
+            val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, isDemo), PlanOutcome.Success(planB, isDemo)), adjustment)
+            generateAB(vm)
+            vm.select(1, "study-1")
+            assertTrue(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertTrue(vm.selectPlan(2))
+            assertTrue(vm.selectPlan(1))
+            assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+
+            vm.selectFailedSession("study-2")
+            assertTrue(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(AdjustmentSelection(1, "study-2", AdjustmentState.Failure(ApiError.ServerFailure(502))), vm.adjustment.value)
+            assertTrue(vm.selectPlan(2))
+            assertTrue(vm.selectPlan(1))
+            assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+            vm.retryAdjustment() // the earlier request is not kept across plans
+            assertFalse(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(2, adjustment.inputs.size)
+            assertEquals(listOf(null, null), vm.plans.value.map { it.recoveryScheduleId })
+            assertTrue(adjustment.reloadIdentities.isEmpty())
+        }
     }
 
     // --- Adjustment lifecycle ---
@@ -338,7 +369,8 @@ class PlanAdjustmentViewModelTest {
             vm.submitAdjustment()
             advanceUntilIdle()
             assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
-            assertEquals(before.copy(recovery = recovery), vm.plan(1))
+            val retained = "study-1".takeIf { recovery == PlanRecovery.ReloadRequired }
+            assertEquals(before.copy(recovery = recovery, recoveryScheduleId = retained), vm.plan(1))
         }
     }
 
@@ -362,7 +394,7 @@ class PlanAdjustmentViewModelTest {
 
             assertTrue((vm.adjustment.value.state as AdjustmentState.Failure).error is ApiError.InvalidResponse)
             assertEquals("study-1", vm.adjustment.value.failedScheduleId)
-            assertEquals(before.copy(recovery = PlanRecovery.ReloadRequired), vm.plan(1))
+            assertEquals(before.copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = "study-1"), vm.plan(1))
             val sent = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
             assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
         } finally {
@@ -529,6 +561,13 @@ class PlanAdjustmentViewModelTest {
             assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
             assertEquals(rowsA, vm.plan(1).current.schedules)
             assertEquals("study-1", vm.adjustment.value.failedScheduleId)
+            assertEquals("study-1", vm.plan(1).recoveryScheduleId)
+            assertAdjustmentBlocked(vm, adjustment)
+
+            assertTrue(vm.selectPlan(2)) // B shares the study IDs but inherits nothing
+            assertEquals(AdjustmentSelection(2), vm.adjustment.value)
+            assertTrue(vm.selectPlan(1)) // A's own target, without the earlier error
+            assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
             assertAdjustmentBlocked(vm, adjustment)
             assertEquals(1, adjustment.inputs.size)
             assertTrue(adjustment.reloadIdentities.isEmpty()) // never automatic
@@ -547,7 +586,13 @@ class PlanAdjustmentViewModelTest {
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.ReloadFailure(ApiError.ServerFailure(503))), vm.adjustment.value)
         assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
         assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertEquals("study-1", vm.plan(1).recoveryScheduleId)
         assertAdjustmentBlocked(vm, adjustment)
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1)) // the target stays; the reload error is not restored
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertAdjustmentBlocked(vm, adjustment)
+        assertEquals(1, adjustment.reloadIdentities.size)
 
         adjustment.reloads += ReloadOutcome.Loaded(movedA)
         assertTrue(vm.reloadPlan())
@@ -556,6 +601,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
         val reloaded = vm.plan(1)
         assertEquals(PlanRecovery.Ready, reloaded.recovery)
+        assertNull(reloaded.recoveryScheduleId)
         assertEquals(movedA, reloaded.current.schedules)
         assertEquals("", reloaded.current.scheduleCsv) // no stale CSV or summary
         assertNull(reloaded.current.agentSummary)
@@ -565,6 +611,9 @@ class PlanAdjustmentViewModelTest {
         assertEquals(planBBefore, vm.plan(2))
         assertEquals(2, vm.plans.value.size)
         assertFalse(vm.reloadPlan()) // nothing left to reload
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1)) // the old target, still in the rows, is not restored
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
 
         // The old pending request is gone: nothing is sent until a new row is chosen and submitted.
         vm.retryAdjustment()
@@ -610,22 +659,62 @@ class PlanAdjustmentViewModelTest {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
         val vm = failA(ApiError.Connection, adjustment)
 
+        assertTrue(vm.selectPlan(1)) // reopening A directly keeps everything
+        assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(ApiError.Connection)), vm.adjustment.value)
+
         assertTrue(vm.selectPlan(2)) // B with the same study IDs still adjusts normally
+        assertEquals(AdjustmentSelection(2), vm.adjustment.value)
         assertEquals(PlanRecovery.Ready, vm.plan(2).recovery)
+        assertNull(vm.plan(2).recoveryScheduleId)
         vm.selectFailedSession("study-1")
         assertTrue(vm.submitAdjustment())
         advanceUntilIdle()
         assertEquals(fileB, adjustment.inputs[1].scheduleCsvFile)
         assertEquals(wednesdayWindows, adjustment.inputs[1].original.weeklyAvailability)
 
-        assertTrue(vm.selectPlan(1)) // reopened A starts without transient state but keeps its gate
-        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertTrue(vm.selectPlan(1)) // reopened A shows its own target and keeps its gate, not B's outcome
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
         assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertEquals(rowsA, vm.plan(1).current.schedules)
         assertAdjustmentBlocked(vm, adjustment)
-        vm.selectFailedSession("study-1")
-        assertNull(vm.adjustment.value.failedScheduleId)
+        assertTrue(vm.selectPlan(2)) // B's success is not restored either
+        assertEquals(AdjustmentSelection(2), vm.adjustment.value)
         assertEquals(2, adjustment.inputs.size)
         assertTrue(adjustment.reloadIdentities.isEmpty())
+    }
+
+    /** Entries sharing a file and study IDs each keep only their own failed session. */
+    @Test fun retainedTargetsBelongToTheirOwnEntry() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Failure(ApiError.PlanConflict))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planA, false)), adjustment)
+        repeat(2) { vm.generate(); advanceUntilIdle() }
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        vm.select(2, "study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(listOf("study-1", "study-2"), vm.plans.value.map { it.recoveryScheduleId })
+
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertAdjustmentBlocked(vm, adjustment)
+        assertTrue(vm.selectPlan(2))
+        assertEquals(AdjustmentSelection(2, "study-2"), vm.adjustment.value)
+        assertAdjustmentBlocked(vm, adjustment)
+
+        adjustment.reloads += ReloadOutcome.Loaded(movedA)
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(listOf(PlanRecovery.ReloadRequired, PlanRecovery.Ready), vm.plans.value.map { it.recovery })
+        assertEquals(listOf("study-1", null), vm.plans.value.map { it.recoveryScheduleId })
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertTrue(vm.selectPlan(2))
+        assertEquals(AdjustmentSelection(2), vm.adjustment.value)
+        assertEquals(2, adjustment.inputs.size)
+        assertEquals(listOf(fileA), adjustment.reloadIdentities)
     }
 
     @Test fun planNotFoundMarksOnlyThatPlanMissingForTheSession() = runTest(dispatcher) {
@@ -638,7 +727,9 @@ class PlanAdjustmentViewModelTest {
 
         assertTrue(vm.selectPlan(2))
         assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
         assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+        assertNull(vm.plan(1).recoveryScheduleId)
         assertAdjustmentBlocked(vm, adjustment)
         assertEquals(1, adjustment.inputs.size)
         assertTrue(adjustment.reloadIdentities.isEmpty())
@@ -653,11 +744,17 @@ class PlanAdjustmentViewModelTest {
         advanceUntilIdle()
 
         assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+        assertNull(vm.plan(1).recoveryScheduleId)
         assertEquals(rowsA, vm.plan(1).current.schedules) // the local snapshot stays
-        assertEquals(AdjustmentState.Idle, vm.adjustment.value.state)
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
         assertEquals(planBBefore, vm.plan(2)) // never substituted
         assertFalse(vm.reloadPlan())
         assertAdjustmentBlocked(vm, adjustment)
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertAdjustmentBlocked(vm, adjustment)
+        assertEquals(1, adjustment.reloadIdentities.size)
     }
 
     @Test fun reloadedPlansWithoutTheOldTargetOrStudyRows() = runTest(dispatcher) {
@@ -671,9 +768,13 @@ class PlanAdjustmentViewModelTest {
             advanceUntilIdle()
             assertEquals(rows, vm.plan(1).current.schedules)
             assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
+            assertNull(vm.plan(1).recoveryScheduleId)
             vm.selectFailedSession("study-1") // removed from the saved plan
             assertNull(vm.adjustment.value.failedScheduleId)
             assertFalse(vm.submitAdjustment())
+            assertTrue(vm.selectPlan(2))
+            assertTrue(vm.selectPlan(1))
+            assertEquals(AdjustmentSelection(1), vm.adjustment.value)
         }
     }
 
@@ -704,6 +805,7 @@ class PlanAdjustmentViewModelTest {
         vm.submitAdjustment()
         advanceUntilIdle()
         assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+        assertNull(vm.plan(1).recoveryScheduleId)
         assertFalse(vm.reloadPlan())
         vm.retryAdjustment()
         advanceUntilIdle()
@@ -752,6 +854,9 @@ class PlanAdjustmentViewModelTest {
             vm.retryAdjustment()
             vm.selectFailedSession("study-2")
             assertFalse(vm.submitAdjustment())
+            assertTrue(vm.selectPlan(2))
+            assertTrue(vm.selectPlan(1))
+            assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
             advanceUntilIdle()
             assertEquals(1, server.requestCount)
 
@@ -759,6 +864,13 @@ class PlanAdjustmentViewModelTest {
             advanceUntilIdle()
             assertTrue(vm.adjustment.value.state is AdjustmentState.ReloadFailure)
             assertEquals(rowsA, vm.plan(1).current.schedules)
+            assertTrue(vm.selectPlan(2))
+            assertTrue(vm.selectPlan(1))
+            assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+            vm.retryAdjustment()
+            assertFalse(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(2, server.requestCount)
             assertTrue(vm.reloadPlan())
             advanceUntilIdle()
             assertEquals(savedA, vm.plan(1).current.schedules)

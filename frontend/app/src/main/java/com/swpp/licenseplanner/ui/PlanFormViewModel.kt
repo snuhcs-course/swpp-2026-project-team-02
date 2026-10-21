@@ -198,14 +198,18 @@ class PlanFormViewModel(
     }
 
     /**
-     * Opens [ordinal] for adjustment. A different plan starts with no selection or outcome;
-     * the same plan keeps both, and every plan keeps its [SessionPlan.recovery].
+     * Opens [ordinal] for adjustment. A different plan starts with no outcome and no selection,
+     * except that a plan awaiting reload shows its own failed session again; the same plan keeps
+     * both, and every plan keeps its [SessionPlan.recovery].
      * Refused while an adjustment or reload is in flight.
      */
     fun selectPlan(ordinal: Int): Boolean {
-        if (busy || _plans.value.none { it.ordinal == ordinal }) return false
+        if (busy) return false
+        val plan = plan(ordinal) ?: return false
         if (_adjustment.value.planOrdinal != ordinal) {
-            _adjustment.value = AdjustmentSelection(planOrdinal = ordinal)
+            val retained = plan.recoveryScheduleId
+                ?.takeIf { plan.recovery == PlanRecovery.ReloadRequired && plan.isStudy(it) }
+            _adjustment.value = AdjustmentSelection(planOrdinal = ordinal, failedScheduleId = retained)
             pendingAdjustment = null
         }
         return true
@@ -264,13 +268,14 @@ class PlanFormViewModel(
                         it.copy(
                             current = it.current.copy(schedules = outcome.schedules, scheduleCsv = "", agentSummary = null),
                             recovery = PlanRecovery.Ready,
+                            recoveryScheduleId = null,
                         )
                     }
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Reloaded) }
                 }
                 ReloadOutcome.Missing -> {
-                    updatePlan(ordinal) { it.copy(recovery = PlanRecovery.Missing) }
+                    updatePlan(ordinal) { it.copy(recovery = PlanRecovery.Missing, recoveryScheduleId = null) }
                     _adjustment.update { it.copy(state = AdjustmentState.Idle) }
                 }
                 is ReloadOutcome.Failure -> _adjustment.update { it.copy(state = AdjustmentState.ReloadFailure(outcome.error)) }
@@ -303,7 +308,9 @@ class PlanFormViewModel(
                     val recovery = recoveryAfter(outcome.error, input)
                     if (recovery != PlanRecovery.Ready) {
                         pendingAdjustment = null
-                        updatePlan(ordinal) { it.copy(recovery = recovery) }
+                        // The failed session is kept with the gate so returning to this plan shows it again.
+                        val target = input.scheduleId.takeIf { recovery == PlanRecovery.ReloadRequired }
+                        updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = target) }
                     }
                     _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
                 }
