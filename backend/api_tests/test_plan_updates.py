@@ -13,7 +13,10 @@ from http.server import ThreadingHTTPServer
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
+from schedule_adjuster.agent import GeminiAdjustmentAgent
+from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
+from schedule_adjuster.settings import AGENT_MAX_STEPS
 from schedule_adjuster.tools import ScheduleAdjustmentTools
 from study_plan_store import StudyPlanStore
 
@@ -40,6 +43,32 @@ class ToolAgent:
         else:
             tools.call("remove_cancelled_external_schedule", {"schedule_id": target.schedule_id})
         return tools, "Test agent with real domain tools"
+
+
+def model_call(name, **args):
+    return {"candidates": [{"content": {"role": "model", "parts": [
+        {"functionCall": {"name": name, "args": args}}]}}]}
+
+
+def model_text(text):
+    return {"candidates": [{"content": {"role": "model", "parts": [{"text": text}]}}]}
+
+
+def scripted_agent(*replies):
+    """Run the production agent loop and tools; only provider replies are scripted."""
+    class ScriptedAgent(GeminiAdjustmentAgent):
+        script = list(replies)
+
+        def __init__(self):
+            super().__init__(api_key="dummy-key")
+
+        def _ask_model(self, contents):
+            self.api_request_count += 1
+            reply = ScriptedAgent.script.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+    return ScriptedAgent
 
 
 class PlanUpdateTests(unittest.TestCase):
@@ -297,6 +326,63 @@ class PlanUpdateTests(unittest.TestCase):
         with patch.object(ToolAgent, "adjust", deleted):
             self.assertEqual(self.call("/schedules/adjust", self.payload)[0], 404)
         self.assertFalse((self.root / self.filename).exists())
+
+    def test_agent_loop_study_move_persists_without_post_success_model_request(self):
+        other = self.store.create(self.original)
+        profile = self.root / "profile.json"
+        profile.write_text(json.dumps({"tuesday": [{"start": "09:00", "end": "11:00"}]}), encoding="utf-8")
+        profile_bytes = profile.read_bytes()
+        del self.payload["weekly_availability"]
+        agent = scripted_agent(model_call("inspect_schedule", schedule_id="study-1"),
+                               model_call("inspect_topic_schedule", topic="Functions"),
+                               model_call("reschedule_failed_study", schedule_id="study-1"),
+                               RuntimeError("provider failure after success"))
+        with patch.object(api_service, "GeminiAdjustmentAgent", agent), \
+                patch.object(api_service, "load_adjuster_availability",
+                             lambda: load_adjuster_availability(profile)):
+            status, result = self.call("/schedules/adjust", self.payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(len(agent.script), 1)
+        target = next(r for r in result["schedules"] if r["schedule_id"] == "study-1")
+        self.assertEqual(target["start_date"], "2026/10/20/09/00")
+        self.assertEqual(self.store.download(self.filename)[0], result["schedule_csv"])
+        self.assertEqual(self.call("/study-plans/" + self.filename), (200, result["schedule_csv"]))
+        self.assertEqual(self.store.download(other.rsplit("/", 1)[1])[0], self.original)
+        self.assertEqual(profile.read_bytes(), profile_bytes)
+
+    def test_agent_loop_cancelling_the_only_row_persists_a_header_only_plan(self):
+        rows = [copy.deepcopy(ROWS[1])]
+        identifier = self.store.create(render_schedule_csv(parse_schedule_rows(rows)))
+        agent = scripted_agent(model_call("inspect_schedule", schedule_id="external-2"),
+                               model_call("remove_cancelled_external_schedule", schedule_id="external-2"),
+                               RuntimeError("provider failure after success"))
+        payload = {**self.payload, "schedule_csv_file": identifier,
+                   "schedule_id": "external-2", "schedules": rows}
+        with patch.object(api_service, "GeminiAdjustmentAgent", agent):
+            status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(len(agent.script), 1)
+        self.assertEqual((result["action"], result["schedules"]), ("cancelled_external", []))
+        self.assertEqual(result["schedule_csv"].strip(), "schedule_id,start_date,end_date,topic")
+        self.assertEqual(self.store.download(identifier.rsplit("/", 1)[1])[0], result["schedule_csv"])
+        self.assertEqual(self.store.download(self.filename)[0], self.original)
+
+    def test_agent_loop_without_accepted_outcome_saves_nothing(self):
+        scripts = {
+            "text claim": (model_call("inspect_schedule", schedule_id="study-1"),
+                           model_text("study-1 was moved.")),
+            "failed mutation": (model_call("inspect_schedule", schedule_id="study-1"),
+                                model_call("reschedule_failed_study", schedule_id="study-1"),
+                                model_text("Done.")),
+            "inspection only": tuple(model_call("inspect_schedule", schedule_id="study-1")
+                                     for _ in range(AGENT_MAX_STEPS)),
+        }
+        for name, replies in scripts.items():
+            with self.subTest(name), patch.object(api_service, "GeminiAdjustmentAgent",
+                                                  scripted_agent(*replies)):
+                status, result = self.call("/schedules/adjust", self.payload)
+                self.assertEqual((status, result["error"]["code"]), (502, "UPSTREAM_ERROR"))
+                self.assertEqual(self.store.download(self.filename)[0], self.original)
 
 
 if __name__ == "__main__":

@@ -82,7 +82,29 @@ class GeminiAdjustmentAgent:
             responses = []
             for call in calls:
                 observation = tools.call(call["name"], call.get("args", {}))
+                if _is_accepted_adjustment(tools, call["name"], observation):
+                    # 검증된 변경 결과가 나오면 추가 모델 요청이나 남은 도구 호출 없이 종료합니다.
+                    return tools, tools.outcome.message
                 responses.append({"functionResponse": {"name": call["name"], "response": {"result": observation}}})
             contents.append({"role": "user", "parts": responses})
         raise RuntimeError(f"Agent exceeded max steps ({AGENT_MAX_STEPS}); calls: {tools.trace.calls}")
+
+
+# 변경 도구 이름과 성공 시 기록되는 작업 유형입니다.
+MUTATION_ACTIONS = {"reschedule_failed_study": "rescheduled_study",
+                    "remove_cancelled_external_schedule": "cancelled_external"}
+
+
+def _is_accepted_adjustment(tools: ScheduleAdjustmentTools, name: str, observation: object) -> bool:
+    """입력 값: 도구 상태, 방금 실행한 도구 이름과 응답
+    출력 값: 요청한 대상의 조정이 완료됐는지 여부
+    기능: 변경 도구가 성공해 요청 대상과 일정 종류에 맞는 결과를 기록했는지 확인합니다.
+    """
+    target = next((entry for entry in tools.original_schedule
+                   if entry.schedule_id == tools.request.schedule_id), None)
+    if name not in MUTATION_ACTIONS or not isinstance(observation, dict) or tools.outcome is None or target is None:
+        return False
+    target_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
+    return (tools.outcome.schedule_id == target.schedule_id
+            and tools.outcome.action == MUTATION_ACTIONS[name] == target_action)
 
