@@ -156,6 +156,39 @@ class PlanGenerationHttpTests(unittest.TestCase):
             status, body = self.post(request)
         self.assertEqual((status, body["error"]["code"]), (503, "UPSTREAM_ERROR"))
 
+    def test_varied_invalid_proposals_for_feasible_input_exhaust_as_upstream_failure(self):
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        profile, analysis = recorded["model_tool_calls"][:2]
+        topics = ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
+        proposals = [
+            [{"date": "2026/10/19", "topic": topics[0], "minutes": 60}],
+            [{"date": "2026/10/19", "topic": topic, "minutes": 30} for topic in (topics[0], "함수과 데이터 관리", topics[2])],
+            [{"date": "2026/10/20", "topic": topic, "minutes": 30} for topic in topics],
+            [{"date": "2026/10/19", "topic": topic, "minutes": 50} for topic in topics],
+        ]
+        sent_tools = []
+        self.replies = [model_reply(profile["name"], profile["args"]), model_reply(analysis["name"], analysis["args"]),
+                        *(model_reply("build_study_schedule", {"daily_topic_minutes": plan}) for plan in proposals)]
+
+        def recording_ask_model(agent, contents, tools):
+            sent_tools.append(tools)
+            return self.replies.pop(0)
+
+        with patch.object(GeminiToolAgent, "_ask_model", recording_ask_model):
+            status, body = self.post(recorded["request"])
+
+        self.assertEqual(status, 502, body)
+        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
+        self.assertNotIn("NOT_ENOUGH_TIME", body["error"]["message"])
+        self.assertFalse(SUCCESS_FIELDS & body.keys())
+        self.assertEqual(self.saved_files(), [])
+        self.assertEqual((len(sent_tools), self.replies), (6, []))
+        build = next(tool for tool in sent_tools[-1] if tool["name"] == "build_study_schedule")
+        item = build["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
+        self.assertCountEqual(item["topic"]["enum"], topics)
+        self.assertNotIn("2026/10/20", item["date"]["enum"])
+        self.assertIn("2026/10/19", item["date"]["enum"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,9 +7,8 @@ import urllib.request
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
-from .scheduler import usable_minutes_by_date
 from .settings import DATETIME_FORMAT, GEMINI_API_KEY
-from .tools import PlannerTools, check_initial_capacity, tool_schemas
+from .tools import PlannerTools, check_initial_capacity, tool_schemas, usable_date_minutes
 
 # Agent/API settings: move these values here when changing Gemini or its behavior.
 GEMINI_MODEL = "gemini-3.5-flash-lite"  # Gemini model ID used for tool selection.
@@ -129,15 +128,14 @@ class GeminiToolAgent:
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
                 "busy_schedules": busy_schedules,
                 "weekly_availability": availability}
-        if request.preparation_start and request.exam_date and request.weekly_availability:
-            # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
-            user["usable_minutes_by_date"] = {
-                day.strftime("%Y/%m/%d"): minutes
-                for day, minutes in usable_minutes_by_date(request).items() if minutes > 0}
+        date_minutes = usable_date_minutes(request)  # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
+        if date_minutes is not None:
+            user["usable_minutes_by_date"] = date_minutes
         failed_calls: set[tuple[str, str, str]] = set()  # 마지막 성공 이후 실패한 (도구, 인자, 오류)입니다.
         contents: list[dict] = [{"role": "user", "parts": [{"text": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]}]  # Gemini 대화 기록입니다.
         for _ in range(self.max_steps):
-            result = self._ask_model(contents, tool_schemas(request.certification_id))
+            schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()))
+            result = self._ask_model(contents, schemas)
             candidate = (result.get("candidates") or [{}])[0].get("content", {})
             contents.append(candidate)
             calls = [part["functionCall"] for part in candidate.get("parts", []) if "functionCall" in part]
@@ -160,7 +158,13 @@ class GeminiToolAgent:
                     failed_calls.add(failure)
                 else:
                     failed_calls.clear()
-                responses.append({"functionResponse": {"name": name, "response": {"result": outcome}}})
+                response = {"result": outcome}
+                if name == "analyze_exam_results" and isinstance(outcome, dict):
+                    # 다음 일정 제안이 분석된 필수 토픽과 날짜별 용량을 그대로 쓰도록 알려줍니다.
+                    response["build_requirements"] = {"required_topics": tools.build_topics()}
+                    if date_minutes is not None:
+                        response["build_requirements"]["usable_minutes_by_date"] = date_minutes
+                responses.append({"functionResponse": {"name": name, "response": response}})
             contents.append({"role": "user", "parts": responses})
         raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; tool trace: {tools.trace.calls}")
 

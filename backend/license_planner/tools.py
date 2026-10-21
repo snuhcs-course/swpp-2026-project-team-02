@@ -5,7 +5,7 @@ from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
-from .scheduler import available_minutes, generate_schedule, summarize_topic_results
+from .scheduler import available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date
 from .settings import DATETIME_FORMAT
 
 
@@ -27,6 +27,17 @@ def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool)
         f"{topics} 배정할 수 없습니다. "
         "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요."
     )
+
+
+def usable_date_minutes(request: PlanRequest) -> dict[str, int] | None:
+    """입력 값: 일정 요청
+    출력 값: YYYY/MM/DD 날짜별 양수 가용 시간(분), 날짜별 용량을 알 수 없으면 None
+    기능: 모델에 알려 줄 공부 가능 날짜와 날짜별 용량을 계산합니다.
+    """
+    if not (request.preparation_start and request.exam_date and request.weekly_availability):
+        return None
+    return {day.strftime("%Y/%m/%d"): minutes
+            for day, minutes in usable_minutes_by_date(request).items() if minutes > 0}
 
 
 def check_initial_capacity(request: PlanRequest) -> None:
@@ -160,8 +171,7 @@ class PlannerTools:
                     raise ValueError("daily_topic_minutes date must use YYYY/MM/DD format")
                 normalized_plan.append({"date": plan_date, "topic": topic, "minutes": minutes})
                 minutes_by_topic[topic] = minutes_by_topic.get(topic, 0) + minutes
-            topics = ({item.topic for item in self.topic_statistics}
-                      if self.topic_statistics else set(cert.topics))
+            topics = set(self.build_topics())
             if set(minutes_by_topic) != topics:
                 missing, extra = sorted(topics - set(minutes_by_topic)), sorted(set(minutes_by_topic) - topics)
                 raise ValueError(f"daily_topic_minutes must cover assessed topics; missing={missing}, extra={extra}")
@@ -179,14 +189,25 @@ class PlannerTools:
                      "end_date": b.end_datetime.strftime(DATETIME_FORMAT)}
                     for b in self.schedule]}
 
+    def build_topics(self) -> list[str]:
+        """입력 값: 없음 (요청과 분석 상태를 사용)
+        출력 값: 일정 생성에 쓸 수 있는 토픽 이름 목록
+        기능: 분석 후에는 분석된 필수 토픽을, 분석 전에는 요청이 허용하는 토픽을 그대로 반환합니다.
+        """
+        if self.results_analyzed:
+            if self.topic_statistics:
+                return [item.topic for item in self.topic_statistics]
+        elif self.request.problem_results and not self.request.assessment_items:
+            # 내부 호환 결과는 카탈로그 밖 토픽도 입력 이름 그대로 사용합니다.
+            return list(dict.fromkeys(item.topic for item in self.request.problem_results))
+        return list(get_certification(self.request.certification_id).topics)
+
     def _check_required_capacity(self) -> None:
         """입력 값: 없음 (분석된 토픽 통계를 사용)
         출력 값: 없음
         기능: 분석으로 확정된 필수 토픽 수보다 가용 시간이 적으면 재시도 없이 중단합니다.
         """
-        topic_count = (len(self.topic_statistics) if self.topic_statistics
-                       else len(get_certification(self.request.certification_id).topics))
-        check_topic_capacity(self.request, topic_count, exact=True)
+        check_topic_capacity(self.request, len(self.build_topics()), exact=True)
 
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         """입력 값: 도구 이름과 JSON 인자
@@ -210,21 +231,25 @@ class PlannerTools:
         return result
 
 
-def tool_schemas(certification_id: str | None = None) -> list[dict[str, Any]]:
-    """입력 값: 없음
+def tool_schemas(certification_id: str | None = None, build_topics: list[str] | None = None,
+                 build_dates: list[str] | None = None) -> list[dict[str, Any]]:
+    """입력 값: 선택적 자격증 ID, 일정 생성에 허용할 토픽 목록과 날짜 목록
     출력 값: 모델 함수 호출 형식의 도구 스키마 목록
-    기능: 선택 가능한 인자와 허용된 자격증 ID를 모델에 공개합니다.
+    기능: 선택 가능한 인자와 허용된 자격증 ID·토픽·날짜를 모델에 공개합니다.
     """
     selected = CERTIFICATIONS.get(certification_id) if certification_id else None
     known_topics = (list(selected.topics) if selected else
                     sorted({topic for certification in CERTIFICATIONS.values()
                             for topic in certification.topics}))
+    # 모델 안내용 제한이며 실제 제안은 build_study_schedule이 다시 검증합니다.
+    build_date = {"type": "string", **({"enum": list(build_dates)} if build_dates else {})}
+    build_topic = {"type": "string", **({"enum": list(build_topics)} if build_topics else {})}
     return [
         {"name": "get_certification_profile", "description": "Look up the official local plan template for one supported certification.",
          "parameters": {"type": "object", "properties": {"certification_id": {"type": "string", "enum": sorted(CERTIFICATIONS)}}, "required": ["certification_id"]}},
         {"name": "analyze_exam_results", "description": "For assessment_results, examine each question, correct answer, user answer, and locally calculated correctness. Map every question to one or more of this certification's fixed topics and assign contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Do not infer an answer or correctness. For legacy rows, omit problem_topics. Then aggregate weighted earned/possible points per topic.",
          "parameters": {"type": "object", "properties": {"problem_topics": {"type": "array", "items": {"type": "object", "properties": {"problem_id": {"type": "integer"}, "topics": {"type": "array", "items": {"type": "object", "properties": {"topic": {"type": "string", "enum": known_topics}, "weight": {"type": "number"}}, "required": ["topic", "weight"]}}}, "required": ["problem_id", "topics"]}}}, "required": []}},
-        {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
-         "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": {"type": "string"}, "topic": {"type": "string"}, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},
+        {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
+         "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": build_date, "topic": build_topic, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},
     ]
 

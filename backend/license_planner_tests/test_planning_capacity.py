@@ -1,3 +1,4 @@
+import copy
 import json
 import unittest
 from datetime import date, datetime, timedelta
@@ -354,6 +355,169 @@ class RepeatedFailureTests(unittest.TestCase):
 
         self.assertEqual(ask_model.call_count, 6)
         self.assertEqual(len(tools.schedule), 1)
+
+
+def run_recording_agent(request, replies, max_steps=6):
+    """Run the agent and keep a copy of the contents and schemas sent with each model request."""
+    sent = []
+
+    def ask_model(contents, tools):
+        sent.append(copy.deepcopy({"contents": contents, "tools": tools}))
+        return replies[len(sent) - 1]
+
+    with patch.object(GeminiToolAgent, "_ask_model", side_effect=ask_model):
+        agent = GeminiToolAgent(api_key="test-key", max_steps=max_steps)
+        try:
+            return agent.run(request), sent
+        except Exception as error:
+            error.sent = sent
+            raise
+
+
+def build_item_schema(sent_request):
+    build, = [tool for tool in sent_request["tools"] if tool["name"] == "build_study_schedule"]
+    return build["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
+
+
+def function_responses(sent_request):
+    return {part["functionResponse"]["name"]: part["functionResponse"]["response"]
+            for part in sent_request["contents"][-1]["parts"] if "functionResponse" in part}
+
+
+class ProposalGuidanceTests(unittest.TestCase):
+    MONDAY_WEDNESDAY = {"monday": [{"start": "18:00", "end": "20:00"}],
+                        "wednesday": [{"start": "18:00", "end": "19:00"}]}
+    USABLE = {"2026/10/19": 120, "2026/10/21": 60}
+
+    def request(self, **kwargs):
+        return make_request(start=at(MONDAY, 18), exam=at(date(2026, 10, 22), 18),
+                            windows=self.MONDAY_WEDNESDAY, **kwargs)
+
+    def test_analyzed_subset_and_usable_dates_guide_the_next_build(self):
+        mapped = [{"problem_id": 1, "topics": [{"topic": CHARTS, "weight": 1}]},
+                  {"problem_id": 2, "topics": [{"topic": BASICS, "weight": 1}]},
+                  {"problem_id": 3, "topics": [{"topic": CHARTS, "weight": 0.5}, {"topic": BASICS, "weight": 0.5}]}]
+        replies = [model_reply(("analyze_exam_results", {"problem_topics": mapped})),
+                   model_reply(("build_study_schedule", {"daily_topic_minutes": minutes(
+                       ("2026/10/19", CHARTS, 60), ("2026/10/21", BASICS, 30))}))]
+
+        (tools, _), sent = run_recording_agent(self.request(questions=3), replies)
+
+        before, after = build_item_schema(sent[0]), build_item_schema(sent[1])
+        self.assertEqual(before["topic"]["enum"], list(CERT.topics))
+        self.assertEqual(before["date"]["enum"], list(self.USABLE))
+        self.assertCountEqual(after["topic"]["enum"], [CHARTS, BASICS])
+        self.assertEqual(after["date"]["enum"], list(self.USABLE))
+        guidance = function_responses(sent[1])["analyze_exam_results"]["build_requirements"]
+        self.assertCountEqual(guidance["required_topics"], [CHARTS, BASICS])
+        self.assertEqual(guidance["usable_minutes_by_date"], self.USABLE)
+        self.assertEqual({block.topic for block in tools.schedule}, {CHARTS, BASICS})
+        self.assertEqual([call["tool"] for call in tools.trace.calls],
+                         ["analyze_exam_results", "build_study_schedule"])
+
+    def test_legacy_topic_outside_the_catalog_stays_permitted_and_required(self):
+        legacy = "엑셀 매크로"
+        results = (ProblemResult(1, legacy, 1, 0), ProblemResult(2, CHARTS, 1, 1))
+        rejected = ("build_study_schedule", {"daily_topic_minutes": minutes(("2026/10/19", CHARTS, 30))})
+        valid = ("build_study_schedule", {"daily_topic_minutes": minutes(
+            ("2026/10/19", legacy, 60), ("2026/10/21", CHARTS, 30))})
+        replies = [model_reply(("analyze_exam_results", {})), model_reply(rejected), model_reply(valid)]
+
+        (tools, _), sent = run_recording_agent(self.request(questions=0, problem_results=results), replies)
+
+        self.assertEqual(build_item_schema(sent[0])["topic"]["enum"], [legacy, CHARTS])
+        self.assertCountEqual(build_item_schema(sent[1])["topic"]["enum"], [legacy, CHARTS])
+        self.assertCountEqual(function_responses(sent[1])["analyze_exam_results"]
+                              ["build_requirements"]["required_topics"], [legacy, CHARTS])
+        self.assertIn(f"missing=['{legacy}']", function_responses(sent[2])["build_study_schedule"]["result"])
+        self.assertEqual({block.topic for block in tools.schedule}, {legacy, CHARTS})
+
+    def test_bundled_build_runs_against_validation_and_the_next_request_is_guided(self):
+        bundled = model_reply(("analyze_exam_results", {"problem_topics": mapping(CHARTS, BASICS, questions=2)}),
+                              ("build_study_schedule", {"daily_topic_minutes": minutes(
+                                  ("2026/10/19", CHARTS, 30), ("2026/10/19", "스프레드시트 기초", 30))}))
+        corrected = model_reply(("build_study_schedule", {"daily_topic_minutes": minutes(
+            ("2026/10/19", CHARTS, 30), ("2026/10/19", BASICS, 30))}))
+
+        (tools, _), sent = run_recording_agent(self.request(questions=2), [bundled, corrected])
+
+        responses = function_responses(sent[1])
+        self.assertRegex(responses["build_study_schedule"]["result"], "^SCHEDULE_ERROR: .*extra=\\['스프레드시트 기초'\\]")
+        self.assertCountEqual(responses["analyze_exam_results"]["build_requirements"]["required_topics"],
+                              [CHARTS, BASICS])
+        self.assertCountEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS, BASICS])
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(len(tools.schedule), 2)
+
+    def test_varied_invalid_proposals_can_be_corrected_on_the_last_request(self):
+        all_topics = mapping(BASICS, FUNCTIONS, CHARTS, questions=3)
+        proposals = [
+            minutes(("2026/10/19", BASICS, 40), ("2026/10/19", CHARTS, 40)),
+            minutes(("2026/10/19", BASICS, 40), ("2026/10/19", "함수과 데이터 관리", 40), ("2026/10/19", CHARTS, 40)),
+            minutes(("2026/10/19", BASICS, 40), ("2026/10/20", FUNCTIONS, 40), ("2026/10/19", CHARTS, 40)),
+            minutes(("2026/10/19", BASICS, 60), ("2026/10/19", FUNCTIONS, 60), ("2026/10/19", CHARTS, 60)),
+            minutes(("2026/10/19", BASICS, 60), ("2026/10/19", FUNCTIONS, 60), ("2026/10/21", CHARTS, 60)),
+        ]
+        replies = [model_reply(("analyze_exam_results", {"problem_topics": all_topics})),
+                   *(model_reply(("build_study_schedule", {"daily_topic_minutes": plan})) for plan in proposals)]
+
+        (tools, summary), sent = run_recording_agent(self.request(questions=3), replies)
+
+        self.assertEqual(len(sent), 6)
+        errors = [function_responses(request)["build_study_schedule"]["result"] for request in sent[2:]]
+        self.assertRegex(errors[0], r"missing=\['함수와 데이터 관리'\], extra=\[\]")
+        self.assertRegex(errors[1], r"missing=\['함수와 데이터 관리'\], extra=\['함수과 데이터 관리'\]")
+        self.assertRegex(errors[2], "exceed 0 available minutes on 2026-10-20")
+        self.assertRegex(errors[3], "exceed 120 available minutes on 2026-10-19")
+        for request in sent[1:]:
+            self.assertCountEqual(build_item_schema(request)["topic"]["enum"], CERT.topics)
+            self.assertEqual(build_item_schema(request)["date"]["enum"], list(self.USABLE))
+        self.assertEqual(sum((b.end_datetime - b.start_datetime for b in tools.schedule), timedelta()),
+                         timedelta(minutes=180))
+        self.assertEqual(summary, "3개 과목에 총 180분을 학습 일정 3개로 배치했습니다.")
+
+    def test_uncorrected_feasible_proposals_end_as_upstream_failures(self):
+        varied = [minutes(("2026/10/19", CHARTS, 121 + extra)) for extra in range(5)]
+        repeated = minutes(("2026/10/19", "차트 분석", 30))
+        cases = {
+            "varied": ([*varied], "exceeded max_steps=6", 6),
+            "unchanged": ([repeated, repeated, varied[0]], "unchanged failing build_study_schedule call", 3),
+        }
+        for label, (plans, message, request_count) in cases.items():
+            replies = [model_reply(("analyze_exam_results", {"problem_topics": mapping(CHARTS)})),
+                       *(model_reply(("build_study_schedule", {"daily_topic_minutes": plan})) for plan in plans)]
+            with self.subTest(label), self.assertRaisesRegex(RuntimeError, message) as raised:
+                run_recording_agent(self.request(), replies)
+            self.assertNotIsInstance(raised.exception, InsufficientCapacityError)
+            self.assertEqual(len(raised.exception.sent), request_count)
+
+    def test_independent_insufficiency_still_stops_after_guided_analysis(self):
+        request = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), questions=3,
+                               windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        replies = [model_reply(("analyze_exam_results", {"problem_topics": mapping(BASICS, FUNCTIONS, CHARTS, questions=3)}))]
+
+        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 2분이라 .*학습 주제 3개에") as raised:
+            run_recording_agent(request, replies)
+        self.assertEqual(len(raised.exception.sent), 1)
+        self.assertEqual(build_item_schema(raised.exception.sent[0])["date"]["enum"], ["2026/10/19"])
+
+    def test_requests_without_dated_capacity_leave_dates_to_runtime_validation(self):
+        item = AssessmentItem(1, "문항 1", {"A": "가", "B": "나"}, "A", "B", False)
+        request = PlanRequest(self_assessment="처음 공부합니다.", problem_results=(),
+                              preparation_start=at(MONDAY, 18), exam_date=at(date(2026, 10, 22), 18),
+                              assessment_items=(item,))
+        replies = [model_reply(("analyze_exam_results", {"problem_topics": mapping(CHARTS)})),
+                   model_reply(("build_study_schedule", {"daily_topic_minutes": minutes(("2026/10/19", CHARTS, 30))})),
+                   model_reply(text="가능 시간을 입력해야 합니다.")]
+
+        with self.assertRaisesRegex(RuntimeError, "weekly_availability is required") as raised:
+            run_recording_agent(request, replies)
+        sent = raised.exception.sent
+        self.assertNotIn("enum", build_item_schema(sent[1])["date"])
+        self.assertEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS])
+        self.assertEqual(function_responses(sent[1])["analyze_exam_results"]["build_requirements"],
+                         {"required_topics": [CHARTS]})
+        self.assertNotIn("usable_minutes_by_date", sent[0]["contents"][0]["parts"][0]["text"])
 
 
 if __name__ == "__main__":
