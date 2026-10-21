@@ -149,7 +149,9 @@ messages claims that an unchanged retry fixes the input.
 ## Plan adjustment
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
-and 계획 조정 (a list of the plans generated in this app process). Each
+and 계획 조정 (a list of the plans generated in this app process). The first
+creation step (자격증) has a top-bar back arrow that, like system back, returns
+home without sending a request or clearing the inputs. Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
 match. Editing the form or a failed generation never removes an entry. The
 list is held in memory only: it survives rotation and navigation but is lost

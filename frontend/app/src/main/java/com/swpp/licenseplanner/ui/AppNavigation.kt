@@ -94,9 +94,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 )
             }
         }
-        // System back from the first input step returns home.
+        // The top-bar back, like system back, returns home from the first input step.
         composable(Routes.CERTIFICATION) {
-            CertificationScreen(form, viewModel::selectCertification) { nav.go(Routes.DATES) }
+            CertificationScreen(form, viewModel::selectCertification, onBack = { nav.popBackStack() }) { nav.go(Routes.DATES) }
         }
         composable(Routes.DATES) {
             DatesScreen(

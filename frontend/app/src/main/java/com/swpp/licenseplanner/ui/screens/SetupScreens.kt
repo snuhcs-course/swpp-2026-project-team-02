@@ -38,11 +38,11 @@ import java.time.ZoneOffset
 
 /** The only supported certification; continue stays disabled until it is selected. */
 @Composable
-fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onContinue: () -> Unit) {
+fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onBack: () -> Unit, onContinue: () -> Unit) {
     val selected = form.certificationId == CERTIFICATION_ID
     AppScreen(
         title = "자격증",
-        navIcon = null,
+        onNav = onBack,
         footer = { PrimaryButton("다음", onContinue, enabled = selected) },
     ) {
         Heading("어떤 시험을 준비하나요?", "지금은 컴퓨터활용능력 2급만 지원해요.")
