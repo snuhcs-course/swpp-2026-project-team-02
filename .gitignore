@@ -9,3 +9,4 @@ backend/license_planner/output/
 # Test runner outputs are regenerated on every run; keep only each folder's README.
 /backend/*_test_results/*
 !/backend/*_test_results/README.md
+backend/assessment_questionnaire/output/
