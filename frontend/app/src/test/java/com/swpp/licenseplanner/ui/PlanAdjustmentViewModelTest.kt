@@ -22,6 +22,7 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.Weekday
+import com.swpp.licenseplanner.ui.screens.movedScheduleId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -463,6 +464,37 @@ class PlanAdjustmentViewModelTest {
         advanceUntilIdle()
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.DemoNoSlot), vm.adjustment.value)
         assertEquals(before, vm.plans.value)
+    }
+
+    @Test fun movedMarkerFollowsOnlyTheCurrentSuccessOfItsPlan() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val success = vm.adjustment.value
+        assertNull(success.failedScheduleId)
+        assertEquals("study-1", movedScheduleId(vm.plan(1), success.state))
+
+        // B shares the row ID but never shows A's marker; returning to A starts without it.
+        assertTrue(vm.selectPlan(2))
+        assertNull(movedScheduleId(vm.plan(2), vm.adjustment.value.state))
+        assertTrue(vm.selectPlan(1))
+        assertNull(movedScheduleId(vm.plan(1), vm.adjustment.value.state))
+
+        // A new selection after a success clears the marker without sending anything.
+        val again = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val vm2 = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), again)
+        vm2.generate()
+        advanceUntilIdle()
+        vm2.select(1, "study-1")
+        vm2.submitAdjustment()
+        advanceUntilIdle()
+        vm2.selectFailedSession("study-2")
+        assertNull(movedScheduleId(vm2.plan(1), vm2.adjustment.value.state))
+        assertEquals(1, again.inputs.size)
+        assertEquals(movedA, vm2.plan(1).current.schedules)
     }
 
     // --- Recovery after an uncertain, conflicting or missing-plan failure ---

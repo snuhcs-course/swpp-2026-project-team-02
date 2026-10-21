@@ -153,7 +153,8 @@ private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.
 
 /**
  * One day of the plan. With [onSelect], study sessions become single-choice options with
- * [selectedId] marked; existing schedules stay plain rows.
+ * [selectedId] marked; existing schedules stay plain rows. The study session [movedId] gets a
+ * “옮긴 일정” tag.
  */
 @Composable
 internal fun DaySection(
@@ -161,6 +162,7 @@ internal fun DaySection(
     selectedId: String? = null,
     onSelect: ((String) -> Unit)? = null,
     selectionEnabled: Boolean = true,
+    movedId: String? = null,
 ) {
     if (day.sessions.isEmpty()) {
         MutedBox {
@@ -176,8 +178,9 @@ internal fun DaySection(
             DayStamp(day.date)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (session in day.sessions) {
-                    if (onSelect == null || session.isExternal) SessionRow(session)
-                    else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled) { onSelect(session.scheduleId) }
+                    val moved = !session.isExternal && session.scheduleId == movedId
+                    if (onSelect == null || session.isExternal) SessionRow(session, moved)
+                    else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved) { onSelect(session.scheduleId) }
                 }
             }
         }
@@ -193,10 +196,17 @@ private fun DayStamp(date: LocalDate) {
 }
 
 @Composable
-private fun SelectableSession(session: PlanSession, date: LocalDate, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}"
+private fun SelectableSession(
+    session: PlanSession,
+    date: LocalDate,
+    selected: Boolean,
+    enabled: Boolean,
+    moved: Boolean,
+    onClick: () -> Unit,
+) {
+    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}" + if (moved) " $MOVED_TAG" else ""
     ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
-        Box(Modifier.weight(1f)) { SessionRow(session) }
+        Box(Modifier.weight(1f)) { SessionRow(session, moved) }
     }
 }
 
@@ -204,7 +214,7 @@ private fun sessionTime(session: PlanSession) =
     "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"
 
 @Composable
-private fun SessionRow(session: PlanSession) {
+private fun SessionRow(session: PlanSession, moved: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Topic exactly as returned; long topics wrap.
@@ -218,6 +228,9 @@ private fun SessionRow(session: PlanSession) {
                 color = InkBody,
             )
             if (session.isExternal) Tag("기존 일정")
+            if (moved) Tag(MOVED_TAG)
         }
     }
 }
+
+private const val MOVED_TAG = "옮긴 일정"

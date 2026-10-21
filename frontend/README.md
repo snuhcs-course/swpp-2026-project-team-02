@@ -164,6 +164,9 @@ generation response had no `schedule_csv_file` can be viewed but not adjusted.
 A plan with no study sessions explains that and offers a way back. After a
 successful adjustment the same entry is updated in place, the view jumps to the
 moved session's week, and another session can be adjusted from the new rows.
+The moved session carries a “옮긴 일정” tag on this screen only. The tag stays
+through rotation and clears when another session is chosen or another plan is
+opened. Nothing about it is stored, and the generated-plan screen never shows it.
 Other plans never change, even when they share schedule IDs.
 
 While an adjustment request runs, the screen shows progress; system back,

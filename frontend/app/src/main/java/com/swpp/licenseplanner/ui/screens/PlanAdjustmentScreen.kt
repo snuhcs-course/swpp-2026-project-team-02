@@ -15,6 +15,7 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
 import com.swpp.licenseplanner.ui.adjustmentMessage
@@ -50,6 +51,17 @@ internal fun adjustmentMode(plan: SessionPlan, state: AdjustmentState): Adjustme
 }
 
 /**
+ * The study row moved by the current successful adjustment, or null. Derived from the transient
+ * outcome only, so a new selection, reload or plan switch clears it.
+ */
+internal fun movedScheduleId(plan: SessionPlan, state: AdjustmentState): String? =
+    (state as? AdjustmentState.Success)?.targetScheduleId?.takeIf { plan.isStudy(it) }
+
+/** Index of the week holding [scheduleId], or -1. */
+private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
+    weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == scheduleId } } }
+
+/**
  * The selected plan's schedules by week with one selectable failed study
  * session, then progress, error with retry, or the updated rows. After an uncertain result the
  * shown rows stay as an unconfirmed copy and only reading the latest saved plan is offered.
@@ -79,8 +91,7 @@ fun PlanAdjustmentScreen(
     LaunchedEffect(state, weeks) {
         when (state) {
             is AdjustmentState.Success -> {
-                val target = state.targetScheduleId
-                val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == target } } }
+                val index = weekIndexOf(weeks, state.targetScheduleId)
                 if (index >= 0) weekIndex = index
             }
             AdjustmentState.Reloaded -> weekIndex = 0
@@ -203,8 +214,9 @@ fun PlanAdjustmentScreen(
             // Selection stays visible but disabled while loading or awaiting a reload; the ViewModel ignores changes then.
             val selectable = mode == AdjustmentMode.Adjustable && !loading
             val showChoices = selectable || selection.failedScheduleId != null
+            val movedId = movedScheduleId(plan, state)
             for (day in week.days) {
-                DaySection(day, selection.failedScheduleId, if (showChoices) onSelect else null, selectionEnabled = selectable)
+                DaySection(day, selection.failedScheduleId, if (showChoices) onSelect else null, selectionEnabled = selectable, movedId = movedId)
             }
         }
     }
