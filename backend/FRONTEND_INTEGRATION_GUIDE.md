@@ -107,6 +107,15 @@ invalid input, `502` for upstream planning errors, `503` for missing server
 configuration, and `500` for unexpected server errors. Error bodies use
 `{"error":{"code":"...","message":"..."}}`.
 
+`502`/`503` `UPSTREAM_ERROR` messages are fixed public sentences, not the
+server's exception text: `Study plan generation failed. Try again later.` for
+generation, `Schedule adjustment failed. Try again later.` for adjustment, and
+`The planning service is not configured on the server.` when the Gemini key is
+missing. They never include provider responses, tool names or arguments, agent
+traces, or server paths, so clients must not parse them for a cause. `422`
+`INVALID_INPUT` messages, including `NOT_ENOUGH_TIME`, and the `404`/`409`/`500`
+plan-storage messages keep their specific text.
+
 When the available time provably cannot give every required topic at least one
 minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
 that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the

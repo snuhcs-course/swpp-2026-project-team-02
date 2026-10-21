@@ -23,6 +23,22 @@ DEFAULT_API_CONFIG = {
 }
 API_PREFIX = "/api/v1"
 
+# 상위 서비스 오류는 내부 도구 인자·trace·경로가 노출되지 않도록 고정 문구로만 응답합니다.
+UPSTREAM_MESSAGES = {
+    f"{API_PREFIX}/study-plans": "Study plan generation failed. Try again later.",
+    f"{API_PREFIX}/schedules/adjust": "Schedule adjustment failed. Try again later.",
+}
+DEFAULT_UPSTREAM_MESSAGE = "The upstream service failed. Try again later."
+CONFIGURATION_MESSAGE = "The planning service is not configured on the server."
+
+
+def _is_missing_configuration(message: str) -> bool:
+    """입력 값: 예외 메시지
+    출력 값: API 키 설정 누락 오류 여부
+    기능: 기존 문자열 기준으로 서버 설정 누락을 판별합니다.
+    """
+    return "GEMINI_API_KEY" in message or "API key" in message
+
 
 def load_api_config() -> dict[str, Any]:
     """입력 값: 없음
@@ -206,14 +222,16 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
                 message = str(error)
-                if "GEMINI_API_KEY" in message or "API key" in message:
-                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
+                if _is_missing_configuration(message):
+                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
                 else:
                     self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
             except RuntimeError as error:
-                message = str(error)
-                code = 503 if "GEMINI_API_KEY" in message or "API key" in message else 502
-                self._send_json(code, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
+                if _is_missing_configuration(str(error)):
+                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
+                else:
+                    message = UPSTREAM_MESSAGES.get(path, DEFAULT_UPSTREAM_MESSAGE)
+                    self._send_json(502, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
             except Exception:
                 self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}})
 
