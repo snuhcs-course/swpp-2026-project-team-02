@@ -226,7 +226,12 @@ action are held, a second tap does nothing, and rotation keeps the same request.
 output. The session moves to the first free interval inside the plan's
 original weekday windows that starts after both its own end and the latest
 other session with the same topic, and ends before the original exam date. If
-nothing fits, the app reports it and keeps the plan. Nothing is saved.
+nothing fits, the app reports it and keeps the plan and the selected session.
+Submitting the same session again is disabled (다른 일정을 선택해 주세요),
+because it would give the same result. Choosing a different study session
+allows a new attempt, and 목록으로 and 새 계획 만들기 are offered. The plan's
+own windows never change; a new plan can use different study times. Nothing is
+saved.
 
 **Live contract.** The app always sends four fields to
 `POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from

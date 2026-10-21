@@ -498,6 +498,41 @@ class PlanAdjustmentViewModelTest {
         assertEquals(before, vm.plans.value)
     }
 
+    @Test fun demoNoSlotIsNotRecalculatedUntilAnotherSessionIsChosen() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.DemoNoSlot, AdjustmentOutcome.DemoNoSlot)
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true)), adjustment)
+        vm.generate()
+        advanceUntilIdle()
+        val before = vm.plans.value
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val noSlot = AdjustmentSelection(1, "study-1", AdjustmentState.DemoNoSlot)
+
+        // Repeated taps, retry, and reselecting the same row send nothing.
+        assertFalse(vm.submitAdjustment())
+        vm.retryAdjustment()
+        vm.selectFailedSession("study-1")
+        assertFalse(vm.submitAdjustment())
+        vm.selectFailedSession("external-1")
+        assertFalse(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(noSlot, vm.adjustment.value)
+        assertEquals(before, vm.plans.value)
+
+        // A different study row is a new explicit attempt with the plan's original windows.
+        vm.selectFailedSession("study-2")
+        assertEquals(AdjustmentSelection(1, "study-2", AdjustmentState.Idle), vm.adjustment.value)
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(listOf("study-1", "study-2"), adjustment.inputs.map { it.scheduleId })
+        assertEquals(mondayWindows, adjustment.inputs[1].original.weeklyAvailability)
+        assertEquals(AdjustmentSelection(1, "study-2", AdjustmentState.DemoNoSlot), vm.adjustment.value)
+        assertFalse(vm.submitAdjustment())
+        assertEquals(2, adjustment.inputs.size)
+    }
+
     @Test fun movedMarkerFollowsOnlyTheCurrentSuccessOfItsPlan() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)

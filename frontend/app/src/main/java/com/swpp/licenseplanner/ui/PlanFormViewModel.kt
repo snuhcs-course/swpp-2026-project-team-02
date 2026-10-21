@@ -230,10 +230,11 @@ class PlanFormViewModel(
 
     /**
      * Sends the selected plan's identity, failed row, current rows and original windows; a second
-     * call while loading does nothing. Returns whether a request was sent.
+     * call while loading does nothing. After a demo no-slot result the same selection would give the
+     * same result, so nothing is sent until another session is chosen. Returns whether a request was sent.
      */
     fun submitAdjustment(): Boolean {
-        if (generating || busy) return false
+        if (generating || busy || _adjustment.value.state == AdjustmentState.DemoNoSlot) return false
         val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
         val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
         sendAdjustment(plan.ordinal, AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target))

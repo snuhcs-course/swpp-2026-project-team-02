@@ -133,6 +133,11 @@ fun PlanAdjustmentScreen(
                 AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure) {
                     PrimaryButton("다시 시도", onRetry)
                     SecondaryButton("목록으로", onBack)
+                } else if (state == AdjustmentState.DemoNoSlot) {
+                    // The same selection would give the same result; another session or a new plan can.
+                    PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
+                    SecondaryButton("목록으로", onBack)
+                    SecondaryButton("새 계획 만들기", onCreate)
                 } else {
                     PrimaryButton(
                         if (loading) "조정하는 중…" else "선택한 일정 조정하기",
@@ -201,7 +206,8 @@ fun PlanAdjustmentScreen(
                 }
                 state == AdjustmentState.DemoNoSlot -> AlertCard(
                     "옮길 수 있는 시간이 없어요",
-                    "시험일 전까지 이 계획의 공부 시간 중 비어 있는 곳이 없어요. 기존 계획은 그대로예요.",
+                    "시험일 전까지 이 계획의 공부 시간 중 비어 있는 곳이 없어요. 기존 계획은 그대로예요. " +
+                        "다른 일정을 고르거나, 공부 시간을 넉넉히 넣어 새 계획을 만들어 주세요. 이 계획의 공부 시간은 바뀌지 않아요.",
                 )
                 state == AdjustmentState.Reloaded -> Unit
                 else -> Note("놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요.")
