@@ -54,6 +54,10 @@ backend, or emulator, so it does not verify live Gemini planning or the Android 
   plans for the written exam only.
 - **Question bank:** replace the example questions with the team's agreed bank
   (for example, the eight questions on branch `assessment`).
-- **Not enough study time:** the API has no structured response for this, so the
-  live app shows it as a generic error.
+- **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
+  topic basis and recovery advice in `error.message`; the live app presents it in
+  Korean. A richer structured shortfall schema remains an open decision.
+- **Summary labeling:** generation summaries are composed by server code from
+  accepted schedule counts. The app still labels them “AI가 작성한 설명”; aligning
+  that label with the summary source remains a copy decision.
 - **Deployment:** server address, authentication, and per-user storage.

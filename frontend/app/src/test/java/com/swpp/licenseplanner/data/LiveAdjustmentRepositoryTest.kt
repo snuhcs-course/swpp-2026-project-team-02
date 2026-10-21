@@ -6,6 +6,8 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.defaultAvailability
+import com.swpp.licenseplanner.ui.adjustmentMessage
+import com.swpp.licenseplanner.ui.requiresReload
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
@@ -14,6 +16,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -151,6 +154,20 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(503).setBody("not json"))
         assertEquals(AdjustmentOutcome.Failure(ApiError.ServerUnavailable(null)), adjust())
         assertEquals(5, server.requestCount)
+    }
+
+    @Test
+    fun status422WindowDetailIsShownInKoreanWithNewPlanAdvice() {
+        server.enqueue(MockResponse().setResponseCode(422)
+            .setBody("""{"error":{"code":"INVALID_INPUT","message":"monday availability windows cannot overlap"}}"""))
+        val error = (adjust() as AdjustmentOutcome.Failure).error
+        assertEquals(ApiError.InvalidInput("monday availability windows cannot overlap"), error)
+        assertFalse(error.requiresReload())
+        assertEquals(
+            "월요일 공부 시간이 서로 겹쳐요.\n이 계획에 저장된 입력은 바꿀 수 없어요. 목록으로 돌아가 월요일 시간을 올바르게 넣어 새 계획을 만들어 주세요.",
+            error.adjustmentMessage(),
+        )
+        assertEquals(1, server.requestCount)
     }
 
     /**

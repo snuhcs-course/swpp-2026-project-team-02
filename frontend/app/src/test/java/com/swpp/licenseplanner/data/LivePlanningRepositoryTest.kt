@@ -2,6 +2,7 @@ package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
+import com.swpp.licenseplanner.ui.userMessage
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonObject
 import okhttp3.OkHttpClient
@@ -81,11 +82,29 @@ class LivePlanningRepositoryTest {
     }
 
     @Test
-    fun status422ShowsServerMessage() {
+    fun status422KeepsServerDetailAndShowsKoreanExplanation() {
         server.enqueue(MockResponse().setResponseCode(422)
             .setBody("""{"error":{"code":"INVALID_INPUT","message":"exam_date is invalid"}}"""))
-        assertEquals(PlanOutcome.Failure(ApiError.InvalidInput("exam_date is invalid")), generate())
+        val outcome = generate()
+        assertEquals(PlanOutcome.Failure(ApiError.InvalidInput("exam_date is invalid")), outcome)
         assertEquals(1, server.requestCount) // no legacy-payload retry
+        val shown = (outcome as PlanOutcome.Failure).error.userMessage()
+        assertEquals("시험일을 확인할 수 없어요.\n'입력 수정하기'에서 입력한 시험일을 확인해 주세요.", shown)
+        assertFalse(shown.contains("exam_date"))
+    }
+
+    @Test
+    fun status422CapacityDetailReachesThePresentationWithoutTheMarker() {
+        val detail = "준비 시작부터 시험일까지 공부할 수 있는 시간이 1분이라 진단된 학습 주제 3개에 주제마다 최소 1분씩 배정할 수 없습니다. " +
+            "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요."
+        server.enqueue(MockResponse().setResponseCode(422)
+            .setBody("""{"error":{"code":"INVALID_INPUT","message":"NOT_ENOUGH_TIME: $detail"}}"""))
+        val error = (generate() as PlanOutcome.Failure).error
+        assertEquals(ApiError.InvalidInput("NOT_ENOUGH_TIME: $detail"), error)
+        val shown = error.userMessage()
+        assertTrue(shown.contains("1분이라 진단된 학습 주제 3개에"))
+        assertFalse(shown.contains("NOT_ENOUGH_TIME"))
+        assertEquals(1, server.requestCount)
     }
 
     @Test

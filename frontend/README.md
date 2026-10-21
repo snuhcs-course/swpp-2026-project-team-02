@@ -119,6 +119,33 @@ acceptable for local use. Nothing else changed: there is still no automatic
 retry, and a lost or timed-out adjustment still needs 최신 계획 불러오기 (see
 [Plan adjustment](#plan-adjustment)).
 
+### Validation errors
+
+An HTTP 422 is shown in Korean, never as the backend's English text. The
+backend's `error.message` stays in the error value for debugging but is not
+displayed. Generation, question loading, adjustment and reload share one mapping
+that recognizes only exact backend messages or tightly anchored patterns:
+
+| Backend cause | Shown explanation |
+| --- | --- |
+| Invalid or missing `exam_date` / `preparation_start` | 시험일 (or 준비 시작일) 을 확인할 수 없어요 |
+| `preparation_start must be before exam_date` | 준비 시작일은 시험일보다 빨라야 해요 |
+| No study windows | 공부할 수 있는 시간이 등록되지 않았어요 |
+| A weekday window with a bad time, reversed order, or overlap | The weekday in Korean (for example 수요일) and the problem |
+| `NOT_ENOUGH_TIME:` with a current backend capacity sentence | 시험일 전까지 공부할 시간이 부족해요, plus the usable minutes and topic count. A zero-minute early check gives no topic count. |
+| `NOT_ENOUGH_TIME:` with any other text | The same headline without numbers |
+| Assessment-results payload checks | 답안 정보를 서버에서 처리하지 못했어요, with a note that it does not mean a wrong answer |
+| Anything else, including blank, technical, or path/trace text | 요청 정보를 확인하지 못했어요 |
+
+The next step depends on the screen. On the generation error it points to
+“입력 수정하기”. An adjustment or reload uses the selected plan's own saved
+windows, so editing the form cannot change them; there the message says to go
+back with 목록으로 and create a new plan with corrected input. Capacity numbers
+are shown only when they agree with the backend sentence. No count is inferred
+from the number of questions. Retry, reload and retained inputs, rows and
+selection behave as before. 다시 시도 is always explicit, and none of these
+messages claims that an unchanged retry fixes the input.
+
 ## Plan adjustment
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
@@ -145,7 +172,7 @@ build. What follows depends on the failure:
 
 | Live failure | Message | Next step |
 | --- | --- | --- |
-| 422, 500, 502, 503, other statuses | Server message or a generic error | 다시 시도 resends the identical request; choosing another session builds a new one |
+| 422, 500, 502, 503, other statuses | 422: Korean explanation of a recognized cause (see [Validation errors](#validation-errors)), or 요청 정보를 확인하지 못했어요; other errors use app-defined wording | 다시 시도 resends the identical request; choosing another session builds a new one |
 | 404 without `PLAN_NOT_FOUND` (wrong URL or old server) | API 경로를 찾을 수 없어요 … (HTTP 404) | 다시 시도, as above; the plan is not treated as deleted |
 | 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted for the rest of the session; 목록으로 or 새 계획 만들기 |
 | 409 `PLAN_CONFLICT` | 서버의 계획이 변경되었어요 … | 최신 계획 불러오기 |
@@ -349,5 +376,12 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Form state and the generated-plan list are held in memory and are lost if
   the process is killed.
 - Live plans come from Gemini, so session counts can vary for the same inputs.
-- Live insufficient capacity arrives as a generic generation error with retry and
-  “입력 수정하기”, so the warning-origin exam-date editor is demo-only.
+- Proven live insufficient capacity arrives as HTTP 422 and is shown as described
+  in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It
+  does not open the demo shortfall screen; the warning-origin exam-date editor
+  remains demo-only.
+- Validation wording depends on the backend's free-text `error.message`. If that
+  text changes, the app shows the neutral fallback until the mapping is updated.
+- Generation summaries are composed by backend code from the accepted schedule.
+  The current “AI가 작성한 설명” label does not establish model authorship of that
+  text; its wording still needs reconciliation.
