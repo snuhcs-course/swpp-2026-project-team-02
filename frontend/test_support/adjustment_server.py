@@ -31,6 +31,7 @@ import time
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 API = "/api/v1"
 QUESTIONS_PATH = f"{API}/certifications/computer_specialist_level_2/questions"
@@ -169,9 +170,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.state.log({"type": "request", "method": "GET", "path": self.path})
-        if self.path == QUESTIONS_PATH:
+        path = urlparse(self.path).path
+        if path == QUESTIONS_PATH:
             self._send_raw(200, QUESTIONS_FILE.read_bytes())
-        elif self.path == f"{API}/study-plans":
+        elif path == f"{API}/study-plans":
+            # Ignores the schedule_csv_file filter, like an older backend: always the full list.
             self._list()
         else:
             self._error(404, "NOT_FOUND", "API route not found")

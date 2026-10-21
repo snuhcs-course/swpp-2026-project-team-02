@@ -317,15 +317,31 @@ class LiveAdjustmentRepositoryTest {
         return runBlocking { repo.reload(identity) }
     }
 
+    /** The identity travels once-encoded (`/` and `+` included) and decodes back to the exact value. */
     @Test
-    fun reloadGetsThePlanListWithoutBody() {
+    fun reloadGetsThePlanListFilteredToTheIdentityWithoutBody() {
+        val filtered = "/api/v1/study-plans?schedule_csv_file=" +
+            "license_planner%2Foutput%2Fstudy_plan_20261016T180000000000%2B0900_abcdef12.csv"
         reload("""{"plans":[${item(file, rowsJsonA)}]}""")
         val recorded = server.takeRequest()
         assertEquals("GET", recorded.method)
-        assertEquals("/api/v1/study-plans", recorded.path)
+        assertEquals(filtered, recorded.path)
+        assertEquals(listOf(file), recorded.requestUrl!!.queryParameterValues("schedule_csv_file"))
+        assertEquals(1, recorded.requestUrl!!.querySize)
         assertEquals(0L, recorded.bodySize)
         reload("""{"plans":[]}""", repo = repository(base = server.url("/api/v1").toString()))
-        assertEquals("/api/v1/study-plans", server.takeRequest().path)
+        assertEquals(filtered, server.takeRequest().path)
+    }
+
+    /** A server that ignores the filter answers with every plan; only the exact match is used, with no second request. */
+    @Test
+    fun reloadOfAnUnfilteredListUsesOnlyTheExactMatch() {
+        val list = """{"plans":[${item(fileB, rowsJsonB)},${item(file, rowsJsonA)}]}"""
+        val loaded = reload(list) as ReloadOutcome.Loaded
+        assertEquals(listOf("study-1", "study-2", "external-1"), loaded.schedules.map { it.scheduleId })
+        assertEquals("2026/10/12/18/00", loaded.schedules.first().startDate)
+        assertEquals(ReloadOutcome.Missing, reload("""{"plans":[${item(fileB, rowsJsonB)}]}"""))
+        assertEquals(2, server.requestCount)
     }
 
     @Test
@@ -360,6 +376,7 @@ class LiveAdjustmentRepositoryTest {
         assertEquals(ReloadOutcome.Missing, reload("""{"plans":[]}"""))
         assertEquals(ReloadOutcome.Missing, reload("""{"plans":[${item(fileB, rowsJsonA)},${item(file.uppercase(), rowsJsonA)}]}"""))
         assertEquals(ReloadOutcome.Missing, reload("""{"plans":[${item("$file ", rowsJsonA)}]}"""))
+        assertEquals(3, server.requestCount)
     }
 
     /** Only the matched plan's rows are checked; an unrelated stored plan cannot block the reload. */

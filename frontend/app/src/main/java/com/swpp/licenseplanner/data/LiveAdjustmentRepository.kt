@@ -6,6 +6,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanListResponse
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -13,8 +14,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
 /**
- * `POST <base>/schedules/adjust` with a four-field body, and `GET <base>/study-plans` to read
- * one plan back. Responses are validated before the caller touches its plan; failures are
+ * `POST <base>/schedules/adjust` with a four-field body, and
+ * `GET <base>/study-plans?schedule_csv_file=<identity>` to read one plan back. Responses are validated before the caller touches its plan; failures are
  * returned as-is, with no retry and no demo fallback. Success does not prove the server saved the file.
  */
 class LiveAdjustmentRepository(
@@ -77,14 +78,19 @@ class LiveAdjustmentRepository(
     }
 
     /**
-     * Lists the stored plans and keeps only the one whose `schedule_csv_file` equals [scheduleCsvFile]
-     * exactly; other plans are never returned. A route 404 is a configuration error, not a missing plan.
+     * Asks for the plan list filtered to [scheduleCsvFile], so the server reads only that plan, and
+     * keeps only the item whose `schedule_csv_file` equals it exactly; other plans are never returned.
+     * A server that ignores the filter returns the full list, which goes through the same match.
+     * A route 404 is a configuration error, not a missing plan.
      */
     override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
         val file = scheduleCsvFile?.takeIf { it.isNotBlank() }
             ?: return ReloadOutcome.Failure(ApiError.InvalidInput(MISSING_IDENTITY))
+        val url = apiUrl(baseUrl, "/study-plans").toHttpUrl().newBuilder()
+            .addQueryParameter("schedule_csv_file", file)
+            .build()
         val httpRequest = Request.Builder()
-            .url(apiUrl(baseUrl, "/study-plans"))
+            .url(url)
             .get()
             .build()
         return when (val outcome = client.executeApi(httpRequest, io)) {

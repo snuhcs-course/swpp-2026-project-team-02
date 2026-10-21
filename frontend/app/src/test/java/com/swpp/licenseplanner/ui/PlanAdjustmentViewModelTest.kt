@@ -743,7 +743,8 @@ class PlanAdjustmentViewModelTest {
 
             val requests = server.requests()
             assertEquals(listOf("POST", "GET", "GET", "POST"), requests.map { it.method })
-            assertEquals(listOf("/api/v1/schedules/adjust", "/api/v1/study-plans", "/api/v1/study-plans", "/api/v1/schedules/adjust"), requests.map { it.path })
+            val reloadA = "/api/v1/study-plans?schedule_csv_file=license_planner%2Foutput%2Fstudy_plan_a.csv"
+            assertEquals(listOf("/api/v1/schedules/adjust", reloadA, reloadA, "/api/v1/schedules/adjust"), requests.map { it.path })
             val sent = ApiJson.parseToJsonElement(requests[3].body.readUtf8()).jsonObject
             assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
             assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])

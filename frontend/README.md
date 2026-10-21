@@ -186,8 +186,10 @@ succeeds. This requirement stays on the plan when the user picks another row,
 rotates, goes back to the list or home, or adjusts another plan and returns.
 Screen entry and rotation send nothing; only the explicit button does.
 
-**Reload.** 최신 계획 불러오기 sends `GET /api/v1/study-plans` and nothing
-else. The app takes the single item whose `schedule_csv_file` equals the plan's
+**Reload.** 최신 계획 불러오기 sends one
+`GET /api/v1/study-plans?schedule_csv_file=<identity>` (the plan's identity,
+URL-encoded once) and nothing else; there is no fallback request. The app
+takes the single item whose `schedule_csv_file` equals the plan's
 own identity exactly (no filename, suffix, order or schedule-ID matching; other
 plans are never imported) and checks its rows the same way as an adjustment
 response (nonblank unique IDs, `YYYY/MM/DD/HH/MM` timestamps, end after start).
@@ -248,8 +250,13 @@ original non-null windows. It returns 404 `PLAN_NOT_FOUND` for a pruned plan
 and 409 `PLAN_CONFLICT` when the sent rows no longer match the stored file,
 and lists stored plans (up to about 100, newest first) at
 `GET /api/v1/study-plans` as
-`{"plans":[{"schedule_csv_file":"…","schedule_csv_url":"…","schedules":[…]}]}`;
-an unreadable stored plan makes the whole list fail (500). An older server
+`{"plans":[{"schedule_csv_file":"…","schedule_csv_url":"…","schedules":[…]}]}`.
+With the `schedule_csv_file` filter it reads only that plan: the list holds that
+one item, is empty when the plan no longer exists, and fails (500
+`STORAGE_ERROR`) only when that plan itself is unreadable, so a damaged
+unrelated plan no longer blocks reload. An older server that ignores the filter
+returns the full list, which the app matches the same way, but there an
+unreadable unrelated plan still makes the whole list fail (500). An older server
 without the list route answers the reload with a route 404, which the app
 reports as such and keeps the plan blocked. The client recovery flow above is
 checked against MockWebServer and a scripted local server only;
