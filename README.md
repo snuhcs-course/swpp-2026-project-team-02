@@ -2,6 +2,10 @@
 
 This branch contains the integrated Android frontend and Python backend demo for Iteration 2. The recommended `integrationDebug` build uses the real HTTP API and CSV persistence while generating deterministic plans without an API key.
 
+## Demo video
+
+[Watch the Iteration 2 demo](iteration-2-demo.mp4) for the key assessment, plan generation, plan-list, and saved-adjustment flows.
+
 ## How to run the demo
 
 ### Tested environment
