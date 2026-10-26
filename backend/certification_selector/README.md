@@ -51,10 +51,10 @@ interval between them is the preparation period. For example:
 From `backend/`, run:
 
 ```powershell
-python run_certification_selector_test_cases.py
+python -m scenarios.run_certification_selector_test_cases
 ```
 
 Inputs and generated results are stored separately in
-`certification_selector_test_inputs/` and `certification_selector_test_results/`.
+`scenarios/inputs/certification_selector/` and `scenarios/results/certification_selector/`.
 The cases cover selectable catalog entries, invalid catalog data, CLI selection,
 and JSON listing. They do not call external APIs.

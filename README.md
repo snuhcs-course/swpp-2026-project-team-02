@@ -41,8 +41,9 @@ Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
-pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the backend
-unit tests with coverage, and the Android unit tests, request contract check,
+pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the three
+offline backend unit suites in `backend/tests/` with coverage (not the scenario
+runners in `backend/scenarios/`), and the Android unit tests, request contract check,
 coverage, debug APK builds, and lint. Commands and report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
 [`frontend/README.md`](frontend/README.md#checks). CI uses no Gemini key, running

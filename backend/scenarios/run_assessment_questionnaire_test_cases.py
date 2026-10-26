@@ -13,9 +13,9 @@ from unittest.mock import patch
 from assessment_questionnaire import cli
 
 
-BACKEND_DIR = Path(__file__).resolve().parent
-INPUT_FILE = BACKEND_DIR / "assessment_questionnaire_test_inputs" / "assessment_questionnaire_test_cases.json"
-RESULT_DIR = BACKEND_DIR / "assessment_questionnaire_test_results"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+INPUT_FILE = BACKEND_DIR / "scenarios" / "inputs" / "assessment_questionnaire" / "assessment_questionnaire_test_cases.json"
+RESULT_DIR = BACKEND_DIR / "scenarios" / "results" / "assessment_questionnaire"
 QUESTION_FILE = BACKEND_DIR / "assessment_questionnaire" / "questions.json"
 
 

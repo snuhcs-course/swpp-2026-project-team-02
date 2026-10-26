@@ -6,7 +6,8 @@ backend/config/user_availability.json
 **/.idea
 backend/license_planner/output/
 /backend/coverage-results/
-# Test runner outputs are regenerated on every run; keep only each folder's README.
-/backend/*_test_results/*
-!/backend/*_test_results/README.md
+# Scenario runner outputs are regenerated on every run; keep only each folder's README.
+/backend/scenarios/results/*/*
+!/backend/scenarios/results/*/README.md
 backend/assessment_questionnaire/output/
+.vscode/

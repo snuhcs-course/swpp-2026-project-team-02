@@ -24,9 +24,9 @@ from schedule_adjuster.availability import (
 )
 
 # 테스트 입력 및 산출물 경로, 파일 인코딩 설정입니다.
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_DIR = PROJECT_ROOT / "api_test_inputs"
-RESULT_DIR = PROJECT_ROOT / "api_test_results"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "api"
+RESULT_DIR = PROJECT_ROOT / "scenarios" / "results" / "api"
 AVAILABILITY_FIXTURE = INPUT_DIR / "personal_availability_profile.json"
 ADJUSTMENT_FIXTURE = INPUT_DIR / "schedule_adjustment_request.json"
 TEXT_ENCODING = "utf-8"

@@ -48,17 +48,17 @@ Agent는 원본 일정을 프롬프트에 통째로 받지 않습니다. `inspec
 ## 폴더 구조
 
 - `schedule_adjuster/`: 모델, CSV 입출력, 조정 로직, Agent tools, Gemini 런타임, CLI
-- `schedule_adjuster_tests/`: API 없이 실행되는 단위 테스트
-- `schedule_adjuster_test_inputs/`: 다중 케이스 설정 JSON과 테스트용 원본 CSV
-- `schedule_adjuster_test_results/`: 케이스별 결과 CSV, 도구 호출 trace, 통합 요약
-- `run_schedule_adjuster_test_cases.py`: 케이스 설정을 순회해 실제 Gemini Agent를 호출하는 전용 테스트 러너
+- `tests/schedule_adjuster_tests/`: API 없이 실행되는 단위 테스트
+- `scenarios/inputs/schedule_adjuster/`: 다중 케이스 설정 JSON과 테스트용 원본 CSV
+- `scenarios/results/schedule_adjuster/`: 케이스별 결과 CSV, 도구 호출 trace, 통합 요약
+- `scenarios/run_schedule_adjuster_test_cases.py`: 케이스 설정을 순회해 실제 Gemini Agent를 호출하는 전용 테스트 러너
 
 이 두 폴더가 이전 프로그램의 `license_planner/`와 기존 테스트 폴더와 구분되는 새 프로그램입니다.
 
 ## 로컬 테스트
 
 ```powershell
-python -m unittest discover -s schedule_adjuster_tests -v
+python -m unittest discover -s tests/schedule_adjuster_tests -v
 ```
 
 이 테스트는 Gemini API를 호출하지 않고 ID 종류 판정, 외부 일정 보존/취소, 공부 일정 이동, 기간 충돌 회피, CSV 형식을 검사합니다.
@@ -68,11 +68,11 @@ python -m unittest discover -s schedule_adjuster_tests -v
 `backend/.env`의 `GEMINI_API_KEY`를 설정한 뒤 `backend/` 디렉터리에서 테스트 러너만 실행합니다. 이 테스트는 케이스마다 Gemini API를 호출하므로 네트워크 연결과 API 사용량이 필요합니다.
 
 ```powershell
-python run_schedule_adjuster_test_cases.py
-python run_schedule_adjuster_test_cases.py --case-id schedule_adjuster_case_05_reschedule_with_personal_availability
+python -m scenarios.run_schedule_adjuster_test_cases
+python -m scenarios.run_schedule_adjuster_test_cases --case-id schedule_adjuster_case_05_reschedule_with_personal_availability
 ```
 
-케이스 추가는 `schedule_adjuster_test_inputs/schedule_adjuster_test_cases.json`에 `case_id`, 대상 `schedule_id`, 입력 CSV, 기대 작업, 기대 변경 도구를 추가하면 됩니다. 개인 가능 시간 파일을 쓸 때는 `availability_file`도 지정합니다. CSV/JSON 입력은 같은 입력 폴더에 둡니다. 다섯 번째 케이스는 수요일 20:00–22:00 프로필에 공부 일정을 이동하는 실호출 테스트입니다. `--case-id` 옵션은 해당 케이스만 실행해 Gemini 요청 횟수를 줄이고, 결과 요약을 `<case_id>_summary.json`에 별도로 기록하여 전체 실행 요약을 덮어쓰지 않습니다. 러너는 `schedule_adjuster_test_results/`에 결과 CSV와 도구 호출 이력을 기록합니다.
+케이스 추가는 `scenarios/inputs/schedule_adjuster/schedule_adjuster_test_cases.json`에 `case_id`, 대상 `schedule_id`, 입력 CSV, 기대 작업, 기대 변경 도구를 추가하면 됩니다. 개인 가능 시간 파일을 쓸 때는 `availability_file`도 지정합니다. CSV/JSON 입력은 같은 입력 폴더에 둡니다. 다섯 번째 케이스는 수요일 20:00–22:00 프로필에 공부 일정을 이동하는 실호출 테스트입니다. `--case-id` 옵션은 해당 케이스만 실행해 Gemini 요청 횟수를 줄이고, 결과 요약을 `<case_id>_summary.json`에 별도로 기록하여 전체 실행 요약을 덮어쓰지 않습니다. 러너는 `scenarios/results/schedule_adjuster/`에 결과 CSV와 도구 호출 이력을 기록합니다.
 
 성공 여부는 세 가지로 확인합니다. 터미널에 모든 케이스가 `PASS`로 표시되고 프로세스 종료 코드가 0이어야 합니다. 각 `*_tool_trace.json`에서 `gemini_api_request_count`가 1 이상이고 `called_tools`가 `inspect_schedule` 다음에 기대한 변경 도구 순서로 기록되어야 합니다. 마지막으로 결과 CSV에서 공부 일정 이동 또는 취소 외부 일정 제거가 반영되고 다른 일정 행이 유지됐는지 확인합니다. `schedule_adjuster_test_summary.json`에는 전체 케이스의 판정이 모입니다.
 

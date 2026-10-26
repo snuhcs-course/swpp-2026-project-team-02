@@ -7,5 +7,5 @@ description, input data, and expected IDs or error/result.
 
 Cases using `catalog_document` write their JSON into a temporary directory.
 The `project_catalog` case reads the actual
-`certification_selector/certifications.json`. The runner does not call Gemini
+`backend/certification_selector/certifications.json`. The runner does not call Gemini
 or the KCCI website and does not modify input fixtures.

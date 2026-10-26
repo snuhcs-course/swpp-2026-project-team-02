@@ -13,9 +13,9 @@ from schedule_adjuster.schedule_logic import intervals_overlap
 from schedule_adjuster.settings import USER_AVAILABILITY_PATH
 
 # Runner 경로와 파일 인코딩 설정입니다.
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_DIR = PROJECT_ROOT / "schedule_adjuster_test_inputs"
-RESULT_DIR = PROJECT_ROOT / "schedule_adjuster_test_results"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "schedule_adjuster"
+RESULT_DIR = PROJECT_ROOT / "scenarios" / "results" / "schedule_adjuster"
 CASE_FILE = INPUT_DIR / "schedule_adjuster_test_cases.json"
 TEXT_ENCODING = "utf-8-sig"
 EXPECTED_INSPECT_TOOL = "inspect_schedule"

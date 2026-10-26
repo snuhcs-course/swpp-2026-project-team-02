@@ -1,14 +1,15 @@
 """Offline check of Android's serialized study-plan request against a pinned backend.
 
-Usage (from the repository root, design D11 / task 4.3):
+Usage (from the repository root):
 
     python frontend/contract_checks/verify_request.py \
-        --backend-ref 2b6e2f5babbe987afd3f107fa40b9df2c7fec98f \
+        --backend-ref HEAD \
         --request frontend/app/build/contract-check/study-plan-request.json
 
 The helper extracts an allowlist of committed backend source and configuration
 from ``--backend-ref`` into a temporary directory (never credential files, saved
-availability profiles, generated outputs, or tests). In a separate Python
+availability profiles, generated outputs, the unit tests in ``backend/tests/``, or
+the scenario runners and fixtures in ``backend/scenarios/``). In a separate Python
 process it then compares the request's assessment results with
 ``assessment_service.get_public_questions`` and validates the request with
 ``api_service.build_plan_request(..., require_assessment=True)``.

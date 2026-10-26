@@ -1,7 +1,7 @@
 """오프라인 자격증 카탈로그/CLI 테스트 케이스 러너.
 
 외부 API나 Gemini를 호출하지 않습니다. 케이스별 판정 JSON과 실행 요약은
-certification_selector_test_results/ 아래에 기록합니다.
+scenarios/results/certification_selector/ 아래에 기록합니다.
 """
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from certification_selector import cli
 from certification_selector.catalog import load_certifications
 
 
-BACKEND_ROOT = Path(__file__).resolve().parent
-INPUT_DIR = BACKEND_ROOT / "certification_selector_test_inputs"
-RESULT_DIR = BACKEND_ROOT / "certification_selector_test_results"
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = BACKEND_ROOT / "scenarios" / "inputs" / "certification_selector"
+RESULT_DIR = BACKEND_ROOT / "scenarios" / "results" / "certification_selector"
 CASE_FILE = INPUT_DIR / "certification_selector_test_cases.json"
 SUMMARY_FILE = RESULT_DIR / "certification_selector_test_summary.json"
 

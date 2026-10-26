@@ -16,9 +16,9 @@ from license_planner.user_availability import (
     save_personal_availability,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_DIR = PROJECT_ROOT / "license_planner_availability_test_inputs"
-RESULT_DIR = PROJECT_ROOT / "license_planner_availability_test_results"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "license_planner_availability"
+RESULT_DIR = PROJECT_ROOT / "scenarios" / "results" / "license_planner_availability"
 CASE_FILE = INPUT_DIR / "license_planner_availability_test_cases.json"
 TEXT_ENCODING = "utf-8-sig"
 CERTIFICATION_ID = "computer_specialist_level_2"

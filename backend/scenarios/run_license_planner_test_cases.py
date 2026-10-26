@@ -14,9 +14,9 @@ from api_server import DEFAULT_API_CONFIG, make_handler
 from license_planner.csv_io import parse_datetime
 from license_planner.user_availability import parse_weekly_availability
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_DIR = PROJECT_ROOT / "license_planner_test_inputs"
-RESULT_DIR = PROJECT_ROOT / "license_planner_test_results"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "license_planner"
+RESULT_DIR = PROJECT_ROOT / "scenarios" / "results" / "license_planner"
 CASE_FILE = INPUT_DIR / "license_planner_test_cases.json"
 TEXT_ENCODING = "utf-8-sig"
 REQUIRED_TOOLS = ("get_certification_profile", "analyze_exam_results",

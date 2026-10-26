@@ -4,6 +4,14 @@ This directory contains the Python API used by the Android app's `live` flavor,
 license planner, schedule adjuster, configuration, and developer documentation.
 Run backend commands from this directory. The repository overview is in
 `../README.md`.
+
+Offline unit suites live in `tests/` (`tests/api_tests/`,
+`tests/license_planner_tests/`, `tests/schedule_adjuster_tests/`); run each with
+`python -m unittest discover -s tests/<suite> -v`. Scenario runners live in
+`scenarios/`, with fixtures in `scenarios/inputs/<module>/` and generated,
+git-ignored output in `scenarios/results/<module>/`. Run them as modules, for
+example `python -m scenarios.run_certification_selector_test_cases`; running
+`python scenarios/<runner>.py` directly cannot import the backend packages.
 # Study Planning Programs
 
 ## Local API and Android frontend connection
@@ -52,13 +60,13 @@ Run the automated HTTP integration case for CORS, availability persistence,
 input validation, and profile-aware schedule adjustment:
 
 ```powershell
-python run_api_availability_integration_test.py
+python -m scenarios.run_api_availability_integration_test
 ```
 
 It starts an ephemeral local HTTP server and uses a temporary profile file, so it
 does not overwrite `config/user_availability.json`. Schedule adjustment calls
 Gemini and requires `GEMINI_API_KEY`, network access, and available quota.
-Results are saved under `api_test_results/`.
+Results are saved under `scenarios/results/api/`.
 
 The questionnaire writes a JSON assessment result containing the question,
 choices, correct answer, user answer, local `is_correct` result, and possible
@@ -107,12 +115,12 @@ Send it in the `weekly_availability` field of the planning request, or save it t
 Example local tests and Gemini tool-trajectory cases:
 
 ```powershell
-python -m unittest discover -s license_planner_tests -v
-python run_license_planner_availability_test_cases.py
-python run_license_planner_test_cases.py --case-id license_planner_case_04_personal_availability_api
+python -m unittest discover -s tests/license_planner_tests -v
+python -m scenarios.run_license_planner_availability_test_cases
+python -m scenarios.run_license_planner_test_cases --case-id license_planner_case_04_personal_availability_api
 ```
 
-The first two commands do not call Gemini. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `license_planner_availability_test_results/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes a real Gemini request, requires `GEMINI_API_KEY` and network access, and records the HTTP result, tool calls, and generated schedule under `license_planner_test_results/`. Omit `--case-id` to run all Gemini scenarios. Add offline availability cases under `license_planner_availability_test_inputs/`.
+The first two commands do not call Gemini. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `scenarios/results/license_planner_availability/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes a real Gemini request, requires `GEMINI_API_KEY` and network access, and records the HTTP result, tool calls, and generated schedule under `scenarios/results/license_planner/`. Omit `--case-id` to run all Gemini scenarios. Add offline availability cases under `scenarios/inputs/license_planner_availability/`.
 
 ## Schedule Adjuster
 
@@ -120,15 +128,15 @@ The Schedule Adjuster requires a target ID (`study-N` or `external-N`) and an in
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `
-  --schedule-csv schedule_adjuster_test_inputs/schedule_adjuster_case_01_study_move.csv `
+  --schedule-csv scenarios/inputs/schedule_adjuster/schedule_adjuster_case_01_study_move.csv `
   1> adjusted_schedule.csv 2> adjustment_trace.txt
 ```
 
 Example tests:
 
 ```powershell
-python -m unittest discover -s schedule_adjuster_tests -v
-python run_schedule_adjuster_test_cases.py
+python -m unittest discover -s tests/schedule_adjuster_tests -v
+python -m scenarios.run_schedule_adjuster_test_cases
 ```
 
 See `schedule_adjuster/README.md` for behavior assumptions and the integration test format.
@@ -136,14 +144,17 @@ See `schedule_adjuster/README.md` for behavior assumptions and the integration t
 ## Checks and coverage
 
 CI ([`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the
-offline unit tests under coverage with Python 3.14:
+three offline unit suites in `tests/` under coverage with Python 3.14. Each suite
+runs even if an earlier one fails, and any failure fails the job. Scenario
+runners in `scenarios/` are not run in CI:
 
 ```bash
 python -m pip install -r requirements-ci.txt   # CI-only: pinned coverage.py
 python -c "import sys; import api_service; print(sys.executable)"
 python -m coverage erase
-python -m coverage run -m unittest discover -s license_planner_tests -v
-python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
+python -m coverage run -m unittest discover -s tests/license_planner_tests -v
+python -m coverage run --append -m unittest discover -s tests/schedule_adjuster_tests -v
+python -m coverage run --append -m unittest discover -s tests/api_tests -v
 python -m coverage report -m
 python -m coverage xml
 python -m coverage html
@@ -152,14 +163,15 @@ python -m coverage html
 The application has no third-party dependencies; to reproduce this locally,
 install `requirements-ci.txt` into a separate virtual environment rather than the
 `swpp` runtime environment. `.coveragerc` measures branch coverage over the
-production modules, including HTTP and Gemini agent code that no unit test runs,
-and writes `coverage-results/coverage.xml` and `coverage-results/html/`
+production modules, including Gemini agent code that no unit test runs, leaves
+`tests/` and `scenarios/` out of the report, and writes `coverage-results/coverage.xml` and `coverage-results/html/`
 (generated; do not commit them). CI uploads both as the `backend-coverage`
 artifact, kept 7 days. No minimum percentage is enforced; agree on any threshold
 from measured baselines.
 
-These tests use no Gemini key or running server, so passing them does not verify
-Gemini planning or the HTTP server.
+These tests require no Gemini key or external network access. The API tests serve the request
+handler on temporary loopback ports with mocked Gemini responses, so passing them
+does not verify live Gemini planning or a running `python api_server.py`.
 
 ## Gemini configuration
 

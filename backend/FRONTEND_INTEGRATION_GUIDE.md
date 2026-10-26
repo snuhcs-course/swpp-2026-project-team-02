@@ -306,7 +306,7 @@ Invoke-RestMethod -Method Post `
     -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))
 ```
 
-For a static payload template, see `api_test_inputs/plan_adjustment_request.json`.
+For a static payload template, see `scenarios/inputs/api/plan_adjustment_request.json`.
 Its sample file does not exist automatically; replace both the identifier and
 schedule rows with those from generation or listing. The Android Emulator base
 URL remains `http://10.0.2.2:8000/api/v1`.
