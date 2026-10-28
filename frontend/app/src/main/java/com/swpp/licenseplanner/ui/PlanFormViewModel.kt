@@ -5,13 +5,19 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.AtomicFilePlanStore
 import com.swpp.licenseplanner.data.FlavorRepositories
+import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.MappingResult
 import com.swpp.licenseplanner.data.PlanOutcome
+import com.swpp.licenseplanner.data.PlanSnapshot
+import com.swpp.licenseplanner.data.PlanStorageScope
+import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
@@ -67,6 +73,21 @@ sealed interface AdjustmentState {
     data object Reloaded : AdjustmentState
 }
 
+/**
+ * The device-local plan collection: restored once at start, then saved after every accepted change.
+ * Plan-changing actions wait for [Ready]; viewing works in every state.
+ */
+enum class PlanStorage {
+    /** Reading the saved collection; nothing is known about saved plans yet. */
+    Loading,
+    Ready,
+    /** The saved collection could not be read; it is kept as it was for a local retry. */
+    LoadFailure,
+    Saving,
+    /** The shown collection is newer than the saved one; only a local save may follow. */
+    SaveFailure,
+}
+
 /** The plan and failed study row chosen for adjustment, with its outcome. */
 data class AdjustmentSelection(
     val planOrdinal: Int? = null,
@@ -75,15 +96,17 @@ data class AdjustmentSelection(
 )
 
 /**
- * Activity-scoped state for the whole input flow and the session's generated plans.
- * Survives back navigation and configuration changes, not process death;
- * repositories come from the build flavor, with no runtime fallback.
+ * Activity-scoped state for the whole input flow and the generated plans.
+ * Form inputs survive back navigation and configuration changes, not process death; the plans
+ * are restored from [planStore] and saved there after each accepted change. Repositories come
+ * from the build flavor, with no runtime fallback.
  */
 class PlanFormViewModel(
     private val questionRepository: QuestionRepository,
     private val planningRepository: PlanningRepository,
     private val adjustmentRepository: AdjustmentRepository,
     today: LocalDate = LocalDate.now(),
+    private val planStore: LocalPlanStore,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -97,7 +120,7 @@ class PlanFormViewModel(
     /** The request sent by the latest generate(); retry resends exactly this. */
     private var lastRequest: StudyPlanRequest? = null
 
-    /** Every successful generation in this process, oldest first; never removed. */
+    /** Every successful generation saved on this device, oldest first; never removed. */
     private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
     val plans: StateFlow<List<SessionPlan>> = _plans.asStateFlow()
     private var nextOrdinal = 1
@@ -115,12 +138,26 @@ class PlanFormViewModel(
      */
     private var pendingAdjustment: Pair<Int, AdjustmentInput>? = null
 
+    private val _storage = MutableStateFlow(PlanStorage.Loading)
+    val storage: StateFlow<PlanStorage> = _storage.asStateFlow()
+
+    /** The collection as last saved; it differs from [plans] only while a save is pending or failed. */
+    private val _savedPlans = MutableStateFlow<List<SessionPlan>>(emptyList())
+    val savedPlans: StateFlow<List<SessionPlan>> = _savedPlans.asStateFlow()
+
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
 
     /** An adjustment or reload is in flight; it must finish on the plan it started from. */
     private val busy get() = adjusting || reloading
+
+    /** Plans may change only once restored and while nothing is waiting to be saved. */
+    private val storageReady get() = _storage.value == PlanStorage.Ready
+
+    init {
+        viewModelScope.launch { restore() }
+    }
 
     fun selectCertification(id: String) = edit { it.copy(certificationId = id) }
     fun setPreparationStart(date: LocalDate) = edit { it.copy(preparationStart = date) }
@@ -167,7 +204,7 @@ class PlanFormViewModel(
      * Returns whether a request was sent. A local demo result may already be set on return.
      */
     fun generate(): Boolean {
-        if (generating || busy) return false
+        if (generating || busy || !storageReady) return false
         val request = (RequestMapper.map(_form.value) as? MappingResult.Ready)?.request ?: return false
         send(request)
         return true
@@ -175,7 +212,7 @@ class PlanFormViewModel(
 
     /** Resends the identical request after a failure; inputs are untouched. */
     fun retryGeneration() {
-        if (_generation.value !is GenerationState.Failure || busy) return
+        if (_generation.value !is GenerationState.Failure || busy || !storageReady) return
         send(lastRequest ?: return)
     }
 
@@ -183,16 +220,18 @@ class PlanFormViewModel(
         lastRequest = request
         _generation.value = GenerationState.Loading
         viewModelScope.launch {
-            _generation.value = when (val outcome = planningRepository.generate(request)) {
+            when (val outcome = planningRepository.generate(request)) {
                 is PlanOutcome.Success -> {
-                    // Registered here, once per success; never from a screen.
+                    // Registered here, once per success; never from a screen. If saving fails, the
+                    // same entry stays in memory and only saving is retried.
                     val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
                     _plans.update { it + plan }
                     _generatedPlan.value = plan.ordinal
-                    GenerationState.Success(outcome.response, outcome.isDemo)
+                    _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
+                    commit(_plans.value)
                 }
-                is PlanOutcome.DemoShortfall -> GenerationState.DemoShortfall(outcome.required, outcome.available)
-                is PlanOutcome.Failure -> GenerationState.Failure(outcome.error)
+                is PlanOutcome.DemoShortfall -> _generation.value = GenerationState.DemoShortfall(outcome.required, outcome.available)
+                is PlanOutcome.Failure -> _generation.value = GenerationState.Failure(outcome.error)
             }
         }
     }
@@ -234,7 +273,7 @@ class PlanFormViewModel(
      * same result, so nothing is sent until another session is chosen. Returns whether a request was sent.
      */
     fun submitAdjustment(): Boolean {
-        if (generating || busy || _adjustment.value.state == AdjustmentState.DemoNoSlot) return false
+        if (generating || busy || !storageReady || _adjustment.value.state == AdjustmentState.DemoNoSlot) return false
         val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
         val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
         sendAdjustment(plan.ordinal, AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target))
@@ -246,7 +285,7 @@ class PlanFormViewModel(
      * Does nothing for a plan that needs a reload or is missing.
      */
     fun retryAdjustment() {
-        if (_adjustment.value.state !is AdjustmentState.Failure || generating) return
+        if (_adjustment.value.state !is AdjustmentState.Failure || generating || !storageReady) return
         val (ordinal, input) = pendingAdjustment ?: return
         if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
         sendAdjustment(ordinal, input)
@@ -257,7 +296,7 @@ class PlanFormViewModel(
      * reading does nothing. Never resends the adjustment. Returns whether a request was sent.
      */
     fun reloadPlan(): Boolean {
-        if (generating || busy) return false
+        if (generating || busy || !storageReady) return false
         val plan = selectedPlan()?.takeIf { it.recovery == PlanRecovery.ReloadRequired } ?: return false
         val ordinal = plan.ordinal
         _adjustment.update { it.copy(state = AdjustmentState.Reloading) }
@@ -274,10 +313,12 @@ class PlanFormViewModel(
                     }
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Reloaded) }
+                    commit(_plans.value)
                 }
                 ReloadOutcome.Missing -> {
                     updatePlan(ordinal) { it.copy(recovery = PlanRecovery.Missing, recoveryScheduleId = null) }
                     _adjustment.update { it.copy(state = AdjustmentState.Idle) }
+                    commit(_plans.value)
                 }
                 is ReloadOutcome.Failure -> _adjustment.update { it.copy(state = AdjustmentState.ReloadFailure(outcome.error)) }
             }
@@ -293,16 +334,28 @@ class PlanFormViewModel(
     private fun updatePlan(ordinal: Int, transform: (SessionPlan) -> SessionPlan) =
         _plans.update { plans -> plans.map { if (it.ordinal == ordinal) transform(it) else it } }
 
+    /**
+     * A live request is sent only after a snapshot that treats it as unresolved has been saved,
+     * so a process that ends before the result is saved restores a reload requirement, never a
+     * resend. If that save fails nothing is sent, and the selection waits for a new submission.
+     */
     private fun sendAdjustment(ordinal: Int, input: AdjustmentInput) {
         pendingAdjustment = ordinal to input
         _adjustment.update { it.copy(state = AdjustmentState.Loading) }
         viewModelScope.launch {
+            val live = input.scheduleCsvFile != null
+            if (live && !commit(unresolved(ordinal, input.scheduleId), inFlightAdjustment = ordinal)) {
+                pendingAdjustment = null
+                _adjustment.update { it.copy(state = AdjustmentState.Idle) }
+                return@launch
+            }
             when (val outcome = adjustmentRepository.adjust(input)) {
                 is AdjustmentOutcome.Success -> {
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
+                    commit(_plans.value)
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
                 is AdjustmentOutcome.Failure -> {
@@ -314,9 +367,54 @@ class PlanFormViewModel(
                         updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = target) }
                     }
                     _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
+                    // Replaces the unresolved snapshot with the confirmed state.
+                    if (live) commit(_plans.value)
                 }
             }
         }
+    }
+
+    /** The collection as it must be restored if [ordinal]'s request may have changed the server. */
+    private fun unresolved(ordinal: Int, scheduleId: String): List<SessionPlan> = _plans.value.map {
+        if (it.ordinal == ordinal) it.copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = scheduleId) else it
+    }
+
+    /** Reads the saved collection again after a failed restore; local storage only. */
+    fun retryLoad() {
+        if (_storage.value != PlanStorage.LoadFailure) return
+        _storage.value = PlanStorage.Loading
+        viewModelScope.launch { restore() }
+    }
+
+    /** Saves the shown collection again after a failed save; never repeats a request. */
+    fun retrySave() {
+        if (_storage.value != PlanStorage.SaveFailure) return
+        _storage.value = PlanStorage.Saving
+        viewModelScope.launch { commit(_plans.value) }
+    }
+
+    private suspend fun restore() {
+        when (val result = planStore.load()) {
+            is PlanStoreLoad.Loaded -> {
+                _plans.value = result.snapshot.plans
+                _savedPlans.value = result.snapshot.plans
+                nextOrdinal = result.snapshot.nextOrdinal
+                _storage.value = PlanStorage.Ready
+            }
+            is PlanStoreLoad.Failed -> _storage.value = PlanStorage.LoadFailure
+        }
+    }
+
+    /**
+     * Saves [plans] as the whole collection; [inFlightAdjustment] marks a live request about to be
+     * sent. Callers hold the operation locks, so saves never overlap. Returns whether it was saved.
+     */
+    private suspend fun commit(plans: List<SessionPlan>, inFlightAdjustment: Int? = null): Boolean {
+        _storage.value = PlanStorage.Saving
+        val saved = planStore.save(PlanSnapshot(plans, inFlightAdjustment))
+        if (saved) _savedPlans.value = plans
+        _storage.value = if (saved) PlanStorage.Ready else PlanStorage.SaveFailure
+        return saved
     }
 
     /** A live failure that leaves the server's copy unknown or gone blocks further adjustment of that plan. */
@@ -345,13 +443,18 @@ class PlanFormViewModel(
     }
 
     companion object {
-        /** Uses the flavor's repositories. */
+        /** Uses the flavor's repositories and this build's plan storage scope. */
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
+                val application = checkNotNull(this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
                 PlanFormViewModel(
                     FlavorRepositories.questionRepository(),
                     FlavorRepositories.planningRepository(),
                     FlavorRepositories.adjustmentRepository(),
+                    planStore = AtomicFilePlanStore.open(
+                        application,
+                        PlanStorageScope.of(BuildConfig.DEMO_MODE, BuildConfig.API_BASE_URL),
+                    ),
                 )
             }
         }

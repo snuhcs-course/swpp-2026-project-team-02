@@ -1,7 +1,6 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -204,9 +203,13 @@ private fun SelectableSession(
     moved: Boolean,
     onClick: () -> Unit,
 ) {
-    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}" + if (moved) " $MOVED_TAG" else ""
+    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}" +
+        (if (moved) " $MOVED_TAG" else "") + (if (enabled) "" else " $SELECTION_LOCKED")
     ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
-        Box(Modifier.weight(1f)) { SessionRow(session, moved) }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SessionRow(session, moved)
+            if (!enabled) Text(SELECTION_LOCKED, style = MaterialTheme.typography.labelSmall, color = InkSecondary)
+        }
     }
 }
 
@@ -234,3 +237,4 @@ private fun SessionRow(session: PlanSession, moved: Boolean = false) {
 }
 
 private const val MOVED_TAG = "옮긴 일정"
+private const val SELECTION_LOCKED = "선택 변경 불가"

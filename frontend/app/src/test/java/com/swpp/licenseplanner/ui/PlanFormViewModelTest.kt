@@ -4,7 +4,10 @@ import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.BytesPlanStore
+import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
+import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
@@ -76,8 +79,14 @@ class PlanFormViewModelTest {
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
-    private fun viewModel(q: QuestionRepository, p: PlanningRepository) =
-        PlanFormViewModel(q, p, UnusedAdjustment(), today = LocalDate.of(2026, 10, 5))
+    /** Starts with an empty saved collection; restoring it completes on the next advance. */
+    private fun viewModel(q: QuestionRepository, p: PlanningRepository) = PlanFormViewModel(
+        q,
+        p,
+        UnusedAdjustment(),
+        today = LocalDate.of(2026, 10, 5),
+        planStore = BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
+    )
 
     /** Certification, dates and level chosen; questions not yet loaded. */
     private fun PlanFormViewModel.fillBeforeAssessment() {

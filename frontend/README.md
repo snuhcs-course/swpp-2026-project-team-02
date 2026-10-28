@@ -6,7 +6,7 @@ module, minSdk 26, target SDK 36).
 **Flow:** home (계획 생성 / 계획 조정). Creation: select 컴퓨터활용능력 2급 →
 enter preparation start and exam dates → choose current level and answer example
 questions → set weekday study windows → generate a plan → browse it by week and
-day. Adjustment: pick a plan generated in this app session → mark one missed
+day. Adjustment: pick a plan saved on this device → mark one missed
 study session → see the updated plan. See [Plan adjustment](#plan-adjustment).
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
@@ -150,14 +150,59 @@ messages claims that an unchanged retry fixes the input.
 ## Plan adjustment
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
-and 계획 조정 (a list of the plans generated in this app process). The first
+and 계획 조정 (a list of the plans generated and saved on this device). The first
 creation step (자격증) has a top-bar back arrow that, like system back, returns
 home without sending a request or clearing the inputs. Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
-match. Editing the form or a failed generation never removes an entry. The
-list is held in memory only: it survives rotation and navigation but is lost
-when the process ends. The app never imports plans from the server; it reads
-the server's plan list only to reload one plan it already has (see below).
+match. Editing the form or a failed generation never removes an entry. The app
+never imports plans from the server; it reads the server's plan list only to
+reload one plan it already has (see below).
+
+**Local storage.** The list is saved on the device, so it survives rotation,
+navigation, closing the app and process death. Each entry keeps its number,
+original creation request (dates, assessment, windows), current rows, CSV text
+and summary, demo/live identity, and reload/missing state with its retained
+session. The whole list is one versioned JSON snapshot, replaced atomically
+(`AtomicFile`) in the app's private no-backup directory; backup stays disabled.
+The demo build and each live API base URL (`licensePlanner.apiBaseUrl`,
+trailing slash ignored) keep separate lists, so switching backends never shows
+another server's plans, and switching back restores the earlier list.
+Uninstalling or clearing app data removes the list; plans lost that way, or
+created before this storage existed, cannot be recovered from the server,
+whose list lacks the original creation inputs. Form drafts, navigation and the
+moved-session tag are not saved.
+
+At start the app reads the saved list before anything can change it. While it
+reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or
+an empty list. If the saved data cannot be read (damaged, or written by a newer
+version), they show 저장된 계획을 불러오지 못했어요 with 다시 불러오기, which reads
+the file again and sends nothing. The file is never deleted, reset or
+overwritten, and generating, adjusting and reloading stay unavailable until it
+loads. Once loaded, home shows 저장된 계획 N개가 있어요.
+
+The whole list is saved after every generation, adjustment (live or demo),
+reload, and change to a reload-required or missing state. Until that save
+finishes, generating, adjusting and reloading wait. If it fails, the new result
+stays on screen but may not survive closing the app: the screen shows
+기기에 계획을 저장하지 못했어요 with 다시 저장하기, home compares the shown and
+saved counts, and changed entries in the list carry 저장 안 됨. 다시 저장하기 only
+writes the local file; it never repeats the generation, adjustment or reload.
+A new plan whose save failed stays on the generation screen, which also offers
+저장하지 않은 계획 보기. Plans keep their numbers, and the next generation gets the
+next number after the highest saved one.
+
+**Closing the app during a request.** A live adjustment, including 다시 시도,
+is sent only after the plan has been saved as needing a reload, together with
+the chosen session; if that save fails, nothing is sent and the selection waits
+for a new tap. If the app is closed or killed before the result is saved,
+reopening the plan shows its earlier rows, the chosen session selected but
+disabled, and 최신 계획 불러오기, whether or not the server applied the change.
+The app never resends it or reloads by itself. A reload interrupted the same way
+stays required. A confirmed failure (422, 503, …) is saved as it is, so after a
+restart the plan can be adjusted again with a new selection; the old retry is
+not kept. A generation that had not returned is neither added nor repeated,
+even if the server created a plan file. Demo work only changes the device and
+restarts from the last saved list.
 
 On a plan, choose exactly one missed study session (`study-N`); existing
 schedules (`external-N`) are shown but cannot be chosen. A live plan whose
@@ -180,7 +225,7 @@ build. What follows depends on the failure:
 | --- | --- | --- |
 | 422, 500, 502, 503, other statuses | 422: Korean explanation of a recognized cause (see [Validation errors](#validation-errors)), or 요청 정보를 확인하지 못했어요; other errors use app-defined wording | 다시 시도 resends the identical request; choosing another session builds a new one |
 | 404 without `PLAN_NOT_FOUND` (wrong URL or old server) | API 경로를 찾을 수 없어요 … (HTTP 404) | 다시 시도, as above; the plan is not treated as deleted |
-| 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted for the rest of the session; 목록으로 or 새 계획 만들기 |
+| 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted, also after a restart; 목록으로 or 새 계획 만들기 |
 | 409 `PLAN_CONFLICT` | 서버의 계획이 변경되었어요 … | 최신 계획 불러오기 |
 | Any other 409, lost connection or timeout, unreadable or mismatched 200 | 조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 … | 최신 계획 불러오기 |
 
@@ -197,6 +242,10 @@ error or a retry; the other weeks can still be browsed. Another
 plan's selection or outcome is never carried over, and switching between plans
 that need no reload still starts with no selection.
 Screen entry and rotation send nothing; only the explicit button does.
+Whenever study sessions are shown as choices but cannot be chosen (for
+example while a request runs or a reload is required), their cards turn grey
+and read 선택 변경 불가;
+the chosen session keeps its marker, and existing schedules stay plain rows.
 
 **Reload.** 최신 계획 불러오기 sends one
 `GET /api/v1/study-plans?schedule_csv_file=<identity>` (the plan's identity,
@@ -232,7 +281,7 @@ Submitting the same session again is disabled (다른 일정을 선택해 주세
 because it would give the same result. Choosing a different study session
 allows a new attempt, and 목록으로 and 새 계획 만들기 are offered. The plan's
 own windows never change; a new plan can use different study times. Nothing is
-saved.
+sent to a server; the moved rows are saved on the device like any other change.
 
 **Live contract.** The app always sends four fields to
 `POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from
@@ -397,8 +446,8 @@ time. Live adjustment results mean nothing until the backend dependency in
 
 - Written exam only; practical-exam support is an open decision.
 - Not tested on a physical device; TalkBack support is incomplete.
-- Form state and the generated-plan list are held in memory and are lost if
-  the process is killed.
+- Form state is held in memory and is lost if the process is killed. The
+  generated-plan list is saved on this device only (no sync or server import).
 - Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
 - Proven live insufficient capacity arrives as HTTP 422 and is shown as described
   in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It

@@ -54,25 +54,43 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
-/** The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation. */
+/**
+ * The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation, and
+ * its plans are restored from and saved on the device.
+ */
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
+    val storage by viewModel.storage.collectAsStateWithLifecycle()
 
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
-            HomeScreen(plans.size, onCreate = { nav.fromHome(Routes.CERTIFICATION) }, onAdjust = { nav.fromHome(Routes.PLAN_LIST) })
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
+            HomeScreen(
+                plans = plans,
+                savedPlans = savedPlans,
+                storage = storage,
+                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                onRetryLoad = viewModel::retryLoad,
+                onRetrySave = viewModel::retrySave,
+            )
         }
         composable(Routes.PLAN_LIST) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             PlanListScreen(
                 plans = plans,
+                savedPlans = savedPlans,
+                storage = storage,
                 onOpen = { ordinal -> if (viewModel.selectPlan(ordinal)) nav.go(Routes.ADJUST) },
                 onCreate = { nav.fromHome(Routes.CERTIFICATION) },
                 onBack = { nav.popBackStack() },
+                onRetryLoad = viewModel::retryLoad,
+                onRetrySave = viewModel::retrySave,
             )
         }
         composable(Routes.ADJUST) {
@@ -85,12 +103,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 PlanAdjustmentScreen(
                     plan = plan,
                     selection = selection,
+                    storage = storage,
                     onSelect = viewModel::selectFailedSession,
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
                     onBack = { nav.popBackStack() },
                     onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                    onRetrySave = viewModel::retrySave,
                 )
             }
         }
@@ -128,6 +148,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             AvailabilityScreen(
                 form = form,
                 generating = generation == GenerationState.Loading,
+                plansSaved = storage == PlanStorage.Ready,
                 onEnable = viewModel::setDayEnabled,
                 onStep = viewModel::stepDuration,
                 onStart = viewModel::setDayStart,
@@ -137,19 +158,23 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
         // Each result destination collects the flow itself, so its first frame sees the
         // current value (a host-level collector could still hold the previous result).
+        // A new plan is shown once it is saved; a failed save stays here with its own retry.
         composable(Routes.GENERATE) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
-            LaunchedEffect(generation) {
+            LaunchedEffect(generation, storage) {
                 when (generation) {
-                    is GenerationState.Success -> nav.showResult(Routes.PLAN)
+                    is GenerationState.Success -> if (storage == PlanStorage.Ready) nav.showResult(Routes.PLAN)
                     is GenerationState.DemoShortfall -> nav.showResult(Routes.SHORTFALL)
                     else -> Unit
                 }
             }
             GenerateScreen(
                 state = generation,
+                storage = storage,
                 onRetry = viewModel::retryGeneration,
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                onRetrySave = viewModel::retrySave,
+                onShowPlan = { nav.showResult(Routes.PLAN) },
             )
         }
         // Reads the stored plan, so an adjustment made from the list is shown here too.

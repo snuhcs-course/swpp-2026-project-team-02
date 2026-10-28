@@ -16,8 +16,10 @@ import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.components.AppScreen
 import com.swpp.licenseplanner.ui.components.Heading
+import com.swpp.licenseplanner.ui.components.LoadingBlock
 import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
@@ -30,33 +32,49 @@ import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.Paper
 
 /**
- * Plans generated in this app process, distinguished by ordinal and dates.
- * The list needs no server route and is lost when the process ends. A visual extension of
- * the existing card components; no Figma frame exists.
+ * Plans saved on this device, distinguished by ordinal and dates. The list needs no server
+ * route and is never imported from the server. Until the saved plans are read it shows that
+ * state instead of an empty list. A visual extension of the existing card components; no Figma
+ * frame exists.
  */
 @Composable
-fun PlanListScreen(plans: List<SessionPlan>, onOpen: (Int) -> Unit, onCreate: () -> Unit, onBack: () -> Unit) {
+fun PlanListScreen(
+    plans: List<SessionPlan>,
+    savedPlans: List<SessionPlan>,
+    storage: PlanStorage,
+    onOpen: (Int) -> Unit,
+    onCreate: () -> Unit,
+    onBack: () -> Unit,
+    onRetryLoad: () -> Unit,
+    onRetrySave: () -> Unit,
+) {
+    val restored = storage != PlanStorage.Loading && storage != PlanStorage.LoadFailure
     AppScreen(
         title = "조정할 계획",
         onNav = onBack,
-        footer = {
-            if (plans.isEmpty()) PrimaryButton("계획 생성", onCreate) else SecondaryButton("새 계획 만들기", onCreate)
-        },
+        footer = if (restored) {
+            { if (plans.isEmpty()) PrimaryButton("계획 생성", onCreate) else SecondaryButton("새 계획 만들기", onCreate) }
+        } else null,
     ) {
-        Heading("어떤 계획을 조정할까요?", "앱을 실행한 동안 만든 계획이에요. 앱을 완전히 종료하면 목록이 사라져요.")
-        if (plans.isEmpty()) {
-            OutlinedCard {
+        Heading("어떤 계획을 조정할까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
+        if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
+        StorageAlert(storage, onRetryLoad, onRetrySave)
+        when {
+            !restored -> Unit // the loading or failure state above stands in for the list
+            plans.isEmpty() -> OutlinedCard {
                 Text("아직 만든 계획이 없어요", style = MaterialTheme.typography.titleSmall, color = Ink)
                 Note("계획을 먼저 만들면 여기에서 골라 조정할 수 있어요.")
             }
-        } else {
-            for (plan in plans) PlanRow(plan) { onOpen(plan.ordinal) }
+            else -> {
+                val unsaved = if (storage == PlanStorage.SaveFailure) unsavedOrdinals(plans, savedPlans) else emptySet()
+                for (plan in plans) PlanRow(plan, plan.ordinal in unsaved) { onOpen(plan.ordinal) }
+            }
         }
     }
 }
 
 @Composable
-private fun PlanRow(plan: SessionPlan, onClick: () -> Unit) {
+private fun PlanRow(plan: SessionPlan, unsaved: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.large,
@@ -74,6 +92,7 @@ private fun PlanRow(plan: SessionPlan, onClick: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("공부 일정 ${plan.studyCount}개", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                 if (!plan.hasIdentity) Tag("조정 불가")
+                if (unsaved) Tag("저장 안 됨")
             }
         }
     }

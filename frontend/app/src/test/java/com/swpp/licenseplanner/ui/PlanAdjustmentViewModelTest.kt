@@ -6,9 +6,12 @@ import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.ApiJson
+import com.swpp.licenseplanner.data.BytesPlanStore
 import com.swpp.licenseplanner.data.DemoAdjustmentRepository
 import com.swpp.licenseplanner.data.LiveAdjustmentRepository
+import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
+import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
@@ -113,9 +116,14 @@ class PlanAdjustmentViewModelTest {
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
-    /** A loaded, complete form with Monday 18:00–20:00 (plan A's windows). */
-    private fun TestScope.viewModel(planning: PlanningRepository, adjustment: AdjustmentRepository) =
-        PlanFormViewModel(FakeQuestions(QuestionOutcome.Loaded(TestFixtures.publicQuestions())), planning, adjustment, LocalDate.of(2026, 10, 5)).apply {
+    /** A loaded, complete form with Monday 18:00–20:00 (plan A's windows) and a restored empty collection. */
+    private fun TestScope.viewModel(planning: PlanningRepository, adjustment: AdjustmentRepository) = PlanFormViewModel(
+        FakeQuestions(QuestionOutcome.Loaded(TestFixtures.publicQuestions())),
+        planning,
+        adjustment,
+        LocalDate.of(2026, 10, 5),
+        BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
+    ).apply {
             selectCertification(CERTIFICATION_ID)
             setExamDate(LocalDate.of(2026, 11, 16))
             setLevel(CurrentLevel.INTERMEDIATE)

@@ -18,6 +18,7 @@ import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
+import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.adjustmentMessage
 import com.swpp.licenseplanner.ui.components.AlertCard
 import com.swpp.licenseplanner.ui.components.AppScreen
@@ -67,21 +68,25 @@ private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
  * shown rows stay as an unconfirmed copy and only reading the latest saved plan is offered.
  * Day and session cards reuse the plan screen's rendering (frame 2007:253). While a request
  * runs, back and every other action are held so it is neither abandoned nor repeated.
+ * Requests wait while the plans are being saved or after a failed save; viewing does not.
  */
 @Composable
 fun PlanAdjustmentScreen(
     plan: SessionPlan,
     selection: AdjustmentSelection,
+    storage: PlanStorage,
     onSelect: (String) -> Unit,
     onSubmit: () -> Unit,
     onRetry: () -> Unit,
     onReload: () -> Unit,
     onBack: () -> Unit,
     onCreate: () -> Unit,
+    onRetrySave: () -> Unit,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
     val busy = loading || state == AdjustmentState.Reloading
+    val canSend = storage == PlanStorage.Ready
     BackHandler(enabled = busy) {}
     val mode = adjustmentMode(plan, state)
 
@@ -117,12 +122,12 @@ fun PlanAdjustmentScreen(
                     SecondaryButton("새 계획 만들기", onCreate)
                 }
                 AdjustmentMode.ReloadNeeded -> {
-                    PrimaryButton("최신 계획 불러오기", onReload)
+                    PrimaryButton("최신 계획 불러오기", onReload, enabled = canSend)
                     SecondaryButton("목록으로", onBack)
                 }
                 AdjustmentMode.Reloading -> PrimaryButton("불러오는 중…", onReload, enabled = false)
                 AdjustmentMode.ReloadFailed -> {
-                    PrimaryButton("최신 계획 다시 불러오기", onReload)
+                    PrimaryButton("최신 계획 다시 불러오기", onReload, enabled = canSend)
                     SecondaryButton("목록으로", onBack)
                 }
                 AdjustmentMode.NoIdentity -> {
@@ -131,7 +136,7 @@ fun PlanAdjustmentScreen(
                 }
                 AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onBack)
                 AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure) {
-                    PrimaryButton("다시 시도", onRetry)
+                    PrimaryButton("다시 시도", onRetry, enabled = canSend)
                     SecondaryButton("목록으로", onBack)
                 } else if (state == AdjustmentState.DemoNoSlot) {
                     // The same selection would give the same result; another session or a new plan can.
@@ -142,7 +147,7 @@ fun PlanAdjustmentScreen(
                     PrimaryButton(
                         if (loading) "조정하는 중…" else "선택한 일정 조정하기",
                         onSubmit,
-                        enabled = !loading && selection.failedScheduleId != null,
+                        enabled = !loading && selection.failedScheduleId != null && canSend,
                         subtitle = if (!loading && selection.failedScheduleId == null) "놓친 공부 일정을 하나 골라 주세요" else null,
                     )
                 }
@@ -159,6 +164,7 @@ fun PlanAdjustmentScreen(
                 Note("일정을 기기 안에서 옮겨요. 서버에 저장되지 않고 AI 결과도 아니에요.")
             }
         }
+        StorageAlert(storage, onRetryLoad = {}, onRetrySave = onRetrySave)
         if (state == AdjustmentState.Reloaded && mode != AdjustmentMode.Missing) {
             MutedBox {
                 Text("최신 저장 계획을 불러왔어요", style = MaterialTheme.typography.titleSmall, color = Ink)
