@@ -74,7 +74,7 @@ changed; CI starts from a fresh checkout, so its tests always run.
 | Flavor | Needs backend | Questions | Plans | Adjustment |
 | --- | --- | --- | --- | --- |
 | `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen | Local rule, no network |
-| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (Gemini, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
+| `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (OpenRouter `openai/gpt-6-luna`, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
 calculation, not backend or AI output. The live flavor never falls back to demo
@@ -83,13 +83,13 @@ data: on failure it shows an error with retry and keeps all inputs.
 ## Live backend
 
 The live flavor connects to this repository's backend. Start it from `backend/`
-with the project's Python environment and `GEMINI_API_KEY` configured in
-`backend/.env`:
+with the project's Python environment and `OPENROUTER_API_KEY` configured in
+the backend process environment or `backend/.env`:
 
 ```bash
 conda activate swpp
 cd backend
-python api_server.py    # http://127.0.0.1:8000/api/v1; GEMINI_API_KEY in backend/.env
+python api_server.py    # http://127.0.0.1:8000/api/v1; OPENROUTER_API_KEY on the backend
 ```
 
 The app's default API URL is `http://10.0.2.2:8000/api/v1`, which reaches the
@@ -103,9 +103,10 @@ the live variant with:
 For a USB-connected device, run `adb reverse tcp:8000 tcp:8000` and set the
 build property to `http://127.0.0.1:8000/api/v1`. Debug builds allow cleartext
 HTTP only to `10.0.2.2`, `127.0.0.1`, and `localhost`. API keys stay in the
-backend; the app never calls Gemini directly.
+backend; the app never calls the model provider directly. The live API URL and
+contract are unchanged by the backend's model choice.
 
-Planning runs Gemini synchronously and can take tens of seconds (request timeout
+Planning calls the model synchronously and can take tens of seconds (request timeout
 120 s). The matching routes and JSON contract are documented in
 [`backend/FRONTEND_INTEGRATION_GUIDE.md`](../backend/FRONTEND_INTEGRATION_GUIDE.md).
 
@@ -276,20 +277,20 @@ unreadable unrelated plan still makes the whole list fail (500). An older server
 without the list route answers the reload with a route 404, which the app
 reports as such and keeps the plan blocked. The client recovery flow above is
 checked against MockWebServer and a scripted local server only;
-Android/Gemini same-file verification against the real backend is still
-pending.
+Android/OpenRouter Luna same-file verification against the real backend is
+still pending.
 
 ## Verification
 
 - Unit tests pass for both flavors (JVM, with MockWebServer for HTTP).
 - `contract_checks/verify_request.py` checks the request the app serializes
-  against a backend revision's source, offline (no server or Gemini). CI uses
+  against a backend revision's source, offline (no server or model). CI uses
   `--backend-ref HEAD`, the backend in the same checkout.
 - Demo and live flows were run end to end on an emulator and compared with the
   Figma design.
 - Plan adjustment: JVM tests cover the request body, response checks, the demo
   rule and the session/adjustment state. The demo flow and the live screens
-  (against a scripted local test server, not the backend or Gemini) were run on
+  (against a scripted local test server, not the backend or model) were run on
   an emulator. Adjustment against a real backend is not verified yet (see the
   backend dependency above).
 - Adjustment error recovery: JVM tests (MockWebServer) cover the 404/409
@@ -297,7 +298,7 @@ pending.
   request sequences such as conflict → failed reload → reload → fresh
   adjustment with no repeated POST. Emulator checks use the controlled server
   in [Controlled adjustment server](#controlled-adjustment-server). Neither is
-  evidence about the real backend or Gemini.
+  evidence about the real backend or model.
 - Successive requests: JVM tests (`ApiHttpTest`) send requests back to back on
   one shared client to a local server that answers HTTP/1.0 and closes the
   connection after every response without saying so: an immediate identical
@@ -367,10 +368,10 @@ between actions (each tap within about 5 s of the previous result):
   away; both POSTs return 200.
 
 These checks show how the app handles the scripted responses. They are not
-evidence about the real backend or Gemini.
+evidence about the real backend or model.
 
 Passing CI (unit tests, contract check, coverage, build, and lint) is offline
-evidence only. It does not run the backend server, Gemini planning, an emulator,
+evidence only. It does not run the backend server, live model planning, an emulator,
 or the UI; those still need the manual live and emulator checks above.
 
 ## Evaluation inputs
@@ -386,7 +387,7 @@ correctly (B, B, A, A, C), with preparation starting 2026-10-19.
 | A: adjustment | 2026-12-14; Mon 18:00 for 2 h, Tue 18:00 for 1 h, Wed 18:00 for 2 h | Six sessions. Adjusting `study-1` moves it to 10/26 19:00–20:00; adjusting it again moves it to 10/28 19:00–20:00. |
 | B: no free slot | 2026-11-02; Mon, Wed, Fri 18:00 for 1 h | Six sessions fill every slot; adjusting one reports 옮길 수 있는 시간이 없어요. |
 
-In the live build, Gemini output varies, so run each case several times. Check
+In the live build, model output varies, so run each case several times. Check
 the returned `schedules` against the inputs: sessions inside the chosen windows,
 no overlaps, everything before the exam date, topic coverage, and response
 time. Live adjustment results mean nothing until the backend dependency in
@@ -398,7 +399,7 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Not tested on a physical device; TalkBack support is incomplete.
 - Form state and the generated-plan list are held in memory and are lost if
   the process is killed.
-- Live plans come from Gemini, so session counts can vary for the same inputs.
+- Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
 - Proven live insufficient capacity arrives as HTTP 422 and is shown as described
   in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It
   does not open the demo shortfall screen; the warning-origin exam-date editor

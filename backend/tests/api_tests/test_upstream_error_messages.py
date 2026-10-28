@@ -1,6 +1,9 @@
 """Public HTTP error messages hide upstream diagnostics but keep useful input explanations."""
+import contextlib
 import copy
+import io
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -12,9 +15,10 @@ from urllib.request import Request, urlopen
 
 import api_server
 import api_service
+import openrouter_client
 from api_server import CONFIGURATION_MESSAGE, DEFAULT_API_CONFIG, UPSTREAM_MESSAGES, make_handler
-from license_planner.agent import GeminiToolAgent
-from schedule_adjuster.agent import GeminiAdjustmentAgent
+from openrouter_client import InferenceConfigurationError
+from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.settings import AGENT_MAX_STEPS
 from study_plan_store import StudyPlanStore
@@ -23,8 +27,10 @@ RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_to
                       .read_text(encoding="utf-8"))
 GENERATION_REQUEST = RECORDED["topic_errors_then_build_on_last_request"]["request"]
 SECRET_TOPIC = "private-topic-argument-7f3a"
+SYNTHETIC_KEY = "synthetic-openrouter-key-0d4e"
+PROVIDER_BODY = "provider-body-quota-detail-6b2f"
 SENTINELS = (SECRET_TOPIC, "Traceback", "/Users/someone/backend/.env", "RESOURCE_EXHAUSTED",
-             "tool trace", "calls:")
+             "tool trace", "calls:", SYNTHETIC_KEY, PROVIDER_BODY, "OPENROUTER_API_KEY", "openrouter")
 ROWS = [
     {"schedule_id": "study-1", "start_date": "2026/10/19/18/00",
      "end_date": "2026/10/19/19/00", "topic": SECRET_TOPIC},
@@ -33,22 +39,36 @@ ROWS = [
 ]
 WINDOWS = {"monday": [{"start": "18:00", "end": "22:00"}]}
 DIAGNOSTIC = (f"Agent exceeded max steps; tool trace: [{{'arguments': {{'topic': '{SECRET_TOPIC}'}}}}] "
-              "Gemini request failed: HTTP 429 RESOURCE_EXHAUSTED Traceback at /Users/someone/backend/.env")
+              "OpenRouter request failed: HTTP 429 RESOURCE_EXHAUSTED Traceback at /Users/someone/backend/.env")
 
 
 def inspecting_topic_forever():
     """The production adjustment loop with a provider that only ever inspects the topic."""
-    class Agent(GeminiAdjustmentAgent):
+    class Agent(AdjustmentAgent):
         def __init__(self):
             super().__init__(api_key="dummy-key")
 
-        def _ask_model(self, contents):
+        def _ask_model(self, input_items):
             self.api_request_count += 1
             name, args = (("inspect_schedule", {"schedule_id": "study-1"}) if self.api_request_count == 1
                           else ("inspect_topic_schedule", {"topic": SECRET_TOPIC}))
-            return {"candidates": [{"content": {"role": "model", "parts": [
-                {"functionCall": {"name": name, "args": args}}]}}]}
+            return {"status": "completed", "output": [{"type": "function_call", "name": name,
+                                                       "call_id": f"call_{self.api_request_count}",
+                                                       "arguments": json.dumps(args)}]}
     return Agent
+
+
+@contextlib.contextmanager
+def openrouter_key(value):
+    """Use a synthetic OpenRouter key, or none, with local key files redirected to an empty directory."""
+    with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"GEMINI_API_KEY": "legacy-key"}), \
+            patch("license_planner.settings.DOTENV_PATH", Path(temp) / "planner.env"), \
+            patch("schedule_adjuster.settings.DOTENV_PATH", Path(temp) / "adjuster.env"), \
+            patch("schedule_adjuster.settings.WORKSPACE_DOTENV_PATH", Path(temp) / "workspace.env"):
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        if value is not None:
+            os.environ["OPENROUTER_API_KEY"] = value
+        yield
 
 
 class UpstreamErrorMessageTests(unittest.TestCase):
@@ -91,7 +111,7 @@ class UpstreamErrorMessageTests(unittest.TestCase):
             self.assertNotIn(sentinel, json.dumps(response[1], ensure_ascii=False))
 
     def test_adjustment_step_limit_does_not_expose_the_tool_trace(self):
-        with patch.object(api_service, "GeminiAdjustmentAgent", inspecting_topic_forever()):
+        with patch.object(api_service, "AdjustmentAgent", inspecting_topic_forever()):
             response = self.post("/schedules/adjust", self.adjust_payload)
         self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1/schedules/adjust"])
         self.assert_store_unchanged()
@@ -99,22 +119,31 @@ class UpstreamErrorMessageTests(unittest.TestCase):
             inspecting_topic_forever()().adjust(api_service.AdjustmentRequest(
                 "study-1", tuple(parse_schedule_rows(ROWS))))
 
-    def test_generation_provider_failure_does_not_expose_details(self):
-        def failing_provider(agent, contents, tools):
-            raise RuntimeError(f"Gemini request failed: {DIAGNOSTIC}")
+    def test_provider_failures_on_both_routes_do_not_expose_details(self):
+        routes = {"/study-plans": GENERATION_REQUEST, "/schedules/adjust": self.adjust_payload}
+        for path, payload in routes.items():
+            for status in (401, 402, 429, 503):
+                attempts = []
 
-        with patch.object(GeminiToolAgent, "_ask_model", failing_provider), \
-                patch("license_planner.agent.GEMINI_API_KEY", "test-key"):
-            response = self.post("/study-plans", GENERATION_REQUEST)
-        self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1/study-plans"])
+                def rejecting_provider(request, timeout=None):
+                    attempts.append(request.get_header("Authorization"))
+                    raise HTTPError(request.full_url, status, PROVIDER_BODY, {},
+                                    io.BytesIO(json.dumps({"error": {"message": PROVIDER_BODY}}).encode()))
+
+                with self.subTest(path=path, status=status), openrouter_key(SYNTHETIC_KEY), \
+                        patch.object(openrouter_client.urllib.request, "urlopen", rejecting_provider):
+                    response = self.post(path, payload)
+                    self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1" + path])
+                    self.assertEqual(attempts, [f"Bearer {SYNTHETIC_KEY}"], "one attempt, no retry")
         self.assert_store_unchanged()
 
     def test_runtime_and_configuration_failures_on_both_routes(self):
         routes = {"/study-plans": ("create_study_plan", GENERATION_REQUEST),
                   "/schedules/adjust": ("adjust_schedule", self.adjust_payload)}
         failures = [(RuntimeError(DIAGNOSTIC), 502, None),
-                    (RuntimeError(f"GEMINI_API_KEY missing; {DIAGNOSTIC}"), 503, CONFIGURATION_MESSAGE),
-                    (ValueError(f"GEMINI_API_KEY is required; {DIAGNOSTIC}"), 503, CONFIGURATION_MESSAGE)]
+                    (RuntimeError(f"Invalid API key; {DIAGNOSTIC}"), 502, None),
+                    (InferenceConfigurationError(f"OPENROUTER_API_KEY missing; {DIAGNOSTIC}"), 503,
+                     CONFIGURATION_MESSAGE)]
         for path, (handler_name, payload) in routes.items():
             for error, status, message in failures:
                 with self.subTest(path=path, error=type(error).__name__, status=status), \
@@ -123,10 +152,15 @@ class UpstreamErrorMessageTests(unittest.TestCase):
                     self.assert_public_error(response, status, message or UPSTREAM_MESSAGES["/api/v1" + path])
         self.assert_store_unchanged()
 
-    def test_missing_generation_key_uses_the_configuration_message(self):
-        with patch("license_planner.agent.GEMINI_API_KEY", ""):
-            response = self.post("/study-plans", GENERATION_REQUEST)
-        self.assert_public_error(response, 503, CONFIGURATION_MESSAGE)
+    def test_missing_openrouter_key_uses_the_configuration_message_on_both_routes(self):
+        def no_request(request, timeout=None):
+            raise AssertionError("no provider request without an OpenRouter key")
+
+        for path, payload in {"/study-plans": GENERATION_REQUEST, "/schedules/adjust": self.adjust_payload}.items():
+            with self.subTest(path), openrouter_key(None), \
+                    patch.object(openrouter_client.urllib.request, "urlopen", no_request):
+                response = self.post(path, payload)
+            self.assert_public_error(response, 503, CONFIGURATION_MESSAGE)
         self.assert_store_unchanged()
 
     def test_input_and_plan_errors_keep_their_explanations(self):
@@ -138,7 +172,7 @@ class UpstreamErrorMessageTests(unittest.TestCase):
                            "weekly_availability": {"monday": [{"start": "20:00", "end": "18:00"}]}}
         stale = copy.deepcopy(self.adjust_payload)
         stale["schedules"][1]["topic"] = "Changed"
-        with patch("license_planner.agent.GEMINI_API_KEY", ""):
+        with openrouter_key(None):
             status, body = self.post("/study-plans", reversed_dates)
             self.assertEqual((status, body["error"]),
                              (422, {"code": "INVALID_INPUT", "message": "preparation_start must be before exam_date"}))

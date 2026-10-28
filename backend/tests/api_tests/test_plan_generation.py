@@ -1,8 +1,11 @@
 """HTTP plan-generation outcomes with real tools, a scripted model and a temporary store."""
+import contextlib
 import copy
 import csv
 import io
+import itertools
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -14,16 +17,28 @@ from urllib.request import Request, urlopen
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
-from license_planner.agent import GeminiToolAgent
+from license_planner.agent import PlanningAgent
 
 RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
                       .read_text(encoding="utf-8"))
 SUCCESS_FIELDS = {"schedules", "schedule_csv", "schedule_csv_file", "schedule_csv_url", "agent_summary"}
+CALL_IDS = itertools.count(1)
+REAL_ASK_MODEL = PlanningAgent._ask_model
 
 
 def model_reply(name, args):
-    return {"candidates": [{"content": {"role": "model", "parts": [
-        {"functionCall": {"name": name, "args": args}}]}}]}
+    return {"status": "completed", "output": [{"type": "function_call", "call_id": f"call_{next(CALL_IDS)}",
+                                               "name": name, "arguments": json.dumps(args, ensure_ascii=False)}]}
+
+
+@contextlib.contextmanager
+def missing_openrouter_key():
+    """Run the real model seam with no OpenRouter key in the environment or local files; a legacy key stays set."""
+    with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"GEMINI_API_KEY": "legacy-key"}), \
+            patch("license_planner.settings.DOTENV_PATH", Path(temp) / ".env"), \
+            patch.object(PlanningAgent, "_ask_model", REAL_ASK_MODEL):
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        yield
 
 
 class PlanGenerationHttpTests(unittest.TestCase):
@@ -36,7 +51,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.model_requests = 0
         self.replies = []
 
-        def ask_model(agent, contents, tools):
+        def ask_model(agent, input_items, tools):
             self.model_requests += 1
             if not self.replies:
                 raise AssertionError("unexpected model request")
@@ -50,8 +65,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
 
         patches =[patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.store),
                    patch.object(api_service, "load_personal_availability", no_profile_access),
-                   patch.object(GeminiToolAgent, "_ask_model", ask_model),
-                   patch("license_planner.agent.GEMINI_API_KEY", "test-key")]
+                   patch.object(PlanningAgent, "_ask_model", ask_model)]
         for patcher in patches:
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -91,7 +105,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
         payload["preparation_start"], payload["exam_date"] = "2026/10/19/17/00", "2026/10/19/18/00"
 
-        with patch("license_planner.agent.GEMINI_API_KEY", ""):
+        with missing_openrouter_key():
             status, body = self.post(payload)
 
         self.assert_infeasible(status, body, "학습 주제 1개에도")
@@ -136,11 +150,10 @@ class PlanGenerationHttpTests(unittest.TestCase):
     def test_upstream_and_repeated_failures_are_not_reported_as_infeasible(self):
         request = RECORDED["topic_errors_then_build_on_last_request"]["request"]
         calls = RECORDED["topic_errors_then_build_on_last_request"]["model_tool_calls"]
-        repeated_build = model_reply("build_study_schedule", calls[2]["args"])
+        repeated_builds = [model_reply("build_study_schedule", calls[2]["args"]) for _ in range(3)]
         scenarios = {
-            "provider error": [RuntimeError("Gemini request failed: HTTP 429 RESOURCE_EXHAUSTED: quota")],
-            "repeated failing build": [model_reply(calls[1]["name"], calls[1]["args"]), repeated_build,
-                                       repeated_build, repeated_build],
+            "provider error": [RuntimeError("OpenRouter request failed: rate limited (HTTP 429)")],
+            "repeated failing build": [model_reply(calls[1]["name"], calls[1]["args"]), *repeated_builds],
         }
         for label, replies in scenarios.items():
             with self.subTest(label):
@@ -150,11 +163,12 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
                 self.assertNotIn("NOT_ENOUGH_TIME", body["error"]["message"])
                 self.assertEqual(self.saved_files(), [])
-        self.assertEqual(self.replies, [repeated_build])
+        self.assertEqual(self.replies, repeated_builds[2:])
 
-        with patch("license_planner.agent.GEMINI_API_KEY", ""):
+        with missing_openrouter_key():
             status, body = self.post(request)
         self.assertEqual((status, body["error"]["code"]), (503, "UPSTREAM_ERROR"))
+        self.assertEqual(self.saved_files(), [])
 
     def test_varied_invalid_proposals_for_feasible_input_exhaust_as_upstream_failure(self):
         recorded = RECORDED["topic_errors_then_build_on_last_request"]
@@ -170,11 +184,11 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.replies = [model_reply(profile["name"], profile["args"]), model_reply(analysis["name"], analysis["args"]),
                         *(model_reply("build_study_schedule", {"daily_topic_minutes": plan}) for plan in proposals)]
 
-        def recording_ask_model(agent, contents, tools):
+        def recording_ask_model(agent, input_items, tools):
             sent_tools.append(tools)
             return self.replies.pop(0)
 
-        with patch.object(GeminiToolAgent, "_ask_model", recording_ask_model):
+        with patch.object(PlanningAgent, "_ask_model", recording_ask_model):
             status, body = self.post(recorded["request"])
 
         self.assertEqual(status, 502, body)

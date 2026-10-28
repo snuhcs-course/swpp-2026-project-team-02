@@ -23,8 +23,10 @@ cd backend
 python api_server.py
 ```
 
-The API defaults to `http://127.0.0.1:8000/api/v1`. Configure the Gemini key in
-`backend/.env`; never put API keys in frontend files. `.env` files and local
+The API defaults to `http://127.0.0.1:8000/api/v1`. Study-plan generation and
+schedule adjustment call OpenRouter model `openai/gpt-6-luna`; configure
+`OPENROUTER_API_KEY` in the backend process environment or `backend/.env`. Never
+put API keys in frontend files. `.env` files and local
 availability profiles are excluded from Git.
 
 ## Frontend (Android)
@@ -46,8 +48,8 @@ offline backend unit suites in `backend/tests/` with coverage (not the scenario
 runners in `backend/scenarios/`), and the Android unit tests, request contract check,
 coverage, debug APK builds, and lint. Commands and report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
-[`frontend/README.md`](frontend/README.md#checks). CI uses no Gemini key, running
-backend, or emulator, so it does not verify live Gemini planning or the Android UI.
+[`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key, running
+backend, or emulator, so it does not verify live model planning or the Android UI.
 
 ## Open decisions
 

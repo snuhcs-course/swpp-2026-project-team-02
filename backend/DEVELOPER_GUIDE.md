@@ -9,8 +9,8 @@ Android 앱의 `live` flavor가 사용하는 요청·응답 계약과 로컬 연
 HTTP 경로·CORS·입력 오류와 개인 가능 시간 프로필을 적용한 API 일정 조정을
 한 번에 확인하려면 `python -m scenarios.run_api_availability_integration_test`를 실행합니다.
 임시 localhost 서버와 임시 프로필을 사용하므로 실제 `config/user_availability.json`
-은 변경되지 않습니다. 조정은 Gemini 실호출이므로 API 키, 네트워크, 쿼터가
-필요합니다. 입력은 `scenarios/inputs/api/`, 요약·결과 CSV는 `scenarios/results/api/`에
+은 변경되지 않습니다. 조정은 OpenRouter `openai/gpt-6-luna` 실호출이므로 `OPENROUTER_API_KEY`, 네트워크,
+사용 가능한 크레딧이 필요합니다. 입력은 `scenarios/inputs/api/`, 요약·결과 CSV는 `scenarios/results/api/`에
 기록됩니다.
 
 현재 HTTP 계층은 외부 서버 없이 개발할 수 있도록 Python 표준 라이브러리로
@@ -29,12 +29,12 @@ live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
 | 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 생성·조정된 계획 CSV 디렉터리 변경. 테스트용 임시 디렉터리 지정에 사용 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
-| API 비밀 키 | `backend/.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
+| API 비밀 키 | OS 환경 변수 또는 `backend/.env`의 `OPENROUTER_API_KEY` | 서버 전용 OpenRouter 인증 정보. 환경 변수가 우선하며 프론트엔드에 넣지 않음 |
 
 브라우저 기반 클라이언트를 별도로 사용할 때만 해당 개발 origin을
 `allowed_origins`에 추가합니다. Android 네이티브 앱은 브라우저 CORS 제한을
 적용받지 않습니다. 실제 배포 시에는 HTTPS 주소를 사용합니다. `.env`에는
-Gemini API 키만 둡니다.
+OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 이상 사용하지 않습니다.
 
 ### 엔드포인트
 
@@ -79,7 +79,7 @@ Gemini API 키만 둡니다.
 더미 문항의 정답도 제공하며, FE가 기본 비교 로직으로 `is_correct`를 계산합니다.
 Planning API는 재채점하지 않고, Agent가 문항마다 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
 정상 요청은 HTTP 200, 잘못된
-입력은 HTTP 422, Gemini 인증/통신 실패는 각각 HTTP 503/502, 알 수 없는
+입력은 HTTP 422, OpenRouter 키 설정 누락은 HTTP 503, OpenRouter 인증·크레딧·속도 제한·통신·응답 형식 실패는 HTTP 502, 알 수 없는
 내부 오류는 HTTP 500의 `{ "error": { "code", "message" } }` 형태입니다.
 운영 로그나 응답에 API 키를 기록하지 않습니다.
 
@@ -94,15 +94,15 @@ API를 실행하는 명령은 `python api_server.py`입니다. 기본 서버 설
 
 ## License Planner
 
-License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기존 일정을 받아 취약 토픽을 먼저 배치한 학습 일정을 CSV로 반환합니다. 날짜·시간 형식은 `YYYY/MM/DD/HH/MM`입니다. Gemini Agent는 날짜별·주제별 공부 시간 배분을 제안하고, Python 코드가 점수 통계와 시간표·기존 일정 검증 및 실제 시간 배치를 수행합니다.
+License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기존 일정을 받아 취약 토픽을 먼저 배치한 학습 일정을 CSV로 반환합니다. 날짜·시간 형식은 `YYYY/MM/DD/HH/MM`입니다. OpenRouter `openai/gpt-6-luna`를 쓰는 Agent는 날짜별·주제별 공부 시간 배분을 제안하고, Python 코드가 점수 통계와 시간표·기존 일정 검증 및 실제 시간 배치를 수행합니다.
 
 ## 현재 구현 범위
 
-- Gemini Agent가 자기평가 문장과 문항별·토픽별 점수를 직접 참고해 학습 분량을 정합니다. 수준을 3단계로 구간화하거나 배수를 적용하지 않습니다.
+- Agent가 자기평가 문장과 문항별·토픽별 점수를 직접 참고해 학습 분량을 정합니다. 수준을 3단계로 구간화하거나 배수를 적용하지 않습니다.
 - 준비 시작 시각과 시험 시각 사이에 Agent가 정한 토픽별 학습 시간을 배치합니다.
 - 날짜·시간 단위의 기존 일정 CSV와 겹치지 않는 슬롯을 찾고, 기존 일정도 결과에 포함합니다.
 - CSV 출력의 일정 ID는 외부 일정 `external-번호`, 공부 일정 `study-번호` 형식입니다.
-- Gemini function calling을 통해 자격증 조회, 문항별 토픽 분석, 일정 생성 도구를 호출하고, 도구 호출 기록을 확인할 수 있습니다.
+- OpenRouter Responses API function calling을 통해 자격증 조회, 문항별 토픽 분석, 일정 생성 도구를 호출하고, 도구 호출 기록을 확인할 수 있습니다.
 
 온라인 시험 자료 검색, 공식 시험 범위 자동 갱신, 실제 학습 콘텐츠 추천은 현재 범위에 포함하지 않습니다. 사용자별 반복 주간 공부 가능 시간은 JSON 프로필로 저장하고 일정 생성에 반영합니다.
 
@@ -119,20 +119,21 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 | `../frontend/` | Kotlin/Jetpack Compose Android 앱과 Gradle live API URL 설정 |
 | `scenarios/run_api_availability_integration_test.py` | 임시 프로필을 써서 HTTP·CORS·Agent 조정 전체 흐름 확인 |
 | `scenarios/inputs/api/`, `scenarios/results/api/` | API 통합 테스트 입력 fixture와 요약/CSV 결과 |
-| `scenarios/run_license_planner_test_cases.py` | 여러 실제 Gemini Agent 테스트를 실행하고 케이스별 결과/trace를 저장 |
+| `scenarios/run_license_planner_test_cases.py` | 여러 실제 OpenRouter Luna Agent 테스트를 실행하고 케이스별 결과/trace를 저장 |
 | `scenarios/run_license_planner_availability_test_cases.py` | 개인 가능 시간 저장·갱신·계획 반영을 API 없이 검증하는 테스트 러너 |
-| `license_planner/agent.py` | Gemini 모델 설정, ReAct 호출 루프, API 통신 |
+| `license_planner/agent.py` | 요청 한도·추론 강도·출력 토큰 한도, ReAct 호출 루프 |
+| `openrouter_client.py` | 두 Agent가 공유하는 OpenRouter 모델 ID·endpoint·timeout, 키 읽기, Responses API 요청·응답 검증 |
 | `license_planner/tools.py` | Agent의 자격증 조회·가중 점수 분석·일정 생성 도구와 스키마 |
 | `config/certifications.json` | 자격증 ID별 표시 이름과 학습 Topic 목록 |
 | `license_planner/catalog.py` | JSON 자격증 설정을 읽고 검증하는 카탈로그 |
 | `license_planner/scheduler.py` | 토픽별 가중 점수 통계, 가용 시간 계산, 시간 슬롯 배치 규칙 |
 | `license_planner/csv_io.py` | 기존 일정 CSV 파싱 및 결과 CSV 생성 |
 | `license_planner/models.py` | 사용자 요청, 일정 기간, 공부 블록 등 도메인 객체 |
-| `license_planner/settings.py` | CSV/날짜·시간 형식과 `.env` API 키 읽기 |
+| `license_planner/settings.py` | CSV/날짜·시간 형식과 OpenRouter API 키 읽기 |
 | `config/license_planner.json` | 레거시 설정 파일. 고정 세션 길이·일일 횟수·토픽별 세션 정책은 사용하지 않음 |
 | `license_planner/user_availability.py` | 개인용 주간 가능 시간 검증, JSON 저장 및 불러오기 |
 | `config/user_availability.json` | 개인 앱의 주간 가능 시간 설정. 로컬 사용자 데이터라 Git에서 제외 |
-| `.env` / `.env.example` | Gemini API 키 설정 및 설정 예시. 실제 키 파일은 Git에서 제외됩니다. |
+| `.env` / `.env.example` | OpenRouter API 키 설정 및 설정 예시. 실제 키 파일은 Git에서 제외됩니다. |
 | `tests/license_planner_tests/test_license_planner.py` | API를 호출하지 않는 로컬 단위 테스트 |
 | `scenarios/inputs/license_planner_availability/` | 개인 가능 시간 저장/갱신/요일·시간 적용/기본값/입력 오류 케이스 JSON |
 | `scenarios/results/license_planner_availability/` | 케이스별 계획 CSV와 도구 trace, 통합 요약 JSON |
@@ -145,7 +146,7 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 CLI 또는 앱 호출
   → JSON 입력 배열, 날짜, 점수, 주간 가능 시간 검증
   → 모델 호출 전 최소 가용 시간 확인 (부족하면 NOT_ENOUGH_TIME)
-  → Gemini Agent에 입력, 날짜별 가용 시간(분), 도구 스키마 전달
+  → OpenRouter Agent에 입력, 날짜별 가용 시간(분), 도구 스키마 전달
   → get_certification_profile
   → analyze_exam_results (분석된 Topic 수만큼의 최소 시간 확인)
   → build_study_schedule (성공하면 즉시 종료)
@@ -154,7 +155,9 @@ CLI 또는 앱 호출
 
 Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델은 사용자의 자기평가와 실제 점수 통계를 해석해 날짜별 공부 시간을 제안합니다. Python 도구는 입력 검증, 충돌 검사, 가용 시간 안에 일정 행 배치를 담당합니다.
 
-Agent는 최대 6번 Gemini를 호출합니다(`AGENT_MAX_STEPS`). `build_study_schedule`이 검증된 일정을 만들면 같은 응답의 남은 도구 호출을 실행하지 않고 즉시 종료하며, `agent_summary`는 모델을 다시 호출하지 않고 수용된 일정의 과목 수·총 분·블록 수로 만듭니다. 마지막 허용 호출에서 성공한 일정도 그대로 반환됩니다. 텍스트로만 완료를 주장하거나 실패한 `build_study_schedule`은 성공으로 처리하지 않습니다.
+Agent는 최대 6번 모델을 호출합니다(`AGENT_MAX_STEPS`). `build_study_schedule`이 검증된 일정을 만들면 같은 응답의 남은 도구 호출을 실행하지 않고 즉시 종료하며, `agent_summary`는 모델을 다시 호출하지 않고 수용된 일정의 과목 수·총 분·블록 수로 만듭니다. 마지막 허용 호출에서 성공한 일정도 그대로 반환됩니다. 텍스트로만 완료를 주장하거나 실패한 `build_study_schedule`은 성공으로 처리하지 않습니다.
+
+요청은 OpenRouter Responses API에 비스트리밍으로 보내며, 매 요청에 `reasoning.effort: low`, `max_output_tokens: 16384`(추론 토큰 포함), `store: false`, `parallel_tool_calls: false`, 현재 도구 선언과 지시문을 보냅니다. 이 값은 측정으로 정한 최적값이 아니라 시작 설정입니다. 서버가 대화를 저장하지 않으므로 Agent가 요청 안에서 대화 기록을 유지합니다. 직전 응답의 출력 항목(암호화된 추론 항목 포함)을 그대로 다음 요청에 붙이고, 각 도구 결과는 원래 호출의 `call_id`를 가진 `function_call_output`으로 돌려줍니다. 도구는 응답 안의 순서대로 실행하고, 실행 직전에 `call_id`가 비어 있지 않고 처음 나왔는지, 도구 이름이 제공한 목록에 있는지, `arguments`가 JSON 객체인지 확인합니다. 이 검사 실패, 모델 거절, 미완료(`incomplete`) 응답, 형식이 잘못된 응답은 입력 오류(422)가 아니라 upstream 실패(502)이며 계획을 저장하지 않습니다. 자동 재시도나 다른 모델·데모 데이터로의 전환은 없습니다.
 
 마지막 성공 이후 같은 도구를 같은 JSON 인자(객체 키 순서 무시)로 다시 호출해 같은 오류를 받으면, 다음 모델 요청 없이 실행을 중단하고 upstream 실패(HTTP 502)로 반환합니다. 인자를 고친 재시도는 호출 한도 안에서 계속 허용되고, 다른 도구 호출이 성공하면 이 기록은 초기화됩니다. 이 중단은 입력이 불가능하다는 증거가 아니므로 `NOT_ENOUGH_TIME`으로 바꾸지 않습니다.
 
@@ -255,17 +258,17 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 | 409 | `PLAN_CONFLICT` | 요청 일정이 저장된 계획과 다르거나 조정 중 파일이 변경됨 |
 | 500 | `STORAGE_ERROR` | 저장 계획 읽기·갱신 실패 |
 | 422 | `INVALID_INPUT` | 요청 JSON의 필드·형식·날짜·점수가 유효하지 않음 |
-| 502 | `UPSTREAM_ERROR` | Gemini 등 외부 서비스 통신 실패 |
-| 503 | `UPSTREAM_ERROR` | Gemini API 키 등 서버 측 upstream 설정이 누락됨 |
+| 502 | `UPSTREAM_ERROR` | OpenRouter 인증 거절·크레딧 소진·속도 제한·통신 실패·잘못된 모델 응답 |
+| 503 | `UPSTREAM_ERROR` | `OPENROUTER_API_KEY` 등 서버 측 upstream 설정이 누락됨 |
 | 500 | `INTERNAL_ERROR` | 예측하지 못한 서버 오류 |
 
-가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 코드 뒤의 한국어 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(Gemini 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 호환 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, Gemini 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
+가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 코드 뒤의 한국어 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(OpenRouter 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 호환 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, OpenRouter 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
 
 ## 점수와 일정 계산
 
-현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. Gemini Agent가 원문 자기평가와 토픽별 점수 통계를 직접 참고해 학습량을 정합니다.
+현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. Agent가 원문 자기평가와 토픽별 점수 통계를 직접 참고해 학습량을 정합니다.
 
-현재 `assessment_results` 경로에서는 Gemini Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단합니다. 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 내부 호환 경로만 입력 Topic 이름을 그대로 사용하며 현재 HTTP API·CLI 진단 흐름에는 사용되지 않습니다. Agent는 시험일까지의 기간, 자유형 자기평가, Topic별 점수와 사용자의 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 학습 시간을 제안합니다.
+현재 `assessment_results` 경로에서는 Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단합니다. 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 내부 호환 경로만 입력 Topic 이름을 그대로 사용하며 현재 HTTP API·CLI 진단 흐름에는 사용되지 않습니다. Agent는 시험일까지의 기간, 자유형 자기평가, Topic별 점수와 사용자의 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 학습 시간을 제안합니다.
 
 Agent는 날짜별·주제별 공부 시간(분)을 직접 제안합니다. 예를 들어 총 120분이고 용량이 비슷한 공부 가능 날짜가 2일이면 날짜별 약 60분씩 배정하도록 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다. 가용 시간 계산과 배치는 같은 빈 구간을 사용합니다. 준비 시작일과 시험일은 각 시각으로 잘라 내고, 바쁜 일정은 시작 포함·종료 제외 구간으로 빼며 겹치는 바쁜 일정은 한 번만 뺍니다. 각 빈 구간의 1분 미만 나머지는 버리고 정수 분만 합산합니다. 예를 들어 월요일 18:00–20:00 가능, 준비 시작 18:30, 시험 19:30, 바쁜 일정 18:45–19:05와 19:00–19:15이면 가용 시간은 30분입니다.
 
@@ -283,7 +286,7 @@ external-101,2026/10/12/18/00,2026/10/12/20/00,
 
 ## 설정과 실행
 
-`.env`에는 `GEMINI_API_KEY`만 설정합니다. 모델명(`gemini-3.5-flash-lite`), endpoint, 요청 시간 제한, Agent 반복 횟수 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
+`.env`에는 `OPENROUTER_API_KEY`만 설정합니다(OS 환경 변수가 우선). 모델명(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에, Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
 
 Python 3.10 이상을 사용하고, 이 프로젝트는 현재 Python 표준 라이브러리만 사용합니다. 단일 요청 실행 예시:
 
@@ -308,23 +311,23 @@ python -m unittest discover -s tests/license_planner_tests -p "test_license_plan
 python -m scenarios.run_license_planner_availability_test_cases
 ```
 
-개인 가능 시간 테스트 러너는 Gemini API 키 없이 동작하며 각 케이스에서 임시 JSON 파일을 만들어 설정 저장·불러오기·갱신을 검증합니다. 정상 계획은 케이스별 CSV, 첫 시작 시각과 호출한 로컬 도구는 trace JSON에 기록합니다. 입력 정의는 `scenarios/inputs/license_planner_availability/license_planner_availability_test_cases.json`, 출력은 `scenarios/results/license_planner_availability/`에서 확인합니다.
+개인 가능 시간 테스트 러너는 모델 API 키 없이 동작하며 각 케이스에서 임시 JSON 파일을 만들어 설정 저장·불러오기·갱신을 검증합니다. 정상 계획은 케이스별 CSV, 첫 시작 시각과 호출한 로컬 도구는 trace JSON에 기록합니다. 입력 정의는 `scenarios/inputs/license_planner_availability/license_planner_availability_test_cases.json`, 출력은 `scenarios/results/license_planner_availability/`에서 확인합니다.
 
-실제 모델과 도구 호출을 확인하려면 API 키가 설정된 상태에서 다음을 실행합니다. Gemini API 요청이 케이스마다 발생합니다.
+실제 모델과 도구 호출을 확인하려면 `OPENROUTER_API_KEY`가 설정된 상태에서 다음을 실행합니다. OpenRouter 요청이 케이스마다 발생합니다.
 
 ```powershell
 python -m scenarios.run_license_planner_test_cases --case-id license_planner_case_04_personal_availability_api
 ```
 
-이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 Gemini에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제, 준비 기간 내 일정 여부, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 공부 날짜는 Gemini가 정하므로 정확한 시작 시각은 검사하지 않습니다. 결과 CSV와 상세 trace는 `scenarios/results/license_planner/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 Gemini 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
+이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 OpenRouter `openai/gpt-6-luna`에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제, 준비 기간 내 일정 여부, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 공부 날짜는 모델이 정하므로 정확한 시작 시각은 검사하지 않습니다. 결과 CSV와 상세 trace는 `scenarios/results/license_planner/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 실호출 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
 
 각 케이스는 `scenarios/inputs/license_planner/license_planner_test_cases.json`에서 `request` 객체에 API 요청 필드 전체를 JSON으로 지정합니다. `assessment_results`, `busy_schedules`, `weekly_availability`를 포함해 HTTP API 계약을 확인합니다. 실제 API 응답과 일정은 통합 테스트에서 검증합니다. 실행 결과는 다음처럼 저장됩니다.
 
 - `<case_id>_result.csv`: 외부 일정과 공부 일정
-- `<case_id>_tool_trace.json`: HTTP 상태, 실제 호출 순서/인자, 예상 및 실제 일정, 통과 여부
+- `<case_id>_tool_trace.json`: HTTP 상태, 실제 호출 순서/인자, 예상 및 실제 일정, 통과 여부, `inference`(선택 모델, 모델 요청 수, 경과 시간, 응답별 반환 모델과 토큰·비용 사용량. 반환되지 않은 값은 `null`)
 - `license_planner_test_summary.json`: 모든 케이스의 요약
 
-통합 테스트 통과 기준은 HTTP 200, 자격증 프로필 조회 → 문항별 토픽 분석 → 일정 생성 도구 순서, 예상 첫 토픽, 준비 기간 내 일정, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음, CSV 반환입니다. Gemini가 공부 날짜를 정하므로 정확한 시작 시각은 고정하지 않습니다. 자기평가는 학습 분량의 입력이며 별도의 수준 평가 도구는 없습니다. HTTP 문항 매핑은 선택 자격증 카탈로그의 토픽을 사용합니다.
+통합 테스트 통과 기준은 HTTP 200, 자격증 프로필 조회 → 문항별 토픽 분석 → 일정 생성 도구 순서, 예상 첫 토픽, 준비 기간 내 일정, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음, CSV 반환입니다. 모델이 공부 날짜를 정하므로 정확한 시작 시각은 고정하지 않습니다. 자기평가는 학습 분량의 입력이며 별도의 수준 평가 도구는 없습니다. HTTP 문항 매핑은 선택 자격증 카탈로그의 토픽을 사용합니다.
 
 ### 가용 시간 사전 확인·종료 흐름 개선 전후 비교
 
@@ -353,7 +356,7 @@ Controlled15 Charts run03 같은 실패는 아직 남아 있습니다. Task 3 �
 
 ## Schedule Adjuster
 
-Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 실패한 자격증 공부 일정을 옮기거나 취소된 외부 일정을 제거합니다. Gemini Agent는 적절한 변경 도구를 선택하고, 일정 검증·이동·삭제·CSV 직렬화는 Python 코드가 수행합니다. 이 앱은 License Planner와 독립적으로 실행할 수 있습니다.
+Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 실패한 자격증 공부 일정을 옮기거나 취소된 외부 일정을 제거합니다. OpenRouter Agent는 적절한 변경 도구를 선택하고, 일정 검증·이동·삭제·CSV 직렬화는 Python 코드가 수행합니다. 이 앱은 License Planner와 독립적으로 실행할 수 있습니다.
 
 ### 기능과 동작 규칙
 
@@ -441,9 +444,9 @@ external-101,2026/10/06/18/00,2026/10/06/20/00,
 | `WRONG_SCHEDULE_TYPE` | 공부 일정에 외부 일정 취소 도구를 호출하거나 반대로 호출함 |
 | `TOOL_PREREQUISITE_FAILED` | 대상 조회 전에 변경 도구를 호출함 |
 | `NO_AVAILABILITY_WINDOW` | 사용자 주간 시간표에 세션 길이를 수용할 수 있는 구간이 없음 |
-| `AGENT_ERROR` | Gemini 통신 실패, 최대 반복 초과, 변경 도구 미호출 등 Agent 실행 실패 |
+| `AGENT_ERROR` | OpenRouter 통신 실패, 잘못된 모델 응답, 최대 반복 초과, 변경 도구 미호출 등 Agent 실행 실패 |
 
-CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 코드 2를 반환합니다. 웹 API는 입력 검증 오류를 HTTP 422, Gemini 인증·통신 오류를 HTTP 503/502로 반환하며 응답 본문에 `error.code`와 `error.message`를 담습니다. 실제 API 응답 계약은 `FRONTEND_INTEGRATION_GUIDE.md`를 참고합니다.
+CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 코드 2를 반환합니다. 웹 API는 입력 검증 오류를 HTTP 422, OpenRouter 키 설정 누락을 HTTP 503, OpenRouter 인증·통신·응답 오류를 HTTP 502로 반환하며 응답 본문에 `error.code`와 `error.message`를 담습니다. 실제 API 응답 계약은 `FRONTEND_INTEGRATION_GUIDE.md`를 참고합니다.
 
 ### 폴더 및 파일
 
@@ -455,13 +458,13 @@ CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 �
 | `schedule_adjuster/schedule_logic.py` | ID 판정, 기간 충돌 검사, 사용자 가능 시간 안에서 공부 일정 이동, 외부 일정 제거 규칙 |
 | `schedule_adjuster/availability.py` | 공유 개인 시간 JSON 로드 및 형식 검증 |
 | `schedule_adjuster/tools.py` | Agent 도구 함수, 입력 검증, 도구 스키마 및 호출 이력 |
-| `schedule_adjuster/agent.py` | Gemini function calling ReAct 루프와 API 통신 |
-| `schedule_adjuster/settings.py` | API 키 로딩, 모델/API/Agent 설정, CSV 및 날짜 설정 |
+| `schedule_adjuster/agent.py` | OpenRouter function calling ReAct 루프 |
+| `schedule_adjuster/settings.py` | OpenRouter API 키 로딩, Agent 반복·추론·출력 한도, CSV 및 날짜 설정 |
 | `schedule_adjuster/README.md` | Schedule Adjuster 단독 실행 및 테스트 설명 |
 | `tests/schedule_adjuster_tests/test_schedule_adjuster.py` | API 없이 실행하는 로컬 단위 테스트 |
 | `scenarios/inputs/schedule_adjuster/` | 여러 통합 테스트 설정과 입력 CSV |
 | `scenarios/results/schedule_adjuster/` | 테스트 결과 CSV, 케이스별 도구 trace, 마지막 통합 실행 요약 |
-| `scenarios/run_schedule_adjuster_test_cases.py` | 설정에 정의된 케이스들을 실제 Gemini Agent로 실행하는 통합 테스트 러너 |
+| `scenarios/run_schedule_adjuster_test_cases.py` | 설정에 정의된 케이스들을 실제 OpenRouter Luna Agent로 실행하는 통합 테스트 러너 |
 
 ### Agent 도구 흐름
 
@@ -470,11 +473,11 @@ CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 �
 3. `reschedule_failed_study(schedule_id)`는 같은 주제의 다른 일정 이후 개인 시간표 안의 충돌 없는 구간으로 옮기며, 시간표 파일이 없을 때는 기존 규칙으로 처리합니다.
 4. 외부 일정이면 `remove_cancelled_external_schedule(schedule_id)`가 취소 행을 제거합니다.
 
-모델은 CSV를 직접 편집하거나 파일을 읽지 않습니다. 원본 일정은 Python 도구 상태 객체가 보유하며, 도구는 요청에서 지정한 대상 ID만 변경합니다. Agent 설정 모델은 현재 `gemini-3.5-flash-lite`이며, timeout·최대 반복 횟수·tool calling 모드는 `schedule_adjuster/settings.py` 상단에서 변경합니다.
+모델은 CSV를 직접 편집하거나 파일을 읽지 않습니다. 원본 일정은 Python 도구 상태 객체가 보유하며, 도구는 요청에서 지정한 대상 ID만 변경합니다. Agent 모델은 현재 OpenRouter `openai/gpt-6-luna`이며(`openrouter_client.py`), 최대 반복 횟수(5회)·추론 강도(`none`)·출력 토큰 한도(2048)는 `schedule_adjuster/settings.py` 상단에서 변경합니다. 도구 결과 연결 방식은 `schedule_adjuster/README.md`의 "모델 요청과 도구 연결"을 참고합니다.
 
 ### 실행 및 테스트
 
-`backend/.env` 또는 OS 환경 변수에 `GEMINI_API_KEY`를 설정합니다. 설정 로더는 먼저 `schedule_adjuster/.env`를 확인하고, 값이 없으면 `backend/.env`를 확인합니다. CLI 실행 예시:
+OS 환경 변수 또는 `backend/.env`에 `OPENROUTER_API_KEY`를 설정합니다. 설정 로더는 OS 환경 변수를 먼저 확인하고, 없으면 `schedule_adjuster/.env`, 그다음 `backend/.env`를 확인합니다. CLI 실행 예시:
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `
@@ -484,20 +487,20 @@ python -m schedule_adjuster.cli --schedule-id study-201 `
   2> scenarios/results/schedule_adjuster/manual_trace.txt
 ```
 
-Gemini API 없이 로직과 CSV 변환 단위 테스트를 실행하려면:
+실제 모델 API 없이 로직과 CSV 변환 단위 테스트를 실행하려면:
 
 ```powershell
 python -m unittest discover -s tests/schedule_adjuster_tests -v
 ```
 
-실제 Gemini API 호출과 도구 선택 순서를 검사하려면 `backend/`에서 통합 테스트 러너를 실행합니다. API 요청이 케이스마다 발생합니다.
+실제 OpenRouter 호출과 도구 선택 순서를 검사하려면 `backend/`에서 통합 테스트 러너를 실행합니다. API 요청이 케이스마다 발생합니다.
 
 ```powershell
 python -m scenarios.run_schedule_adjuster_test_cases
 python -m scenarios.run_schedule_adjuster_test_cases --case-id schedule_adjuster_case_05_reschedule_with_personal_availability
 ```
 
-케이스는 `scenarios/inputs/schedule_adjuster/schedule_adjuster_test_cases.json`에 추가합니다. 각 객체는 `case_id`, `schedule_id`, `schedule_csv`, `expected_action`, `expected_change_tool`을 지정하고, 개인 시간표를 별도 파일로 시험할 때 `availability_file`을 지정합니다. 이를 생략하면 기본 공유 프로필을 사용합니다. 다섯 번째 케이스는 수요일 20:00–22:00의 테스트 프로필을 불러와 실제 Gemini Agent가 고른 일정을 해당 시간 안에 옮기는지 검사합니다. `--case-id` 옵션으로 지정 케이스 하나만 실행할 수 있고 요약은 `<case_id>_summary.json`에 별도 저장됩니다. 전체 실행 결과는 `schedule_adjuster_test_summary.json`에 기록되므로 단일 케이스 실행이 전체 요약을 덮어쓰지 않습니다. 각 실행은 결과 CSV와 `<case_id>_tool_trace.json`을 생성합니다. trace에는 요청 횟수, 개인 시간표 적용·준수 여부, 대상 일정 충돌 여부, 기대/실제 작업 및 도구 순서, 다른 일정 행 보존 여부가 기록됩니다. 전체 실행은 모든 케이스가 `PASS`이고 종료 코드가 0인지 요약 JSON에서 확인합니다. 저장된 통과 결과는 최신 소스 변경을 자동 검증하지 않으므로 필요 시 러너를 다시 실행합니다.
+케이스는 `scenarios/inputs/schedule_adjuster/schedule_adjuster_test_cases.json`에 추가합니다. 각 객체는 `case_id`, `schedule_id`, `schedule_csv`, `expected_action`, `expected_change_tool`을 지정하고, 개인 시간표를 별도 파일로 시험할 때 `availability_file`을 지정합니다. 이를 생략하면 기본 공유 프로필을 사용합니다. 다섯 번째 케이스는 수요일 20:00–22:00의 테스트 프로필을 불러와 실제 OpenRouter Agent가 고른 일정을 해당 시간 안에 옮기는지 검사합니다. `--case-id` 옵션으로 지정 케이스 하나만 실행할 수 있고 요약은 `<case_id>_summary.json`에 별도 저장됩니다. 전체 실행 결과는 `schedule_adjuster_test_summary.json`에 기록되므로 단일 케이스 실행이 전체 요약을 덮어쓰지 않습니다. 각 실행은 결과 CSV와 `<case_id>_tool_trace.json`을 생성합니다. trace에는 요청 횟수, 개인 시간표 적용·준수 여부, 대상 일정 충돌 여부, 기대/실제 작업 및 도구 순서, 다른 일정 행 보존 여부가 기록됩니다. 전체 실행은 모든 케이스가 `PASS`이고 종료 코드가 0인지 요약 JSON에서 확인합니다. 저장된 통과 결과는 최신 소스 변경을 자동 검증하지 않으므로 필요 시 러너를 다시 실행합니다.
 
 ### 현재 한계와 후속 개발 결정
 

@@ -1,13 +1,14 @@
 # Android frontend API integration
 
 This guide documents the HTTP contract used by `frontend/`'s Android `live`
-flavor. Run the API from this repository's `backend/` directory. The API key is
-server-side only and must remain in `backend/.env`.
+flavor. Run the API from this repository's `backend/` directory. The OpenRouter
+API key is server-side only and must remain in the backend process environment or
+`backend/.env`.
 
 ## Run locally
 
-Start the backend with the project Python environment and `GEMINI_API_KEY`
-configured:
+Start the backend with the project Python environment and `OPENROUTER_API_KEY`
+configured (generation and adjustment use OpenRouter model `openai/gpt-6-luna`):
 
 ```powershell
 cd backend
@@ -112,8 +113,8 @@ configuration, and `500` for unexpected server errors. Error bodies use
 `502`/`503` `UPSTREAM_ERROR` messages are fixed public sentences, not the
 server's exception text: `Study plan generation failed. Try again later.` for
 generation, `Schedule adjustment failed. Try again later.` for adjustment, and
-`The planning service is not configured on the server.` when the Gemini key is
-missing. They never include provider responses, tool names or arguments, agent
+`The planning service is not configured on the server.` when the OpenRouter key
+is missing. They never include provider responses, tool names or arguments, agent
 traces, or server paths, so clients must not parse them for a cause. `422`
 `INVALID_INPUT` messages, including `NOT_ENOUGH_TIME`, and the `404`/`409`/`500`
 plan-storage messages keep their specific text.
@@ -123,9 +124,9 @@ minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
 that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the
 topic basis, and advises adding study windows, starting preparation earlier, or
 choosing a later exam date. No schedule fields are returned and no plan file is
-saved. The check runs in two stages. Before any Gemini call the exact topic count
+saved. The check runs in two stages. Before any model call the exact topic count
 is unknown, so only zero usable minutes is rejected there, even when no server key
-is configured. After Gemini maps the questions to topics, the actual number of
+is configured. After the model maps the questions to topics, the actual number of
 distinct assessed topics is checked before any schedule is built. Passing the
 check does not mean the time is enough to prepare. Invalid model allocations,
 repeated tool failures and provider errors stay `502`/`503`; they never become
@@ -263,7 +264,7 @@ adjustment 409, lost connection/timeout, or unreadable/mismatched success requir
 an explicit reload before a fresh selection and submission; it never replays the
 uncertain mutation. A missing plan stays viewable but unavailable for adjustment
 for the app session. These client paths have controlled-test evidence; real
-Android/Gemini same-file A/B acceptance remains pending.
+Android/OpenRouter Luna same-file A/B acceptance remains pending.
 
 If a call times out, reload before retrying: the write may have completed.
 There is no idempotency key. File reads and replacements share a process lock;
@@ -279,7 +280,7 @@ constraints. The store retains up to 100 generated plans on a best-effort basis.
 
 ### Local execution
 
-With `GEMINI_API_KEY` configured on the backend, start from the repository root:
+With `OPENROUTER_API_KEY` configured on the backend, start from the repository root:
 
 ```powershell
 Set-Location backend

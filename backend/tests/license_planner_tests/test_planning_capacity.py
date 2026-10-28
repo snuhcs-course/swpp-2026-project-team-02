@@ -1,10 +1,11 @@
 import copy
+import itertools
 import json
 import unittest
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
-from license_planner.agent import GeminiToolAgent
+from license_planner.agent import PlanningAgent
 from license_planner.catalog import get_certification
 from license_planner.models import (
     AssessmentItem, BusyPeriod, InsufficientCapacityError, PlanRequest, ProblemResult,
@@ -59,16 +60,20 @@ def minutes(*rows):
     return [{"date": day, "topic": topic, "minutes": amount} for day, topic, amount in rows]
 
 
+CALL_IDS = itertools.count(1)
+
+
 def model_reply(*calls, text=None):
-    parts = [{"functionCall": {"name": name, "args": args}} for name, args in calls]
+    output = [{"type": "function_call", "call_id": f"call_{next(CALL_IDS)}", "name": name,
+               "arguments": json.dumps(args, ensure_ascii=False)} for name, args in calls]
     if text is not None:
-        parts.append({"text": text})
-    return {"candidates": [{"content": {"role": "model", "parts": parts}}]}
+        output.append({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]})
+    return {"status": "completed", "output": output}
 
 
 def run_agent(request, replies, max_steps=6):
-    with patch.object(GeminiToolAgent, "_ask_model", side_effect=replies) as ask_model:
-        agent = GeminiToolAgent(api_key="test-key", max_steps=max_steps)
+    with patch.object(PlanningAgent, "_ask_model", side_effect=replies) as ask_model:
+        agent = PlanningAgent(api_key="test-key", max_steps=max_steps)
         try:
             return agent.run(request), ask_model
         except Exception as error:
@@ -255,7 +260,7 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
 
         _, ask_model = run_agent(request, replies)
 
-        prompt = ask_model.call_args_list[0].args[0][0]["parts"][0]["text"]
+        prompt = ask_model.call_args_list[0].args[0][0]["content"]
         metadata = json.loads(prompt.split("Input metadata: ", 1)[1])
         self.assertEqual(metadata["usable_minutes_by_date"], {"2026/10/19": 120, "2026/10/21": 60})
 
@@ -361,12 +366,12 @@ def run_recording_agent(request, replies, max_steps=6):
     """Run the agent and keep a copy of the contents and schemas sent with each model request."""
     sent = []
 
-    def ask_model(contents, tools):
-        sent.append(copy.deepcopy({"contents": contents, "tools": tools}))
+    def ask_model(input_items, tools):
+        sent.append(copy.deepcopy({"input": input_items, "tools": tools}))
         return replies[len(sent) - 1]
 
-    with patch.object(GeminiToolAgent, "_ask_model", side_effect=ask_model):
-        agent = GeminiToolAgent(api_key="test-key", max_steps=max_steps)
+    with patch.object(PlanningAgent, "_ask_model", side_effect=ask_model):
+        agent = PlanningAgent(api_key="test-key", max_steps=max_steps)
         try:
             return agent.run(request), sent
         except Exception as error:
@@ -380,8 +385,14 @@ def build_item_schema(sent_request):
 
 
 def function_responses(sent_request):
-    return {part["functionResponse"]["name"]: part["functionResponse"]["response"]
-            for part in sent_request["contents"][-1]["parts"] if "functionResponse" in part}
+    """Observations returned for the previous response's calls, keyed by the called tool name."""
+    names = {item["call_id"]: item["name"] for item in sent_request["input"] if item.get("type") == "function_call"}
+    trailing = []
+    for item in reversed(sent_request["input"]):
+        if item.get("type") != "function_call_output":
+            break
+        trailing.insert(0, item)
+    return {names[item["call_id"]]: json.loads(item["output"]) for item in trailing}
 
 
 class ProposalGuidanceTests(unittest.TestCase):
@@ -517,7 +528,7 @@ class ProposalGuidanceTests(unittest.TestCase):
         self.assertEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS])
         self.assertEqual(function_responses(sent[1])["analyze_exam_results"]["build_requirements"],
                          {"required_topics": [CHARTS]})
-        self.assertNotIn("usable_minutes_by_date", sent[0]["contents"][0]["parts"][0]["text"])
+        self.assertNotIn("usable_minutes_by_date", sent[0]["input"][0]["content"])
 
 
 if __name__ == "__main__":

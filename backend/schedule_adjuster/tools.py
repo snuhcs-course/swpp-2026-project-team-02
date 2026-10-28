@@ -1,4 +1,4 @@
-"""Gemini Agent에 노출되는 제한된 일정 조정 도구입니다."""
+"""모델 Agent에 노출되는 제한된 일정 조정 도구입니다."""
 from __future__ import annotations
 
 from typing import Any
@@ -167,19 +167,19 @@ class ScheduleAdjustmentTools:
 
 def tool_schemas() -> list[dict[str, Any]]:
     """입력 값: 없음
-    출력 값: Gemini function declarations 목록
+    출력 값: 함수 호출 도구 선언 목록
     기능: Agent가 ID 검사와 해당 유형에 맞는 조정 도구를 호출하도록 공개합니다.
     """
-    schedule_id = {"type": "STRING", "description": "Exact schedule_id supplied by the user, including its external- or study- prefix."}
-    topic = {"type": "STRING", "description": "Exact topic returned by inspect_schedule for the target study session."}
+    schedule_id = {"type": "string", "description": "Exact schedule_id supplied by the user, including its external- or study- prefix."}
+    topic = {"type": "string", "description": "Exact topic returned by inspect_schedule for the target study session."}
     return [
         {"name": "inspect_schedule", "description": "Look up the user's exact schedule ID before changing anything. Returns whether it is external or study, its topic, and the personal weekly availability used when moving study sessions.",
-         "parameters": {"type": "OBJECT", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
+         "parameters": {"type": "object", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
         {"name": "inspect_topic_schedule", "description": "For a study row with a topic, inspect all study sessions on that exact topic before rescheduling. Must follow inspect_schedule.",
-         "parameters": {"type": "OBJECT", "properties": {"topic": topic}, "required": ["topic"]}},
+         "parameters": {"type": "object", "properties": {"topic": topic}, "required": ["topic"]}},
         {"name": "reschedule_failed_study", "description": "Only for a failed study-N entry. For topic-labelled sessions, first inspect_topic_schedule; moves the failed session after all other sessions on the same topic, inside the personal weekly availability returned by inspect_schedule when present, and to a conflict-free interval. Preserves topic, duration, and all other rows.",
-         "parameters": {"type": "OBJECT", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
+         "parameters": {"type": "object", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
         {"name": "remove_cancelled_external_schedule", "description": "Only for a cancelled external-N entry. Removes that cancelled row and preserves every other row.",
-         "parameters": {"type": "OBJECT", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
+         "parameters": {"type": "object", "properties": {"schedule_id": schedule_id}, "required": ["schedule_id"]}},
     ]
 

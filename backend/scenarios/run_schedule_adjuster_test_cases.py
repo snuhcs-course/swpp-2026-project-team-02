@@ -1,11 +1,13 @@
-"""Run live Gemini Agent scenarios and save adjustment CSVs and tool traces."""
+"""Run live OpenRouter Luna Agent scenarios and save adjustment CSVs and tool traces."""
 from __future__ import annotations
 
 import json
 import argparse
+import time
 from pathlib import Path
 
-from schedule_adjuster.agent import GeminiAdjustmentAgent
+from openrouter_client import inference_summary
+from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.availability import load_personal_availability
 from schedule_adjuster.csv_io import parse_schedule_csv, render_schedule_csv
 from schedule_adjuster.models import AdjustmentRequest
@@ -30,13 +32,15 @@ def load_cases() -> list[dict]:
     return json.loads(CASE_FILE.read_text(encoding=TEXT_ENCODING))
 
 
-def run_case(agent: GeminiAdjustmentAgent, case: dict) -> dict:
-    """입력 값: Gemini Agent 객체와 케이스 설정
+def run_case(agent: AdjustmentAgent, case: dict) -> dict:
+    """입력 값: 조정 Agent 객체와 케이스 설정
     출력 값: 통과 여부, 실제 도구 호출, 결과 파일 정보를 담은 딕셔너리
     기능: 케이스를 실행하고 결과 CSV 및 도구 호출 trace를 저장합니다.
     """
     case_id = case["case_id"]
     request_count_before = agent.api_request_count
+    usage_before = len(agent.usage_records)
+    started = time.perf_counter()
     csv_path = INPUT_DIR / case["schedule_csv"]
     original = parse_schedule_csv(csv_path.read_text(encoding=TEXT_ENCODING))
     availability_path = (INPUT_DIR / case["availability_file"] if case.get("availability_file")
@@ -44,6 +48,7 @@ def run_case(agent: GeminiAdjustmentAgent, case: dict) -> dict:
     weekly_availability = load_personal_availability(availability_path)
     request = AdjustmentRequest(case["schedule_id"], original, weekly_availability)
     tools, summary = agent.adjust(request)
+    elapsed_seconds = time.perf_counter() - started
     called_tools = [call["tool"] for call in tools.trace.calls]
     original_by_id = {entry.schedule_id: entry for entry in original}
     adjusted_by_id = {entry.schedule_id: entry for entry in tools.schedule}
@@ -124,7 +129,8 @@ def run_case(agent: GeminiAdjustmentAgent, case: dict) -> dict:
         "uses_personal_availability": weekly_availability is not None,
         "availability_profile_loaded": availability_profile_loaded,
         "availability_respected": availability_respected,
-        "gemini_api_request_count": agent.api_request_count - request_count_before,
+        "inference": inference_summary(agent.api_request_count - request_count_before,
+                                       agent.usage_records[usage_before:], elapsed_seconds),
         "result_csv": result_name,
         "agent_summary": summary,
     }
@@ -137,11 +143,11 @@ def main() -> int:
     출력 값: 모든 케이스 통과 시 0, 하나라도 실패하면 1
     기능: 테스트 케이스를 순차 실행하고 결과와 통합 요약을 기록합니다.
     """
-    parser = argparse.ArgumentParser(description="Run Schedule Adjuster Gemini integration scenarios")
+    parser = argparse.ArgumentParser(description="Run Schedule Adjuster OpenRouter Luna integration scenarios")
     parser.add_argument("--case-id", help="Run only the named case ID")
     args = parser.parse_args()
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    agent = GeminiAdjustmentAgent()
+    agent = AdjustmentAgent()
     outcomes = []
     cases = load_cases()
     if args.case_id:
@@ -150,18 +156,22 @@ def main() -> int:
             parser.error(f"unknown case ID: {args.case_id}")
     for case in cases:
         request_count_before = agent.api_request_count
+        usage_before = len(agent.usage_records)
+        started = time.perf_counter()
         try:
             outcome = run_case(agent, case)
         except Exception as error:
             outcome = {"case_id": case.get("case_id", "unknown"), "passed": False,
                        "error": f"{type(error).__name__}: {error}",
-                       "gemini_api_request_count": agent.api_request_count - request_count_before}
+                       "inference": inference_summary(agent.api_request_count - request_count_before,
+                                                      agent.usage_records[usage_before:],
+                                                      time.perf_counter() - started)}
             trace_path = RESULT_DIR / f"{outcome['case_id']}_tool_trace.json"
             trace_path.write_text(json.dumps(outcome, ensure_ascii=False, indent=2) + "\n",
                                   encoding="utf-8")
         outcomes.append(outcome)
         print(f"{outcome['case_id']}: {'PASS' if outcome['passed'] else 'FAIL'}")
-        print(f"  API requests={outcome.get('gemini_api_request_count', 0)}; tools={outcome.get('called_tools', [])}")
+        print(f"  model requests={outcome['inference']['model_request_count']}; tools={outcome.get('called_tools', [])}")
 
     summary_name = (f"{args.case_id}_summary.json" if args.case_id
                     else "schedule_adjuster_test_summary.json")

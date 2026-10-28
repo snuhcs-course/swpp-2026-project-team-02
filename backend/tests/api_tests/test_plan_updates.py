@@ -1,5 +1,6 @@
 """Task 2 HTTP/storage regression checks using isolated files and agent tools."""
 import copy
+import itertools
 import json
 import tempfile
 import threading
@@ -13,7 +14,7 @@ from http.server import ThreadingHTTPServer
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
-from schedule_adjuster.agent import GeminiAdjustmentAgent
+from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.settings import AGENT_MAX_STEPS
@@ -45,24 +46,28 @@ class ToolAgent:
         return tools, "Test agent with real domain tools"
 
 
+CALL_IDS = itertools.count(1)
+
+
 def model_call(name, **args):
-    return {"candidates": [{"content": {"role": "model", "parts": [
-        {"functionCall": {"name": name, "args": args}}]}}]}
+    return {"status": "completed", "output": [{"type": "function_call", "call_id": f"call_{next(CALL_IDS)}",
+                                               "name": name, "arguments": json.dumps(args)}]}
 
 
 def model_text(text):
-    return {"candidates": [{"content": {"role": "model", "parts": [{"text": text}]}}]}
+    return {"status": "completed", "output": [{"type": "message", "role": "assistant",
+                                               "content": [{"type": "output_text", "text": text}]}]}
 
 
 def scripted_agent(*replies):
     """Run the production agent loop and tools; only provider replies are scripted."""
-    class ScriptedAgent(GeminiAdjustmentAgent):
+    class ScriptedAgent(AdjustmentAgent):
         script = list(replies)
 
         def __init__(self):
             super().__init__(api_key="dummy-key")
 
-        def _ask_model(self, contents):
+        def _ask_model(self, input_items):
             self.api_request_count += 1
             reply = ScriptedAgent.script.pop(0)
             if isinstance(reply, Exception):
@@ -83,7 +88,7 @@ class PlanUpdateTests(unittest.TestCase):
         self.payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
                         "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS}
         for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root),
-                            ("GeminiAdjustmentAgent", ToolAgent)]:
+                            ("AdjustmentAgent", ToolAgent)]:
             p = patch.object(api_service, name, value)
             p.start()
             self.addCleanup(p.stop)
@@ -133,7 +138,7 @@ class PlanUpdateTests(unittest.TestCase):
 
     def test_stale_snapshot_rejected_before_agent(self):
         self.payload["schedules"][0]["topic"] = "Changed"
-        with patch.object(api_service, "GeminiAdjustmentAgent") as agent:
+        with patch.object(api_service, "AdjustmentAgent") as agent:
             status, result = self.call("/schedules/adjust", self.payload)
             self.assertEqual((status, result["error"]["code"]), (409, "PLAN_CONFLICT"))
             agent.assert_not_called()
@@ -337,7 +342,7 @@ class PlanUpdateTests(unittest.TestCase):
                                model_call("inspect_topic_schedule", topic="Functions"),
                                model_call("reschedule_failed_study", schedule_id="study-1"),
                                RuntimeError("provider failure after success"))
-        with patch.object(api_service, "GeminiAdjustmentAgent", agent), \
+        with patch.object(api_service, "AdjustmentAgent", agent), \
                 patch.object(api_service, "load_adjuster_availability",
                              lambda: load_adjuster_availability(profile)):
             status, result = self.call("/schedules/adjust", self.payload)
@@ -358,7 +363,7 @@ class PlanUpdateTests(unittest.TestCase):
                                RuntimeError("provider failure after success"))
         payload = {**self.payload, "schedule_csv_file": identifier,
                    "schedule_id": "external-2", "schedules": rows}
-        with patch.object(api_service, "GeminiAdjustmentAgent", agent):
+        with patch.object(api_service, "AdjustmentAgent", agent):
             status, result = self.call("/schedules/adjust", payload)
         self.assertEqual(status, 200, result)
         self.assertEqual(len(agent.script), 1)
@@ -378,7 +383,7 @@ class PlanUpdateTests(unittest.TestCase):
                                      for _ in range(AGENT_MAX_STEPS)),
         }
         for name, replies in scripts.items():
-            with self.subTest(name), patch.object(api_service, "GeminiAdjustmentAgent",
+            with self.subTest(name), patch.object(api_service, "AdjustmentAgent",
                                                   scripted_agent(*replies)):
                 status, result = self.call("/schedules/adjust", self.payload)
                 self.assertEqual((status, result["error"]["code"]), (502, "UPSTREAM_ERROR"))

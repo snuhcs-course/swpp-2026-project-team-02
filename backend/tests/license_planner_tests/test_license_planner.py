@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api_service import build_plan_request
-from license_planner.agent import GeminiToolAgent
+from license_planner.agent import PlanningAgent
 from license_planner.catalog import CERTIFICATIONS, get_certification
 from license_planner.csv_io import parse_busy_csv, render_schedule_csv
 from license_planner.models import BusyPeriod, PlanRequest, ProblemResult
@@ -246,9 +246,9 @@ class PlanningApiContractTests(unittest.TestCase):
 
 
 def model_tool_call(name, args):
-    return {"candidates": [{"content": {"role": "model", "parts": [
-        {"functionCall": {"name": name, "args": args}},
-    ]}}]}
+    return {"status": "completed", "output": [
+        {"type": "function_call", "call_id": f"call_{name}", "name": name, "arguments": json.dumps(args)},
+    ]}
 
 
 class PlannerAgentLoopTests(unittest.TestCase):
@@ -267,8 +267,8 @@ class PlannerAgentLoopTests(unittest.TestCase):
             ]}),
         ]
 
-        with patch.object(GeminiToolAgent, "_ask_model", side_effect=replies):
-            tools, _ = GeminiToolAgent(api_key="test-key", max_steps=2).run(request)
+        with patch.object(PlanningAgent, "_ask_model", side_effect=replies):
+            tools, _ = PlanningAgent(api_key="test-key", max_steps=2).run(request)
 
         self.assertEqual(len(tools.schedule), 2)
 
@@ -278,9 +278,9 @@ class PlannerAgentLoopTests(unittest.TestCase):
         request = build_plan_request(payload, require_assessment=True)
         reply = model_tool_call("analyze_exam_results", {"problem_topics": self.CHART_AND_BASICS})
 
-        with (patch.object(GeminiToolAgent, "_ask_model", return_value=reply) as ask_model,
+        with (patch.object(PlanningAgent, "_ask_model", return_value=reply) as ask_model,
               self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: .*시간이 1분이라 .*학습 주제 2개에")):
-            GeminiToolAgent(api_key="test-key").run(request)
+            PlanningAgent(api_key="test-key").run(request)
 
         self.assertEqual(ask_model.call_count, 1)
 

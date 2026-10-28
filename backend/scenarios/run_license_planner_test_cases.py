@@ -4,15 +4,20 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
+import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
+from license_planner.agent import PlanningAgent
 from license_planner.csv_io import parse_datetime
 from license_planner.user_availability import parse_weekly_availability
+from openrouter_client import inference_summary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "license_planner"
@@ -21,6 +26,15 @@ CASE_FILE = INPUT_DIR / "license_planner_test_cases.json"
 TEXT_ENCODING = "utf-8-sig"
 REQUIRED_TOOLS = ("get_certification_profile", "analyze_exam_results",
                   "build_study_schedule")
+AGENTS: list[PlanningAgent] = []  # Agents the in-process API created, for per-case request counts.
+
+
+class RecordingPlanningAgent(PlanningAgent):
+    """The production planning agent, remembered so the runner can report its model requests."""
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        AGENTS.append(self)
 
 
 def load_cases() -> list[dict[str, Any]]:
@@ -50,7 +64,11 @@ def post_plan(api_url: str, request_payload: dict[str, Any]) -> tuple[int, dict[
 def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
     """Call the Planning API and validate its JSON schedule response."""
     request_payload = case["request"]
+    agents_before = len(AGENTS)
+    started = time.perf_counter()
     status, payload = post_plan(api_url, request_payload)
+    elapsed_seconds = time.perf_counter() - started
+    case_agents = AGENTS[agents_before:]
     schedules = payload.get("schedules", []) if isinstance(payload, dict) else []
     study_schedules = [row for row in schedules
                        if str(row.get("schedule_id", "")).startswith("study-")]
@@ -69,7 +87,7 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
              and parse_datetime(busy["start_date"]) < parse_datetime(row["end_date"]))
         for row in study_schedules for busy in request_payload.get("busy_schedules", [])
     )
-    # Gemini chooses the study dates, so any start inside the preparation period is valid.
+    # The model chooses the study dates, so any start inside the preparation period is valid.
     preparation_start = parse_datetime(request_payload["preparation_start"])
     exam_date = parse_datetime(request_payload["exam_date"])
     within_preparation_period = all(
@@ -105,6 +123,9 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "schedules": schedules,
         "schedule_csv": payload.get("schedule_csv"),
         "error": payload.get("error"),
+        "inference": inference_summary(sum(agent.api_request_count for agent in case_agents),
+                                       [record for agent in case_agents for record in agent.usage_records],
+                                       elapsed_seconds),
     }
     result_stem = case["case_id"]
     (RESULT_DIR / f"{result_stem}_result.csv").write_text(
@@ -116,7 +137,7 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     """Start a temporary local server and run selected live API cases."""
-    parser = argparse.ArgumentParser(description="Run Gemini Planning API integration cases")
+    parser = argparse.ArgumentParser(description="Run OpenRouter Luna Planning API integration cases")
     parser.add_argument("--case-id", help="Run one named case to limit API requests")
     args = parser.parse_args()
     cases = load_cases()
@@ -127,6 +148,8 @@ def main() -> int:
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
     config = {**DEFAULT_API_CONFIG, "port": 0}
+    recording = patch.object(api_service, "PlanningAgent", RecordingPlanningAgent)
+    recording.start()
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(config))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -150,12 +173,16 @@ def main() -> int:
                 print(f"  first_topic={outcome['actual_first_topic']}; "
                       f"first_start={outcome['actual_first_start']}")
                 print(f"  tools={', '.join(outcome['called_tools'])}")
+            if "inference" in outcome:
+                print(f"  model requests={outcome['inference']['model_request_count']}; "
+                      f"elapsed={outcome['inference']['elapsed_seconds']}s")
             else:
                 print(f"  error={outcome.get('error') or outcome.get('checks')}")
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        recording.stop()
 
     summary_name = (f"{args.case_id}_integration_summary.json" if args.case_id
                     else "license_planner_test_summary.json")

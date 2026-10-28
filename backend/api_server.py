@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from api_service import (adjust_schedule, create_study_plan, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import get_public_certifications, get_public_questions
+from openrouter_client import InferenceConfigurationError
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
@@ -32,12 +33,12 @@ DEFAULT_UPSTREAM_MESSAGE = "The upstream service failed. Try again later."
 CONFIGURATION_MESSAGE = "The planning service is not configured on the server."
 
 
-def _is_missing_configuration(message: str) -> bool:
-    """입력 값: 예외 메시지
-    출력 값: API 키 설정 누락 오류 여부
-    기능: 기존 문자열 기준으로 서버 설정 누락을 판별합니다.
+def _is_missing_configuration(error: Exception) -> bool:
+    """입력 값: 서비스 예외
+    출력 값: 모델 API 키 설정 누락 오류 여부
+    기능: 예외 메시지가 아니라 전용 예외 종류로 서버 설정 누락을 판별합니다.
     """
-    return "GEMINI_API_KEY" in message or "API key" in message
+    return isinstance(error, InferenceConfigurationError)
 
 
 def load_api_config() -> dict[str, Any]:
@@ -230,13 +231,9 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             except PlanStorageError as error:
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
-                message = str(error)
-                if _is_missing_configuration(message):
-                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
-                else:
-                    self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
+                self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:
-                if _is_missing_configuration(str(error)):
+                if _is_missing_configuration(error):
                     self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
                 else:
                     message = UPSTREAM_MESSAGES.get(path, DEFAULT_UPSTREAM_MESSAGE)

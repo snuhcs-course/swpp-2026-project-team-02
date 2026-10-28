@@ -237,6 +237,17 @@ study-32,2026/10/01/14/00,2026/10/01/15/00,Functions
         topic_schema = next(schema for schema in schemas if schema["name"] == "inspect_topic_schedule")
         self.assertEqual(topic_schema["parameters"]["required"], ["topic"])
 
+    def test_agent_schemas_use_lowercase_json_schema_types(self):
+        """
+        입력 값: 없음
+        출력 값: 모든 검증 단언 통과 시 테스트 통과
+        기능: 조정 도구 선언이 JSON Schema 소문자 타입만 쓰는지 확인합니다.
+        """
+        for schema in tool_schemas():
+            parameters = schema["parameters"]
+            self.assertEqual(parameters["type"], "object")
+            self.assertEqual({prop["type"] for prop in parameters["properties"].values()}, {"string"})
+
 
 if __name__ == "__main__":
     unittest.main()

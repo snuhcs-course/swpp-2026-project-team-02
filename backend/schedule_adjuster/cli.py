@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .agent import GeminiAdjustmentAgent
+from .agent import AdjustmentAgent
 from .availability import load_personal_availability
 from .csv_io import parse_schedule_csv, render_schedule_csv
 from .models import AdjustmentRequest
@@ -31,7 +31,7 @@ def main() -> int:
         availability_path = Path(args.availability_file) if args.availability_file else USER_AVAILABILITY_PATH
         weekly_availability = load_personal_availability(availability_path)  # License Planner와 공유하는 개인 시간표입니다.
         request = AdjustmentRequest(args.schedule_id, original, weekly_availability)  # 조정 도메인 요청 객체입니다.
-        tools, summary = GeminiAdjustmentAgent().adjust(request)
+        tools, summary = AdjustmentAgent().adjust(request)
         if tools.outcome is None:
             raise RuntimeError("No schedule adjustment was applied.")
         sys.stdout.write(render_schedule_csv(tools.schedule))
