@@ -16,10 +16,12 @@ object AtomicFilePlanStore {
         return BytesPlanStore(AtomicFileBytes(file), scope)
     }
 
-    private class AtomicFileBytes(private val file: AtomicFile) : PlanBytes {
+    internal class AtomicFileBytes(private val file: AtomicFile) : PlanBytes {
         override fun read(): ByteArray? = try {
             file.readFully()
-        } catch (_: FileNotFoundException) {
+        } catch (error: FileNotFoundException) {
+            // Also thrown when an existing snapshot cannot be opened, which must not read as empty.
+            if (file.baseFile.exists()) throw error
             null
         }
 
