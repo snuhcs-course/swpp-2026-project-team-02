@@ -17,7 +17,7 @@ python -m schedule_adjuster.cli --schedule-id study-104 --schedule-csv schedule.
   1> adjusted_schedule.csv 2> adjustment_trace.txt
 ```
 
-실행할 때는 `schedule_adjuster/.env` 또는 OS 환경 변수에 `GEMINI_API_KEY`를 설정합니다. 개발 워크스페이스에서는 `schedule_adjuster/.env`에 값이 없을 때 상위 폴더의 `.env`도 확인합니다. 배포 시에는 프로그램 전용 비밀 설정으로 분리하세요. 모델/timeout/tool loop 설정은 `settings.py`에서 바꿉니다.
+실행할 때는 `schedule_adjuster/.env` 또는 OS 환경 변수에 `OPENROUTER_API_KEY`를 설정합니다. 개발 워크스페이스에서는 `schedule_adjuster/.env`에 값이 없을 때 상위 폴더의 `.env`도 확인합니다. 배포 시에는 프로그램 전용 비밀 설정으로 분리하세요. 모델은 `OPENROUTER_MODEL`로 바꿀 수 있습니다.
 
 개인 공부 가능 시간은 License Planner와 공유하는 `config/user_availability.json`에서 자동으로 읽습니다. 형식은 다음과 같고, 입력에 포함되지 않은 요일은 공부 불가로 처리합니다.
 
@@ -63,7 +63,7 @@ python -m unittest discover -s schedule_adjuster_tests -v
 
 ## Gemini Agent 통합 테스트
 
-`backend/.env`의 `GEMINI_API_KEY`를 설정한 뒤 `backend/` 디렉터리에서 테스트 러너만 실행합니다. 이 테스트는 케이스마다 Gemini API를 호출하므로 네트워크 연결과 API 사용량이 필요합니다.
+`backend/.env`의 `OPENROUTER_API_KEY`를 설정한 뒤 `backend/` 디렉터리에서 테스트 러너만 실행합니다. 이 테스트는 케이스마다 OpenRouter API를 호출하므로 네트워크 연결과 API 사용량이 필요합니다.
 
 ```powershell
 python run_schedule_adjuster_test_cases.py

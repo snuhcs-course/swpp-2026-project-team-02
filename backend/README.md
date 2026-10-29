@@ -13,7 +13,7 @@ frontend's `live` flavor. The Android Emulator reaches the default backend at
 `http://10.0.2.2:8000/api/v1`; configure a different public API URL with the
 Gradle property `licensePlanner.apiBaseUrl`. Backend bind address, port, browser
 origins, and request-size limit are in `config/api_server.json` and can be
-overridden with `APP_API_HOST` and `APP_API_PORT`. Gemini credentials stay in
+overridden with `APP_API_HOST` and `APP_API_PORT`. OpenRouter credentials stay in
 the backend root `.env`; never copy them into frontend configuration.
 
 Start the API from the backend directory:
@@ -58,7 +58,7 @@ the generated plans used for later adjustment.
 cd backend
 export APP_API_HOST=0.0.0.0
 export APP_API_PORT=8000
-# Set GEMINI_API_KEY in backend/.env or the service's secret environment.
+# Set OPENROUTER_API_KEY in backend/.env or the service's secret environment.
 python api_server.py
 ```
 
@@ -76,7 +76,7 @@ python run_api_availability_integration_test.py
 
 It starts an ephemeral local HTTP server and uses a temporary profile file, so it
 does not overwrite `config/user_availability.json`. Schedule adjustment calls
-Gemini and requires `GEMINI_API_KEY`, network access, and available quota.
+OpenRouter and requires `OPENROUTER_API_KEY`, network access, and available quota.
 Results are saved under `api_test_results/`.
 
 The questionnaire writes a JSON assessment result containing the question,
@@ -131,7 +131,7 @@ python run_license_planner_availability_test_cases.py
 python run_license_planner_test_cases.py --case-id license_planner_case_04_personal_availability_api
 ```
 
-The first two commands do not call Gemini. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `license_planner_availability_test_results/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes a real Gemini request, requires `GEMINI_API_KEY` and network access, and records the HTTP result, tool calls, and generated schedule under `license_planner_test_results/`. Omit `--case-id` to run all Gemini scenarios. Add offline availability cases under `license_planner_availability_test_inputs/`.
+The first two commands do not call OpenRouter. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `license_planner_availability_test_results/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes a real OpenRouter request, requires `OPENROUTER_API_KEY` and network access, and records the HTTP result, tool calls, and generated schedule under `license_planner_test_results/`. Omit `--case-id` to run all OpenRouter scenarios. Add offline availability cases under `license_planner_availability_test_inputs/`.
 
 ## Schedule Adjuster
 
@@ -182,7 +182,7 @@ Gemini planning or the HTTP server.
 
 ## Gemini configuration
 
-Put `GEMINI_API_KEY` in `backend/.env` file or the appropriate process environment. The key is read by the Gemini Agent and is not written to generated traces. Model and tool runtime settings are configured in each program's settings/agent module.
+Put `OPENROUTER_API_KEY` in `backend/.env` or the appropriate process environment. Optionally set `OPENROUTER_MODEL` (default: `google/gemini-2.5-flash`) to a tool-capable OpenRouter model. The key is server-only and is not written to generated traces.
 
 
 

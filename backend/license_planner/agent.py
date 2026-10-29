@@ -2,23 +2,16 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
-from .settings import DATETIME_FORMAT, GEMINI_API_KEY
+from openrouter_client import assistant_message, request_completion, tool_arguments
+from .settings import DATETIME_FORMAT, OPENROUTER_API_KEY, OPENROUTER_MODEL
 from .tools import PlannerTools, tool_schemas
 
 # Agent/API settings: move these values here when changing Gemini or its behavior.
-GEMINI_MODEL = "gemini-3.5-flash-lite"  # Gemini model ID used for tool selection.
-GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"  # Gemini REST API root.
-GEMINI_API_ACTION = "generateContent"  # Function-calling API method.
-GEMINI_REQUEST_TIMEOUT_SECONDS = 45  # Maximum wait for one Gemini API response.
+OPENROUTER_REQUEST_TIMEOUT_SECONDS = 45  # Maximum wait for one model API response.
 AGENT_MAX_STEPS = 6  # Maximum reason/action/observation cycles per user request.
-GEMINI_FUNCTION_CALL_MODE = "AUTO"  # Allows Gemini to choose whether to call a tool.
-HTTP_CONTENT_TYPE = "application/json"  # Request body format.
-HTTP_POST_METHOD = "POST"  # HTTP method for Gemini requests.
 AGENT_SYSTEM_PROMPT = (
     "You create study schedules through the provided tools. Inspect the certification profile, "
     "analyze exam results, then build the schedule in that order. Never invent scores, dates, "
@@ -34,54 +27,32 @@ AGENT_SYSTEM_PROMPT = (
 )  # Agent role and tool-use constraints.
 
 class GeminiToolAgent:
-    """Gemini 함수 호출을 이용해 도구를 실행하는 ReAct Agent입니다."""
+    """OpenRouter function calling으로 도구를 실행하는 ReAct Agent입니다.
+
+    The legacy class name is retained so existing service-level test seams remain stable.
+    """
 
     # 인스턴스 속성: 접속 키, 모델 ID, 최대 도구 호출 횟수입니다.
-    def __init__(self, api_key: str | None = None, model: str = GEMINI_MODEL, max_steps: int = AGENT_MAX_STEPS):
+    def __init__(self, api_key: str | None = None, model: str = OPENROUTER_MODEL, max_steps: int = AGENT_MAX_STEPS):
         """입력 값: 선택적 API 키, 모델 ID, 최대 반복 횟수
         출력 값: 설정된 Agent 객체
         기능: .env 또는 환경 변수의 API 키를 검증하고 실행 속성을 초기화합니다.
         """
-        self.api_key = api_key or GEMINI_API_KEY
+        self.api_key = api_key or OPENROUTER_API_KEY
         self.model = model
         self.max_steps = max_steps
-        self.api_request_count = 0  # Gemini API에 전송을 시도한 요청 수입니다.
-        self.successful_response_count = 0  # Gemini에서 정상 JSON 응답을 받은 요청 수입니다.
+        self.api_request_count = 0
+        self.successful_response_count = 0
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY is required for online agent mode")
+            raise ValueError("OPENROUTER_API_KEY is required for online agent mode")
 
     def _ask_model(self, contents: list[dict], tools: list[dict]) -> dict:
-        """입력 값: 대화 내용과 도구 스키마
-        출력 값: Gemini 응답 객체
-        기능: 설정한 Gemini API에 함수 호출 가능 요청을 전송합니다.
-        """
-        url = f"{GEMINI_API_BASE_URL}/{self.model}:{GEMINI_API_ACTION}"  # 요청 대상 주소입니다.
-        body = {"contents": contents, "tools": [{"function_declarations": tools}],
-                "tool_config": {"function_calling_config": {"mode": GEMINI_FUNCTION_CALL_MODE}},
-                "system_instruction": {"parts": [{"text": AGENT_SYSTEM_PROMPT}]}}  # 함수 호출 모드와 시스템 지시입니다.
-        request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
-            "Content-Type": HTTP_CONTENT_TYPE,
-            "x-goog-api-key": self.api_key,
-        }, method=HTTP_POST_METHOD)  # HTTP 요청 객체와 인증 헤더입니다.
+        """Send one OpenRouter Chat Completions request."""
         self.api_request_count += 1
-        try:
-            with urllib.request.urlopen(request, timeout=GEMINI_REQUEST_TIMEOUT_SECONDS) as response:
-                result = json.loads(response.read())
-                self.successful_response_count += 1
-                return result
-        except urllib.error.HTTPError as error:
-            # HTTP 오류 본문에 Gemini가 반환한 쿼터/검증 설명이 들어 있습니다.
-            response_text = error.read().decode("utf-8", errors="replace")
-            try:
-                error_record = json.loads(response_text).get("error", {})
-            except (json.JSONDecodeError, AttributeError):
-                error_record = {}
-            api_status = error_record.get("status", "")
-            api_message = error_record.get("message", "")
-            detail = f"HTTP {error.code} {api_status}: {api_message}".strip()
-            raise RuntimeError(f"Gemini request failed: {detail}") from error
-        except (urllib.error.URLError, TimeoutError) as error:
-            raise RuntimeError(f"Gemini request failed: {error}") from error
+        result = request_completion(api_key=self.api_key, model=self.model, messages=contents,
+                                    declarations=tools, timeout_seconds=OPENROUTER_REQUEST_TIMEOUT_SECONDS)
+        self.successful_response_count += 1
+        return result
 
     def run(self, request: PlanRequest) -> tuple[PlannerTools, str]:
         """입력 값: 일정 생성 요청
@@ -117,21 +88,24 @@ class GeminiToolAgent:
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
                 "busy_schedules": busy_schedules,
                 "weekly_availability": availability}
-        contents: list[dict] = [{"role": "user", "parts": [{"text": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]}]  # Gemini 대화 기록입니다.
+        contents: list[dict] = [
+            {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+            {"role": "user", "content": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)},
+        ]
         for _ in range(self.max_steps):
             result = self._ask_model(contents, tool_schemas(request.certification_id))
-            candidate = (result.get("candidates") or [{}])[0].get("content", {})
+            candidate = assistant_message(result)
             contents.append(candidate)
-            calls = [part["functionCall"] for part in candidate.get("parts", []) if "functionCall" in part]
+            calls = candidate.get("tool_calls") or []
             if not calls:
-                answer = " ".join(part.get("text", "") for part in candidate.get("parts", []))
+                answer = candidate.get("content") or ""
                 if tools.schedule is None:
                     raise RuntimeError(tools.last_tool_error or "Agent finished without calling build_study_schedule")
                 return tools, answer
-            responses = []
             for call in calls:
-                outcome = tools.call(call["name"], call.get("args", {}))
-                responses.append({"functionResponse": {"name": call["name"], "response": {"result": outcome}}})
-            contents.append({"role": "user", "parts": responses})
+                name = call.get("function", {}).get("name", "")
+                outcome = tools.call(name, tool_arguments(call))
+                contents.append({"role": "tool", "tool_call_id": call.get("id", name),
+                                 "name": name, "content": json.dumps({"result": outcome}, ensure_ascii=False)})
         raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; tool trace: {tools.trace.calls}")
 

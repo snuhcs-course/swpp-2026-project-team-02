@@ -9,7 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOTENV_PATH = PROJECT_ROOT / ".env"
 
 # API 키만 .env/OS 환경변수에서 읽습니다. 나머지 Agent 설정은 agent.py에 있습니다.
-GEMINI_API_KEY = ""
+OPENROUTER_API_KEY = ""
+OPENROUTER_MODEL = "google/gemini-2.5-flash"
 
 # 입출력 형식과 기본 일정 생성 설정입니다.
 DATETIME_FORMAT = "%Y/%m/%d/%H/%M"
@@ -41,11 +42,12 @@ def load_dotenv(path: Path = DOTENV_PATH) -> None:
             continue
         key, value = line.split("=", 1)
         key, value = key.strip(), value.strip().strip("\"'")
-        if key == "GEMINI_API_KEY":  # .env에서는 비밀 키 외 설정을 읽지 않습니다.
+        if key in {"OPENROUTER_API_KEY", "OPENROUTER_MODEL"}:
             os.environ.setdefault(key, value)
 
 
 # 환경변수는 .env와 OS 환경에서 읽고, 위의 값은 로컬 개발 기본값으로 사용합니다.
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", OPENROUTER_API_KEY)
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL)
 

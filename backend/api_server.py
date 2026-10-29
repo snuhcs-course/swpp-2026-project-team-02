@@ -210,13 +210,13 @@ def make_handler(config: dict[str, Any], *, planner=None, adjuster=None) -> type
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
                 message = str(error)
-                if "GEMINI_API_KEY" in message or "API key" in message:
+                if "OPENROUTER_API_KEY" in message or "API key" in message:
                     self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
                 else:
                     self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
             except RuntimeError as error:
                 message = str(error)
-                code = 503 if "GEMINI_API_KEY" in message or "API key" in message else 502
+                code = 503 if "OPENROUTER_API_KEY" in message or "API key" in message else 502
                 self._send_json(code, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
             except Exception:
                 self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}})
@@ -231,7 +231,7 @@ def main() -> int:
     """
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--demo", action="store_true", help="Use explicit deterministic demo agents, without Gemini")
+    parser.add_argument("--demo", action="store_true", help="Use explicit deterministic demo agents, without OpenRouter")
     args = parser.parse_args()
     config = load_api_config()
     planner = adjuster = None
