@@ -42,8 +42,15 @@ class GeminiAdjustmentAgent:
             {"role": "system", "content": AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": f"Adjust the schedule for this event. Target: {user_message}. The original CSV is available through the inspect tool; do not infer any missing row."},
         ]
-        for _ in range(AGENT_MAX_STEPS):
-            result = self._ask_model(contents)
+        for step in range(AGENT_MAX_STEPS):
+            try:
+                result = self._ask_model(contents)
+            except RuntimeError as error:
+                completed_tools = [item["tool"] for item in tools.trace.calls]
+                raise RuntimeError(
+                    f"OpenRouter adjustment failed at step {step + 1}; "
+                    f"completed_tools={completed_tools}: {error}"
+                ) from error
             candidate = assistant_message(result)
             contents.append(candidate)
             calls = candidate.get("tool_calls") or []
@@ -57,5 +64,6 @@ class GeminiAdjustmentAgent:
                 observation = tools.call(name, tool_arguments(call))
                 contents.append({"role": "tool", "tool_call_id": call.get("id", name), "name": name,
                                  "content": json.dumps({"result": observation}, ensure_ascii=False)})
-        raise RuntimeError(f"Agent exceeded max steps ({AGENT_MAX_STEPS}); calls: {tools.trace.calls}")
+        completed_tools = [item["tool"] for item in tools.trace.calls]
+        raise RuntimeError(f"Agent exceeded max steps ({AGENT_MAX_STEPS}); completed_tools={completed_tools}")
 

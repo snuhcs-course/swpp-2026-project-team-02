@@ -92,8 +92,15 @@ class GeminiToolAgent:
             {"role": "system", "content": AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)},
         ]
-        for _ in range(self.max_steps):
-            result = self._ask_model(contents, tool_schemas(request.certification_id))
+        for step in range(self.max_steps):
+            try:
+                result = self._ask_model(contents, tool_schemas(request.certification_id))
+            except RuntimeError as error:
+                completed_tools = [item["tool"] for item in tools.trace.calls]
+                raise RuntimeError(
+                    f"OpenRouter planner failed at step {step + 1}; "
+                    f"completed_tools={completed_tools}: {error}"
+                ) from error
             candidate = assistant_message(result)
             contents.append(candidate)
             calls = candidate.get("tool_calls") or []
@@ -107,5 +114,6 @@ class GeminiToolAgent:
                 outcome = tools.call(name, tool_arguments(call))
                 contents.append({"role": "tool", "tool_call_id": call.get("id", name),
                                  "name": name, "content": json.dumps({"result": outcome}, ensure_ascii=False)})
-        raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; tool trace: {tools.trace.calls}")
+        completed_tools = [item["tool"] for item in tools.trace.calls]
+        raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; completed_tools={completed_tools}")
 

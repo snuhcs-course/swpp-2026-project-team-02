@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,14 @@ DEFAULT_API_CONFIG = {
     "max_request_bytes": 1_048_576,
 }
 API_PREFIX = "/api/v1"
+LOGGER = logging.getLogger(__name__)
+UPSTREAM_SECRET_PATTERN = re.compile(r"(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._-]+", re.IGNORECASE)
+
+
+def safe_upstream_detail(error: RuntimeError) -> str:
+    """Keep actionable upstream diagnostics while never writing credentials to logs."""
+    detail = UPSTREAM_SECRET_PATTERN.sub("[redacted]", str(error))
+    return detail[:800]
 
 
 def load_api_config() -> dict[str, Any]:
@@ -216,6 +226,7 @@ def make_handler(config: dict[str, Any], *, planner=None, adjuster=None) -> type
                     self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
             except RuntimeError as error:
                 message = str(error)
+                LOGGER.warning("Model upstream failure: %s", safe_upstream_detail(error))
                 code = 503 if "OPENROUTER_API_KEY" in message or "API key" in message else 502
                 self._send_json(code, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
             except Exception:
