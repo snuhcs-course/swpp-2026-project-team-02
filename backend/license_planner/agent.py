@@ -23,6 +23,8 @@ AGENT_SYSTEM_PROMPT = (
     "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
     "more time. For example, distribute 120 planned minutes across two equivalent available dates "
     "as about 60 minutes per date, not all 120 on one date. If a tool reports an error, explain it. "
+    "If build_study_schedule returns SCHEDULE_ERROR, revise the date/minute allocation using the "
+    "availability capacities in that tool response and call build_study_schedule again before replying. "
     "When tools succeed, briefly summarize that the application will return the CSV."
 )  # Agent role and tool-use constraints.
 
@@ -114,6 +116,12 @@ class GeminiToolAgent:
                 outcome = tools.call(name, tool_arguments(call))
                 contents.append({"role": "tool", "tool_call_id": call.get("id", name),
                                  "name": name, "content": json.dumps({"result": outcome}, ensure_ascii=False)})
+                if name == "build_study_schedule" and isinstance(outcome, str) and outcome.startswith("SCHEDULE_ERROR"):
+                    contents.append({"role": "user", "content": (
+                        "The proposed schedule was rejected. Do not finish yet: call "
+                        "build_study_schedule again with a corrected allocation that uses only "
+                        "the available dates and capacities returned by the tool."
+                    )})
         completed_tools = [item["tool"] for item in tools.trace.calls]
         raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; completed_tools={completed_tools}")
 
