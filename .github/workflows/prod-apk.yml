@@ -8,6 +8,9 @@ on:
         required: false
         type: string
   push:
+    branches:
+      - main
+      - iteration-3
     tags:
       - 'v*'
 
