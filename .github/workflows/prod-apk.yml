@@ -35,7 +35,6 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      KEYSTORE_PATH: ${{ runner.temp }}/licenseplanner-release.jks
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,16 +63,17 @@ jobs:
       - name: Restore signing keystore
         shell: bash
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          test -s "$KEYSTORE_PATH"
-          chmod 600 "$KEYSTORE_PATH"
+          key_store_path="$RUNNER_TEMP/licenseplanner-release.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$key_store_path"
+          test -s "$key_store_path"
+          chmod 600 "$key_store_path"
 
       - name: Assemble signed live release APK
         shell: bash
         run: >-
           ./gradlew --no-daemon assembleLiveRelease
           -PlicensePlanner.apiBaseUrl="$API_BASE_URL"
-          -PlicensePlanner.releaseStoreFile="$KEYSTORE_PATH"
+          -PlicensePlanner.releaseStoreFile="$RUNNER_TEMP/licenseplanner-release.jks"
           -PlicensePlanner.releaseStorePassword="$KEYSTORE_PASSWORD"
           -PlicensePlanner.releaseKeyAlias="$KEY_ALIAS"
           -PlicensePlanner.releaseKeyPassword="$KEY_PASSWORD"
@@ -95,4 +95,4 @@ jobs:
       - name: Remove restored keystore
         if: always()
         shell: bash
-        run: rm -f "$KEYSTORE_PATH"
+        run: rm -f "$RUNNER_TEMP/licenseplanner-release.jks"
