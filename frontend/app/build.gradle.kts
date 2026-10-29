@@ -7,6 +7,16 @@ plugins {
 // Public API base URL for the live flavor. Credentials never belong here.
 val liveApiBaseUrl: String = providers.gradleProperty("licensePlanner.apiBaseUrl")
     .getOrElse("http://10.0.2.2:8000/api/v1")
+val releaseStoreFile = providers.gradleProperty("licensePlanner.releaseStoreFile").orNull
+val releaseStorePassword = providers.gradleProperty("licensePlanner.releaseStorePassword").orNull
+val releaseKeyAlias = providers.gradleProperty("licensePlanner.releaseKeyAlias").orNull
+val releaseKeyPassword = providers.gradleProperty("licensePlanner.releaseKeyPassword").orNull
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.swpp.licenseplanner"
@@ -42,6 +52,16 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
     buildTypes {
         debug {
             // JVM unit-test JaCoCo reports for CI (create<Flavor>DebugUnitTestCoverageReport).
@@ -50,6 +70,9 @@ android {
         release {
             optimization {
                 enable = false
+            }
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }
