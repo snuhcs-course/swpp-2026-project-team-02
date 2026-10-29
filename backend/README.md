@@ -45,6 +45,28 @@ requires another bind address. Browser-based clients need an allowed origin;
 the Android app does not use browser CORS. For the app's request/response
 contract and emulator setup, see `FRONTEND_INTEGRATION_GUIDE.md`.
 
+### Server host setup for a remote Android device
+
+For a manually managed Linux VM, bind the API to its network interface and keep
+the model key in the backend environment. The host firewall or cloud security
+group must allow the selected port. Put the API behind an HTTPS reverse proxy
+before building a live APK; the APK contains the public API URL, never the model
+key. Preserve `license_planner/output/` across server restarts because it holds
+the generated plans used for later adjustment.
+
+```bash
+cd backend
+export APP_API_HOST=0.0.0.0
+export APP_API_PORT=8000
+# Set GEMINI_API_KEY in backend/.env or the service's secret environment.
+python api_server.py
+```
+
+Then verify `https://<public-host>/api/v1/health` and build the APK with
+`-PlicensePlanner.apiBaseUrl=https://<public-host>/api/v1`. The default server
+configuration binds only to loopback, which is appropriate for local development
+but unreachable from an external device.
+
 Run the automated HTTP integration case for CORS, availability persistence,
 input validation, and profile-aware schedule adjustment:
 

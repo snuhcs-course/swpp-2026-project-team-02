@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import android.content.Context
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
@@ -16,6 +17,8 @@ import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.RequestMapper
+import com.swpp.licenseplanner.data.SessionPlanPersistence
+import com.swpp.licenseplanner.data.SharedPreferencesSessionPlanPersistence
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CurrentLevel
@@ -77,6 +80,7 @@ class PlanFormViewModel(
     private val planningRepository: PlanningRepository,
     private val adjustmentRepository: AdjustmentRepository,
     today: LocalDate = LocalDate.now(),
+    private val planPersistence: SessionPlanPersistence? = null,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -91,9 +95,9 @@ class PlanFormViewModel(
     private var lastRequest: StudyPlanRequest? = null
 
     /** Every successful generation in this process, oldest first; never removed. */
-    private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
+    private val _plans = MutableStateFlow(planPersistence?.load().orEmpty())
     val plans: StateFlow<List<SessionPlan>> = _plans.asStateFlow()
-    private var nextOrdinal = 1
+    private var nextOrdinal = (_plans.value.maxOfOrNull { it.ordinal } ?: 0) + 1
 
     /** Ordinal of the plan shown by the generated-result screen; null after form edits. */
     private val _generatedPlan = MutableStateFlow<Int?>(null)
@@ -174,6 +178,7 @@ class PlanFormViewModel(
                     // Registered here, once per success; never from a screen.
                     val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
                     _plans.update { it + plan }
+                    persistPlans()
                     _generatedPlan.value = plan.ordinal
                     GenerationState.Success(outcome.response, outcome.isDemo)
                 }
@@ -228,6 +233,8 @@ class PlanFormViewModel(
         _plans.value.firstOrNull { it.ordinal == ordinal }
     }
 
+    private fun persistPlans() { planPersistence?.save(_plans.value) }
+
     private fun sendAdjustment(ordinal: Int, input: AdjustmentInput) {
         pendingAdjustment = ordinal to input
         _adjustment.update { it.copy(state = AdjustmentState.Loading) }
@@ -237,6 +244,7 @@ class PlanFormViewModel(
                     _plans.update { plans -> plans.map { plan ->
                         if (plan.ordinal == ordinal) plan.copy(current = outcome.response) else plan
                     } }
+                    persistPlans()
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Refreshed) }
                 }
@@ -248,6 +256,7 @@ class PlanFormViewModel(
                             else plan.copy(current = outcome.response.copy(scheduleCsvFile = plan.current.scheduleCsvFile))
                         }
                     }
+                    persistPlans()
                     pendingAdjustment = null
                     _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
                 }
@@ -276,12 +285,13 @@ class PlanFormViewModel(
 
     companion object {
         /** Uses the flavor's repositories. */
-        val Factory: ViewModelProvider.Factory = viewModelFactory {
+        fun factory(context: Context): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 PlanFormViewModel(
                     FlavorRepositories.questionRepository(),
                     FlavorRepositories.planningRepository(),
                     FlavorRepositories.adjustmentRepository(),
+                    planPersistence = SharedPreferencesSessionPlanPersistence(context),
                 )
             }
         }

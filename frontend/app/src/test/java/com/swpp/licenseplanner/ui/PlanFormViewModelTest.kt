@@ -3,11 +3,13 @@ package com.swpp.licenseplanner.ui
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentRepository
+import com.swpp.licenseplanner.data.ApiJson
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
+import com.swpp.licenseplanner.data.SessionPlanPersistence
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
@@ -25,6 +27,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.builtins.ListSerializer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,6 +67,16 @@ class PlanFormViewModelTest {
     /** These tests never adjust; PlanAdjustmentViewModelTest covers adjustment. */
     private class UnusedAdjustment : AdjustmentRepository {
         override suspend fun adjust(input: AdjustmentInput) = error("not used")
+    }
+
+    private class FakePlanPersistence : SessionPlanPersistence {
+        private var json: String? = null
+        override fun load() = json?.let {
+            ApiJson.decodeFromString(ListSerializer(com.swpp.licenseplanner.domain.SessionPlan.serializer()), it)
+        }.orEmpty()
+        override fun save(plans: List<com.swpp.licenseplanner.domain.SessionPlan>) {
+            json = ApiJson.encodeToString(ListSerializer(com.swpp.licenseplanner.domain.SessionPlan.serializer()), plans)
+        }
     }
 
     private val questions = TestFixtures.publicQuestions()
@@ -180,6 +193,30 @@ class PlanFormViewModelTest {
         assertEquals(1, planning.requests.size)
         assertEquals(questions.map { it.id }, planning.requests[0].assessmentResults.results.map { it.problemId })
         assertEquals(GenerationState.Success(plan, isDemo = false), vm.generation.value)
+    }
+
+    @Test fun generatedPlansAndTheirOriginalRequestRestoreAfterViewModelRecreation() = runTest(dispatcher) {
+        val persistence = FakePlanPersistence()
+        val planning = FakePlanning(PlanOutcome.Success(plan, isDemo = true))
+        val first = PlanFormViewModel(
+            FakeQuestions(QuestionOutcome.Loaded(questions)), planning, UnusedAdjustment(),
+            today = LocalDate.of(2026, 10, 5), planPersistence = persistence,
+        )
+        first.fillBeforeAssessment()
+        first.loadQuestions()
+        advanceUntilIdle()
+        first.fillAfterAssessment()
+        assertTrue(first.generate())
+        advanceUntilIdle()
+
+        val restored = PlanFormViewModel(
+            FakeQuestions(), FakePlanning(), UnusedAdjustment(),
+            today = LocalDate.of(2026, 10, 6), planPersistence = persistence,
+        )
+        assertEquals(first.plans.value, restored.plans.value)
+        assertEquals(first.plans.value.single().original, restored.plans.value.single().original)
+        assertTrue(restored.selectPlan(1))
+        assertEquals(1, restored.plans.value.single().ordinal)
     }
 
     @Test fun twoRapidGenerateCallsSendOneRequest() = runTest(dispatcher) {

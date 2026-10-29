@@ -30,8 +30,8 @@ import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.Paper
 
 /**
- * Plans generated in this app process, distinguished by ordinal and dates.
- * The list needs no server route and is lost when the process ends. A visual extension of
+ * Plans generated on this device, distinguished by ordinal and dates.
+ * The list is persisted locally for later app launches. A visual extension of
  * the existing card components; no Figma frame exists.
  */
 @Composable
@@ -43,7 +43,7 @@ fun PlanListScreen(plans: List<SessionPlan>, onOpen: (Int) -> Unit, onCreate: ()
             if (plans.isEmpty()) PrimaryButton("계획 생성", onCreate) else SecondaryButton("새 계획 만들기", onCreate)
         },
     ) {
-        Heading("어떤 계획을 조정할까요?", "앱을 실행한 동안 만든 계획이에요. 앱을 완전히 종료하면 목록이 사라져요.")
+        Heading("어떤 계획을 조정할까요?", "이 기기에 저장된 계획이에요.")
         if (plans.isEmpty()) {
             OutlinedCard {
                 Text("아직 만든 계획이 없어요", style = MaterialTheme.typography.titleSmall, color = Ink)

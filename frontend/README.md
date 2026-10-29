@@ -116,11 +116,14 @@ Planning runs Gemini synchronously and can take tens of seconds (request timeout
 ## Plan adjustment
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
-and 계획 조정 (a list of the plans generated in this app process). Each
+and 계획 조정 (a list of plans generated on this device). Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
 match. Editing the form or a failed generation never removes an entry. The
-list is held in memory only: it survives rotation and navigation but is lost
-when the process ends. There is no server listing route.
+list and each plan's original request are stored in app-private preferences, so
+they survive process and device restarts. The live backend also stores plan CSVs
+on disk; after a server restart, plans remain adjustable as long as the backend's
+plan directory is preserved. Clearing app data or reinstalling removes the local
+plan list. The server has no account-based ownership or cross-device plan sync.
 
 On a plan, choose exactly one missed study session (`study-N`); existing
 schedules (`external-N`) are shown but cannot be chosen. A live plan whose
@@ -213,8 +216,8 @@ time. Gemini behavior still requires a configured live run.
 
 - Written exam only; practical-exam support is an open decision.
 - Not tested on a physical device; TalkBack support is incomplete.
-- Form state and the generated-plan list are held in memory and are lost if
-  the process is killed.
+- Form inputs are held in memory and are lost if the process is killed; generated
+  plans are stored on the device and can be reopened after relaunch.
 - Live plans come from Gemini, so session counts can vary for the same inputs.
 - Live insufficient capacity arrives as a generic generation error with retry and
   “입력 수정하기”, so the warning-origin exam-date editor is demo-only.

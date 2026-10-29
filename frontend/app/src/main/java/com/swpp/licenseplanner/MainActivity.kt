@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             LicensePlannerTheme {
                 // Activity-scoped: one form state for the whole flow.
-                val formViewModel: PlanFormViewModel = viewModel(factory = PlanFormViewModel.Factory)
+                val formViewModel: PlanFormViewModel = viewModel(factory = PlanFormViewModel.factory(applicationContext))
                 AppNavigation(formViewModel)
             }
         }

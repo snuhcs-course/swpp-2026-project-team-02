@@ -2,6 +2,7 @@ package com.swpp.licenseplanner.domain
 
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import kotlinx.serialization.Serializable
 
 /**
  * One successful generation kept for the app process. [ordinal] is the
@@ -9,6 +10,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
  * creation request, so later form edits never change this plan's windows or exam date.
  * [scheduleCsvFile] is the exact nonblank server identity from generation (live only).
  */
+@Serializable
 data class SessionPlan(
     val ordinal: Int,
     val original: StudyPlanRequest,
