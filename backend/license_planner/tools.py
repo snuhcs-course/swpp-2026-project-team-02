@@ -6,7 +6,7 @@ from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import PlanRequest, ProblemResult, ToolTrace
-from .scheduler import generate_schedule, summarize_topic_results
+from .scheduler import generate_schedule, move_plan_to_available_dates, summarize_topic_results
 from .settings import DATETIME_FORMAT
 
 
@@ -147,8 +147,15 @@ class PlannerTools:
             if set(minutes_by_topic) != topics:
                 missing, extra = sorted(topics - set(minutes_by_topic)), sorted(set(minutes_by_topic) - topics)
                 raise ValueError(f"daily_topic_minutes must cover assessed topics; missing={missing}, extra={extra}")
-            self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
-                                              normalized_plan)
+            try:
+                self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                  normalized_plan)
+            except ValueError as error:
+                if not str(error).startswith("NOT_ENOUGH_TIME:"):
+                    raise
+                normalized_plan = move_plan_to_available_dates(self.request, normalized_plan)
+                self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                  normalized_plan)
         except ValueError as error:
             capacities = self.available_date_capacities()
             return (f"SCHEDULE_ERROR: {error}. Retry build_study_schedule using only these "
@@ -156,6 +163,7 @@ class PlannerTools:
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": sum(minutes_by_topic.values()),
                 "daily_topic_minutes": normalized_plan,
+                "availability_dates_repaired": normalized_plan != daily_topic_minutes,
                 "uses_personal_availability": self.request.weekly_availability is not None,
                 "schedule": [
                     {"schedule_id": b.schedule_id, "topic": b.topic,

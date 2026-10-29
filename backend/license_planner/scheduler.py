@@ -43,6 +43,54 @@ def _free_segments(start: datetime, end: datetime, busy_periods) -> list[tuple[d
     return [(left, right) for left, right in segments if left < right]
 
 
+def available_capacity_by_day(request: PlanRequest) -> dict[date, int]:
+    """Return the exact free minutes per date after availability and busy periods."""
+    if request.preparation_start is None or request.exam_date is None or request.weekly_availability is None:
+        return {}
+    capacities: dict[date, int] = {}
+    current_day = request.preparation_start.date()
+    final_day = request.exam_date.date()
+    while current_day <= final_day:
+        segments: list[tuple[datetime, datetime]] = []
+        for window in request.weekly_availability.for_weekday(current_day.weekday()):
+            start = datetime.combine(current_day, window.start_time)
+            end = datetime.combine(current_day, window.end_time)
+            if current_day == request.preparation_start.date():
+                start = max(start, request.preparation_start)
+            if current_day == request.exam_date.date():
+                end = min(end, request.exam_date)
+            if start < end:
+                segments.extend(_free_segments(start, end, request.busy_periods))
+        capacities[current_day] = sum(int((end - start).total_seconds() // 60) for start, end in segments)
+        current_day += timedelta(days=1)
+    return capacities
+
+
+def move_plan_to_available_dates(request: PlanRequest, daily_topic_minutes: list[dict]) -> list[dict]:
+    """Keep model-selected topics/minutes while placing them into real free dates.
+
+    The model may choose a calendar day that has no matching weekday window. This
+    deterministic repair preserves every topic's requested minutes and only changes
+    dates, so the subsequent scheduler remains the source of truth for constraints.
+    """
+    remaining = [(day, minutes) for day, minutes in sorted(available_capacity_by_day(request).items()) if minutes]
+    repaired: list[dict] = []
+    slot_index = 0
+    for item in daily_topic_minutes:
+        minutes_left = item["minutes"]
+        while minutes_left:
+            while slot_index < len(remaining) and remaining[slot_index][1] == 0:
+                slot_index += 1
+            if slot_index == len(remaining):
+                raise ValueError("NOT_ENOUGH_TIME: planned minutes exceed total available capacity")
+            day, capacity = remaining[slot_index]
+            assigned = min(minutes_left, capacity)
+            repaired.append({"date": day.strftime("%Y/%m/%d"), "topic": item["topic"], "minutes": assigned})
+            remaining[slot_index] = (day, capacity - assigned)
+            minutes_left -= assigned
+    return repaired
+
+
 def generate_schedule(request: PlanRequest, cert: Certification,
                       topic_statistics: tuple[TopicStatistics, ...],
                       daily_topic_minutes: list[dict]) -> list[StudyBlock]:
