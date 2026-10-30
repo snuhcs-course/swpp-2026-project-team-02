@@ -7,7 +7,7 @@ from openrouter_client import create_response, decode_call, function_output, par
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
-from .settings import DATETIME_FORMAT, load_api_key
+from .settings import DATETIME_FORMAT, load_api_key, load_model
 from .tools import PlannerTools, check_initial_capacity, tool_schemas, usable_date_minutes
 
 # Agent settings: the shared transport in openrouter_client.py selects the model and timeout.
@@ -62,7 +62,7 @@ class PlanningAgent:
         self.api_request_count += 1
         result = create_response(self.api_key, instructions=AGENT_SYSTEM_PROMPT, input_items=input_items,
                                  tools=tools, reasoning_effort=AGENT_REASONING_EFFORT,
-                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS)
+                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS, model=load_model())
         self.successful_response_count += 1
         self.usage_records.append(usage_record(result))
         return result

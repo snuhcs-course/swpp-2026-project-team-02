@@ -7,7 +7,7 @@ from openrouter_client import create_response, decode_call, function_output, par
 
 from .models import AdjustmentRequest
 from .settings import (AGENT_MAX_OUTPUT_TOKENS, AGENT_MAX_STEPS, AGENT_REASONING_EFFORT,
-                       AGENT_SYSTEM_PROMPT, load_api_key)
+                       AGENT_SYSTEM_PROMPT, load_api_key, load_model)
 from .tools import ScheduleAdjustmentTools, tool_schemas
 
 
@@ -33,7 +33,7 @@ class AdjustmentAgent:
         self.api_request_count += 1
         result = create_response(self.api_key, instructions=AGENT_SYSTEM_PROMPT, input_items=input_items,
                                  tools=tool_schemas(), reasoning_effort=AGENT_REASONING_EFFORT,
-                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS)
+                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS, model=load_model())
         self.usage_records.append(usage_record(result))
         return result
 

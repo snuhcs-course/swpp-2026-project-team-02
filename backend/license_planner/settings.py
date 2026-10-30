@@ -35,3 +35,8 @@ def load_api_key() -> str:
     """
     # 모델 요청 직전에만 호출하므로 결정론적 경로와 사전 거절은 비밀 설정을 읽지 않습니다.
     return openrouter_client.load_api_key((DOTENV_PATH,))
+
+
+def load_model() -> str:
+    """Return the optional backend/.env OpenRouter model override."""
+    return openrouter_client.load_model((DOTENV_PATH,))

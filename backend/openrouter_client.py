@@ -12,8 +12,9 @@ from typing import Any, Iterable
 
 # OpenRouter 접속 설정입니다. 모델과 요청 한도는 프론트엔드가 아니라 백엔드 코드에서만 바꿉니다.
 OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses"  # 비스트리밍 Responses API 주소입니다.
-OPENROUTER_MODEL = "openai/gpt-6-luna"  # 일정 생성과 조정이 함께 쓰는 모델 ID입니다.
+OPENROUTER_MODEL = "openai/gpt-6-luna"  # 환경 변수가 없을 때의 호환 기본 모델 ID입니다.
 OPENROUTER_API_KEY_NAME = "OPENROUTER_API_KEY"  # 백엔드 전용 비밀 키 이름입니다.
+OPENROUTER_MODEL_NAME = "OPENROUTER_MODEL"  # 서버에서만 바꾸는 모델 선택 환경 변수입니다.
 REQUEST_TIMEOUT_SECONDS = 45  # 모델 요청 하나의 최대 대기 시간(초)입니다.
 # 사용량 기록에 남길 수 있는 숫자 필드입니다. 그 밖의 응답 필드는 기록하지 않습니다.
 USAGE_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cost")
@@ -36,16 +37,29 @@ def load_api_key(dotenv_paths: Iterable[Path]) -> str:
     value = os.environ.get(OPENROUTER_API_KEY_NAME, "").strip()
     if value:
         return value
+    value = _dotenv_value(OPENROUTER_API_KEY_NAME, dotenv_paths)
+    if value:
+        return value
+    raise InferenceConfigurationError(f"{OPENROUTER_API_KEY_NAME} is not configured on the server.")
+
+
+def load_model(dotenv_paths: Iterable[Path]) -> str:
+    """Return the server-selected OpenRouter model without exposing any credential."""
+    value = os.environ.get(OPENROUTER_MODEL_NAME, "").strip()
+    return value or _dotenv_value(OPENROUTER_MODEL_NAME, dotenv_paths) or OPENROUTER_MODEL
+
+
+def _dotenv_value(name: str, dotenv_paths: Iterable[Path]) -> str:
     for path in dotenv_paths:
         if not path.is_file():
             continue
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             key, separator, raw_value = raw_line.strip().partition("=")
-            if separator and key.strip() == OPENROUTER_API_KEY_NAME:
+            if separator and key.strip() == name:
                 value = raw_value.strip().strip("\"'")
                 if value:
                     return value
-    raise InferenceConfigurationError(f"{OPENROUTER_API_KEY_NAME} is not configured on the server.")
+    return ""
 
 
 def function_tools(declarations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -60,12 +74,12 @@ def function_tools(declarations: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def create_response(api_key: str, *, instructions: str, input_items: list[dict[str, Any]],
                     tools: list[dict[str, Any]], reasoning_effort: str,
-                    max_output_tokens: int) -> dict[str, Any]:
+                    max_output_tokens: int, model: str = OPENROUTER_MODEL) -> dict[str, Any]:
     """입력 값: API 키, 시스템 지시, 요청별 대화 기록, 도구 선언, 추론 강도, 출력 토큰 한도
     출력 값: OpenRouter 응답 JSON 객체
     기능: 재시도나 다른 모델 전환 없이 Responses API에 요청 한 번을 보냅니다.
     """
-    body = {"model": OPENROUTER_MODEL, "instructions": instructions, "input": input_items,
+    body = {"model": model, "instructions": instructions, "input": input_items,
             "tools": function_tools(tools), "tool_choice": "auto", "parallel_tool_calls": False,
             "reasoning": {"effort": reasoning_effort}, "max_output_tokens": max_output_tokens,
             "store": False, "stream": False}
