@@ -51,6 +51,14 @@ coverage, debug APK builds, and lint. Commands and report locations are in
 [`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key, running
 backend, or emulator, so it does not verify live model planning or the Android UI.
 
+## Iteration 3 deployment
+
+The deployed CPU-server topology, systemd and Nginx templates, public API check,
+and fixed device evaluation flow are documented in [`deploy/`](deploy/README.md).
+The current evaluator API is
+`http://swpp26t02.147-46-242-174.sslip.io/api/v1`; release APK installation and
+submission details are in [`ITER3_SUBMISSION.md`](ITER3_SUBMISSION.md).
+
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently
@@ -63,4 +71,5 @@ backend, or emulator, so it does not verify live model planning or the Android U
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app still labels them “AI가 작성한 설명”; aligning
   that label with the summary source remains a copy decision.
-- **Deployment:** server address, authentication, and per-user storage.
+- **Deployment:** authentication and per-user storage remain open; the current
+  Iteration 3 server and APK use the shared HTTP endpoint documented above.
