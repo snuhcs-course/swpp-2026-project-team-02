@@ -1,4 +1,4 @@
-# 2. HE 사례와 기대 결과 (남경민, 10/30)
+# 2. HE 사례와 기대 결과
 
 기준: `iteration-3-pr4-base` `66e1221`의 release APK(`app-live-release.apk`, [Actions run 41016125574](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41016125574))와 배포 서버 `http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
 
