@@ -76,7 +76,7 @@ def _request_preflight(url: str, origin: str, requested_method: str) -> tuple[in
 
 
 def run() -> dict:
-    """입력 값: 테스트 fixture 두 개와 백엔드 GEMINI_API_KEY 설정
+    """입력 값: 테스트 fixture 두 개와 백엔드 OPENROUTER_API_KEY 설정
     출력 값: 체크별 결과를 담은 요약 딕셔너리
     기능: 임시 가능 시간 파일을 사용해 HTTP 경로와 Gemini 일정 조정을 검증합니다.
     """
@@ -205,7 +205,7 @@ def run() -> dict:
 
 
 def main() -> int:
-    """입력 값: fixture 파일과 GEMINI_API_KEY 설정
+    """입력 값: fixture 파일과 OPENROUTER_API_KEY 설정
     출력 값: 모든 확인 통과 시 0, 하나라도 실패하면 1
     기능: 개인 가능 시간 HTTP 통합 테스트를 실행하고 판정 및 산출물을 기록합니다.
     """

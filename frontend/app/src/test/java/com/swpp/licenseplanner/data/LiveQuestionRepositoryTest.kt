@@ -12,7 +12,7 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
-/** FLOW-04 question GET transport and validation against a local mock server. */
+/** Question GET transport and validation against a local mock server. */
 class LiveQuestionRepositoryTest {
     private lateinit var server: MockWebServer
 

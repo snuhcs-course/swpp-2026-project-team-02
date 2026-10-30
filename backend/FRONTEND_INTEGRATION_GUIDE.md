@@ -6,7 +6,7 @@ server-side only and must remain in `backend/.env`.
 
 ## Run locally
 
-Start the backend with the project Python environment and `GEMINI_API_KEY`
+Start the backend with the project Python environment and `OPENROUTER_API_KEY`
 configured:
 
 ```powershell
@@ -234,7 +234,7 @@ constraints. The store retains up to 100 generated plans on a best-effort basis.
 
 ### Local execution
 
-With `GEMINI_API_KEY` configured on the backend, start from the repository root:
+With `OPENROUTER_API_KEY` configured on the backend, start from the repository root:
 
 ```powershell
 Set-Location backend

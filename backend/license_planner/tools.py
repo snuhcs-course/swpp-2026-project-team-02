@@ -1,11 +1,12 @@
 """Documented, constrained tools exposed to the ReAct agent runtime."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import PlanRequest, ProblemResult, ToolTrace
-from .scheduler import generate_schedule, summarize_topic_results
+from .scheduler import generate_schedule, move_plan_to_available_dates, summarize_topic_results
 from .settings import DATETIME_FORMAT
 
 
@@ -24,6 +25,23 @@ class PlannerTools:
         self.results_analyzed = False  # 분석 도구의 선행 실행 여부입니다.
         self.schedule = None  # 일정 생성 도구가 만든 StudyBlock 목록입니다.
         self.last_tool_error: str | None = None  # 마지막으로 호출한 도구의 오류이며 Agent 오류 보고에 사용합니다.
+
+    def available_date_capacities(self) -> list[dict[str, int | str]]:
+        """Return only feasible weekdays and their unblocked window capacity for an agent retry."""
+        if not self.request.weekly_availability or not self.request.preparation_start or not self.request.exam_date:
+            return []
+        day = self.request.preparation_start.date()
+        last_day = self.request.exam_date.date()
+        capacities: list[dict[str, int | str]] = []
+        while day <= last_day:
+            minutes = sum(
+                int((datetime.combine(day, window.end_time) - datetime.combine(day, window.start_time)).total_seconds() // 60)
+                for window in self.request.weekly_availability.for_weekday(day.weekday())
+            )
+            if minutes:
+                capacities.append({"date": day.strftime("%Y/%m/%d"), "capacity_minutes": minutes})
+            day += timedelta(days=1)
+        return capacities
 
     def get_certification_profile(self, certification_id: str) -> dict[str, Any] | str:
         """입력 값: 자격증 ID
@@ -129,13 +147,23 @@ class PlannerTools:
             if set(minutes_by_topic) != topics:
                 missing, extra = sorted(topics - set(minutes_by_topic)), sorted(set(minutes_by_topic) - topics)
                 raise ValueError(f"daily_topic_minutes must cover assessed topics; missing={missing}, extra={extra}")
-            self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
-                                              normalized_plan)
+            try:
+                self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                  normalized_plan)
+            except ValueError as error:
+                if not str(error).startswith("NOT_ENOUGH_TIME:"):
+                    raise
+                normalized_plan = move_plan_to_available_dates(self.request, normalized_plan)
+                self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                  normalized_plan)
         except ValueError as error:
-            return f"SCHEDULE_ERROR: {error}"
+            capacities = self.available_date_capacities()
+            return (f"SCHEDULE_ERROR: {error}. Retry build_study_schedule using only these "
+                    f"available dates and no more than their capacity: {capacities}")
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": sum(minutes_by_topic.values()),
                 "daily_topic_minutes": normalized_plan,
+                "availability_dates_repaired": normalized_plan != daily_topic_minutes,
                 "uses_personal_availability": self.request.weekly_availability is not None,
                 "schedule": [
                     {"schedule_id": b.schedule_id, "topic": b.topic,

@@ -1,6 +1,6 @@
 package com.swpp.licenseplanner.domain
 
-/** Reserved choice key for the explicit "모르겠음" answer (design D5/D6). */
+/** Reserved choice key for the explicit "모르겠음" answer. */
 const val UNKNOWN_KEY = "UNKNOWN"
 const val UNKNOWN_LABEL = "모르겠음"
 

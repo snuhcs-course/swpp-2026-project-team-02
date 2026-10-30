@@ -16,7 +16,7 @@ sealed interface MappingResult {
     data class Incomplete(val reason: String) : MappingResult
 }
 
-/** Converts the form into the target `POST /study-plans` request (GEN-01, design D5). Pure. */
+/** Converts the form into the target `POST /study-plans` request. Pure. */
 object RequestMapper {
     fun map(state: PlanFormState): MappingResult {
         val certificationId = state.certificationId ?: return MappingResult.Incomplete("certification not selected")

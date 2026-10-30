@@ -73,7 +73,7 @@ enum class NavIcon(@param:DrawableRes val drawable: Int, val description: String
 }
 
 /**
- * Screen frame shared by every step (design D10): top bar with the demo badge,
+ * Screen frame shared by every step: top bar with the demo badge,
  * scrollable content padded 20dp, and an optional footer above a divider.
  */
 @Composable

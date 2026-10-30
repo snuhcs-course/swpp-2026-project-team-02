@@ -127,7 +127,7 @@ class RequestMapperTest {
 
     /**
      * Exports the actual serialized request built from the public-response fixture, with
-     * two UNKNOWN answers, for frontend/contract_checks/verify_request.py (task 4.3).
+     * two UNKNOWN answers, for frontend/contract_checks/verify_request.py.
      */
     @Test
     fun exportPublicFixtureRequestForContractCheck() {

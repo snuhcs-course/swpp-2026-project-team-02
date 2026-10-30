@@ -6,7 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
- * `GET <base>/certifications/{id}/questions` (FLOW-04). Returns the validated set in
+ * `GET <base>/certifications/{id}/questions`. Returns the validated set in
  * response order; failures never fall back to bundled questions.
  */
 class LiveQuestionRepository(

@@ -18,7 +18,7 @@ sealed interface DemoResult {
 }
 
 /**
- * Deterministic local demonstration planner (design D8, GEN-05/06). Its workload
+ * Deterministic local demonstration planner. Its workload
  * rules are demonstration assumptions; they do not mirror the backend's Gemini
  * allocation and never use removed backend readiness rules.
  */

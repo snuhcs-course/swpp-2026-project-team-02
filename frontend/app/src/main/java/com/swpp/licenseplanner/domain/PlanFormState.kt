@@ -5,7 +5,7 @@ import java.time.LocalDate
 const val CERTIFICATION_ID = "computer_specialist_level_2"
 const val CERTIFICATION_NAME = "컴퓨터활용능력 2급"
 
-/** Everything the input flow collects (design D4). Immutable; the ViewModel replaces it. */
+/** Everything the input flow collects. Immutable; the ViewModel replaces it. */
 data class PlanFormState(
     val certificationId: String? = null,
     val preparationStart: LocalDate,

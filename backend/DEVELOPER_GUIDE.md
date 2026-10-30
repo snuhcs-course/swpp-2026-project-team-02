@@ -28,7 +28,7 @@ live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
-| API 비밀 키 | `backend/.env`의 `GEMINI_API_KEY` | 서버 전용 Gemini 인증 정보. 프론트엔드에 넣지 않음 |
+| API 비밀 키 | `backend/.env`의 `OPENROUTER_API_KEY` | 서버 전용 OpenRouter 인증 정보. 프론트엔드에 넣지 않음 |
 
 브라우저 기반 클라이언트를 별도로 사용할 때만 해당 개발 origin을
 `allowed_origins`에 추가합니다. Android 네이티브 앱은 브라우저 CORS 제한을
@@ -272,7 +272,7 @@ external-101,2026/10/12/18/00,2026/10/12/20/00,
 
 ## 설정과 실행
 
-`.env`에는 `GEMINI_API_KEY`만 설정합니다. 모델명(`gemini-3.5-flash-lite`), endpoint, 요청 시간 제한, Agent 반복 횟수 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
+`.env`에는 `OPENROUTER_API_KEY`와 선택적인 `OPENROUTER_MODEL`을 설정합니다. 기본 모델은 `google/gemini-2.5-flash`이며, 반드시 tool calling을 지원하는 OpenRouter 모델을 사용합니다. 요청 시간 제한, Agent 반복 횟수 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
 
 Python 3.10 이상을 사용하고, 이 프로젝트는 현재 Python 표준 라이브러리만 사용합니다. 단일 요청 실행 예시:
 
@@ -444,7 +444,7 @@ CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 �
 
 ### 실행 및 테스트
 
-`backend/.env` 또는 OS 환경 변수에 `GEMINI_API_KEY`를 설정합니다. 설정 로더는 먼저 `schedule_adjuster/.env`를 확인하고, 값이 없으면 `backend/.env`를 확인합니다. CLI 실행 예시:
+`backend/.env` 또는 OS 환경 변수에 `OPENROUTER_API_KEY`를 설정합니다. 설정 로더는 먼저 `schedule_adjuster/.env`를 확인하고, 값이 없으면 `backend/.env`를 확인합니다. CLI 실행 예시:
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `

@@ -14,7 +14,7 @@ import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.userMessage
 
 /**
- * GEN-03/04: loading while the single request is in flight (back is held so the result
+ * Loading while the single request is in flight (back is held so the result
  * is not lost), then an error with retry of the same request and a way back to edit.
  * Success and the demo shortfall are routed away by the navigation host.
  */
@@ -45,8 +45,9 @@ fun GenerateScreen(state: GenerationState, onRetry: () -> Unit, onEdit: () -> Un
 }
 
 /**
- * GEN-06, adapted from frame 2005:474: demo-only insufficient-time result with required and
- * available session counts and ways back to the dates or availability. No partial plan.
+ * Adapted from frame 2005:474: demo-only insufficient-time result with required and
+ * available session counts and ways back to the exam-date editor (frame 2123:2) or
+ * availability. No partial plan.
  */
 @Composable
 fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEditAvailability: () -> Unit) {
@@ -54,7 +55,7 @@ fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEd
         title = "공부 시간",
         onNav = onEditAvailability,
         footer = {
-            PrimaryButton("시험 날짜 바꾸기", onEditDates)
+            PrimaryButton("시험 일정 바꾸기", onEditDates)
             SecondaryButton("공부 시간 늘리기", onEditAvailability)
         },
     ) {
@@ -63,6 +64,7 @@ fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEd
             title = "필요한 공부 ${required}회 중 ${available}회만 들어가요",
             body = "시험일 전까지 고른 요일에 넣을 수 있는 공부는 ${available}회인데, 데모 계산으로는 ${required}회가 필요해요.",
         )
+        Note("모의고사 답안과 공부 시간은 유지돼요.")
         Note("데모 플래너의 로컬 시연 계산이에요. 시험일을 늦추거나 공부하는 요일을 늘려 보세요.")
     }
 }

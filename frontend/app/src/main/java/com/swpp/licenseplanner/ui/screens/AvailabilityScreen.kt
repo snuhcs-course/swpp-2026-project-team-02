@@ -45,7 +45,7 @@ import com.swpp.licenseplanner.ui.theme.InkSecondary
 import java.time.LocalTime
 
 /**
- * FLOW-06, adapted from frame 2005:371: per-weekday duration steppers plus a start-time
+ * Adapted from frame 2005:371: per-weekday duration steppers plus a start-time
  * control. “0시간” means the day is off. No buffer day or readiness claims.
  */
 @Composable

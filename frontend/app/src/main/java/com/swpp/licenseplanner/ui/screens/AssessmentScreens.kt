@@ -39,7 +39,7 @@ import com.swpp.licenseplanner.ui.theme.MonoStyles
 import com.swpp.licenseplanner.ui.userMessage
 
 /**
- * FLOW-04, adapted from frame 2005:253: one loaded example question at a time with
+ * Adapted from frame 2005:253: one loaded example question at a time with
  * loaded-count progress, the local example label, answer cards, and “모르겠음”.
  * Loading starts on first entry; the ViewModel ignores repeats after success.
  */
@@ -120,7 +120,7 @@ fun QuestionsScreen(
 }
 
 /**
- * FLOW-05, adapted from frame 2005:287: earned/possible points per local example label.
+ * Adapted from frame 2005:287: earned/possible points per local example label.
  * The AI time, practical readiness and estimate cards are intentionally omitted.
  */
 @Composable

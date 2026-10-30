@@ -7,7 +7,7 @@ import java.time.temporal.ChronoUnit
 /** A valid same-day study window. */
 data class StudyWindow(val start: LocalTime, val end: LocalTime)
 
-/** Date and availability rules for FLOW-02 and FLOW-06. */
+/** Date and availability rules for the input flow. */
 object Validation {
     private const val MINUTES_PER_DAY = 24 * 60
 

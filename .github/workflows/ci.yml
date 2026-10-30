@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, iteration-2-demo]
   workflow_dispatch:
   schedule:
     # Daily 00:00 UTC (09:00 Asia/Seoul) on the default branch.
@@ -51,6 +51,10 @@ jobs:
       - name: Schedule adjuster unit tests
         if: ${{ !cancelled() && steps.coverage-erase.outcome == 'success' }}
         run: python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
+
+      - name: API persistence and integration tests
+        if: ${{ !cancelled() && steps.coverage-erase.outcome == 'success' }}
+        run: python -m coverage run --append -m unittest discover -s api_tests -v
 
       - name: Coverage reports
         if: ${{ always() && steps.coverage-erase.outcome == 'success' }}
@@ -116,8 +120,25 @@ jobs:
       # Sole Gradle cache; by default it writes only from the default branch, so PR runs never write.
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
-      - name: Unit tests (demo and live)
-        run: bash ./gradlew --no-daemon testDemoDebugUnitTest testLiveDebugUnitTest
+      - name: Unit tests and real HTTP integration (no Gemini key)
+        run: |
+          (cd ../backend && python -u api_server.py --demo) > /tmp/planner-demo.log 2>&1 &
+          demo_pid=$!
+          trap 'kill "$demo_pid"; cat /tmp/planner-demo.log' EXIT
+          python - <<'EOF'
+          import time
+          from urllib.request import urlopen
+          for attempt in range(30):
+              try:
+                  with urlopen("http://127.0.0.1:8000/api/v1/health", timeout=1) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("Demo server did not start")
+          EOF
+          LICENSE_PLANNER_TEST_API=http://127.0.0.1:8000/api/v1 bash ./gradlew --no-daemon testDemoDebugUnitTest testLiveDebugUnitTest testIntegrationDebugUnitTest
 
       - name: Contract check against this checkout's backend
         working-directory: .
@@ -150,7 +171,7 @@ jobs:
           EOF
 
       - name: Build debug APKs and lint
-        run: bash ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug lintDemoDebug lintLiveDebug
+        run: bash ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug assembleIntegrationDebug lintDemoDebug lintLiveDebug lintIntegrationDebug
 
       - name: Upload test, lint and coverage reports
         if: always()
@@ -173,5 +194,6 @@ jobs:
           path: |
             frontend/app/build/outputs/apk/demo/debug/app-demo-debug.apk
             frontend/app/build/outputs/apk/live/debug/app-live-debug.apk
+            frontend/app/build/outputs/apk/integration/debug/app-integration-debug.apk
           if-no-files-found: error
           retention-days: 7

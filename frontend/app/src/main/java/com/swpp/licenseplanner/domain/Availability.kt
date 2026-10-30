@@ -16,7 +16,7 @@ enum class Weekday(val key: String, val label: String) {
     val dayOfWeek: java.time.DayOfWeek get() = java.time.DayOfWeek.of(ordinal + 1)
 }
 
-/** One window per weekday entered as a start time and a duration (FLOW-06). */
+/** One window per weekday entered as a start time and a duration. */
 data class DayAvailability(
     val enabled: Boolean = false,
     val start: LocalTime = DEFAULT_START,

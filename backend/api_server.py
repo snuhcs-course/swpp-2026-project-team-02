@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,14 @@ DEFAULT_API_CONFIG = {
     "max_request_bytes": 1_048_576,
 }
 API_PREFIX = "/api/v1"
+LOGGER = logging.getLogger(__name__)
+UPSTREAM_SECRET_PATTERN = re.compile(r"(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._-]+", re.IGNORECASE)
+
+
+def safe_upstream_detail(error: RuntimeError) -> str:
+    """Keep actionable upstream diagnostics while never writing credentials to logs."""
+    detail = UPSTREAM_SECRET_PATTERN.sub("[redacted]", str(error))
+    return detail[:800]
 
 
 def load_api_config() -> dict[str, Any]:
@@ -50,13 +60,17 @@ def load_api_config() -> dict[str, Any]:
     return config
 
 
-def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
+def make_handler(config: dict[str, Any], *, planner=None, adjuster=None) -> type[BaseHTTPRequestHandler]:
     """입력 값: 검증된 서버 설정
     출력 값: 해당 설정으로 동작하는 HTTP 요청 처리기 클래스
     기능: 상태 확인, 가능 시간, 계획 생성, 일정 조정 경로를 처리합니다.
     """
     class ApiHandler(BaseHTTPRequestHandler):
         """JSON 요청을 서비스 함수에 전달하는 HTTP 핸들러입니다."""
+
+        # Every response supplies Content-Length (or 204). Keep pooled OkHttp
+        # connections usable without replaying a one-shot adjustment request.
+        protocol_version = "HTTP/1.1"
 
         def log_message(self, format: str, *args: Any) -> None:
             """입력 값: 기본 HTTP 로그 형식과 인자
@@ -189,9 +203,9 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             try:
                 payload = self._read_json()
                 if method == "POST" and path == f"{API_PREFIX}/study-plans":
-                    result = create_study_plan(payload)
+                    result = create_study_plan(payload, agent=planner)
                 elif method == "POST" and path == f"{API_PREFIX}/schedules/adjust":
-                    result = adjust_schedule(payload)
+                    result = adjust_schedule(payload, agent=adjuster)
                 elif method == "PUT" and path == f"{API_PREFIX}/availability":
                     result = {"weekly_availability": write_availability(payload)}
                 else:
@@ -206,13 +220,14 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
                 message = str(error)
-                if "GEMINI_API_KEY" in message or "API key" in message:
+                if "OPENROUTER_API_KEY" in message or "API key" in message:
                     self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
                 else:
                     self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
             except RuntimeError as error:
                 message = str(error)
-                code = 503 if "GEMINI_API_KEY" in message or "API key" in message else 502
+                LOGGER.warning("Model upstream failure: %s", safe_upstream_detail(error))
+                code = 503 if "OPENROUTER_API_KEY" in message or "API key" in message else 502
                 self._send_json(code, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
             except Exception:
                 self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}})
@@ -225,8 +240,19 @@ def main() -> int:
     출력 값: 서버 종료 시 프로세스 코드 0
     기능: 설정한 주소와 포트에서 HTTP API 서버를 실행합니다.
     """
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--demo", action="store_true", help="Use explicit deterministic demo agents, without OpenRouter")
+    args = parser.parse_args()
     config = load_api_config()
-    server = ThreadingHTTPServer((config["host"], config["port"]), make_handler(config))
+    planner = adjuster = None
+    if args.demo:
+        import api_service
+        from demo_agents import DemoPlannerAgent, DemoAdjustmentAgent
+        api_service.STUDY_PLAN_OUTPUT_DIR = PROJECT_ROOT / "demo_output"
+        planner, adjuster = DemoPlannerAgent(), DemoAdjustmentAgent()
+        print("INTEGRATION DEMO: deterministic examples, not AI output; storage: backend/demo_output")
+    server = ThreadingHTTPServer((config["host"], config["port"]), make_handler(config, planner=planner, adjuster=adjuster))
     print(f"API listening at http://{config['host']}:{config['port']}{API_PREFIX}")
     try:
         server.serve_forever()

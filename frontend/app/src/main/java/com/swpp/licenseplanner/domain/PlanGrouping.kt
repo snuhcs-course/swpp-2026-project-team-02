@@ -25,7 +25,7 @@ data class WeekPlan(val monday: LocalDate, val days: List<DayPlan>) {
     val sunday: LocalDate get() = monday.plusDays(6)
 }
 
-/** Sorts returned rows and groups them into Monday-based weeks of seven days (VIEW-01/02/04). */
+/** Sorts returned rows and groups them into Monday-based weeks of seven days. */
 object PlanGrouping {
     /** Rows with unparseable timestamps are skipped; the live repository rejects them earlier. */
     fun sessions(rows: List<ScheduleRow>): List<PlanSession> = rows.mapNotNull { row ->

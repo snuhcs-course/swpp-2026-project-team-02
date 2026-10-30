@@ -46,7 +46,7 @@ class ScoringTest {
 
     @Test
     fun topicTotalsForPinnedBank() {
-        // FLOW-05 scenario: 1 of 2 points in 함수와 데이터 관리.
+        // Scenario: 1 of 2 points in 함수와 데이터 관리.
         val answers = mapOf(1 to "B", 2 to "B", 3 to UNKNOWN_KEY, 4 to "B", 5 to "C")
         val scores = Scoring.topicScores(questions, answers).associateBy { it.topic }
         assertEquals(TopicScore("스프레드시트 기본", 2.0, 2.0), scores["스프레드시트 기본"])
