@@ -62,6 +62,7 @@
 - `apksigner verify --print-certs`로 서명 검증
 - `app-live-release.apk` artifact를 30일 보관
 - 성공 run의 artifact 1개 생성 확인
+- 내려받은 `live-release-apk-e2ac4d0.../app-live-release.apk`를 로컬 `apksigner verify --verbose --print-certs`로 재검증: v2 서명 유효, signer 1개, 인증서 DN `CN=SWPP_TEAM_02, OU=SWPP, O=SNU_CSE, L=Seoul, ST=Seoul, C=KR`
 
 ### 고정 서명 지문
 
