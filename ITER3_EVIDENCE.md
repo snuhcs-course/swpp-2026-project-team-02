@@ -64,6 +64,12 @@
 - 성공 run의 artifact 1개 생성 확인
 - 내려받은 `live-release-apk-e2ac4d0.../app-live-release.apk`를 로컬 `apksigner verify --verbose --print-certs`로 재검증: v2 서명 유효, signer 1개, 인증서 DN `CN=SWPP_TEAM_02, OU=SWPP, O=SNU_CSE, L=Seoul, ST=Seoul, C=KR`
 
+### 최신 CI 재검증
+
+- `bfe0326 fix(ci): include OpenRouter client in contract snapshot`에서 Android contract-check snapshot에 누락된 `backend/openrouter_client.py`를 추가했다.
+- 동일 Android request fixture로 로컬 contract check `PASS`를 확인했고, [CI run 41013865007](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41013865007)과 [Prod APK run 41013858119](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41013858119)이 모두 성공했다.
+- 이 수정은 CI 검증용 snapshot만 바꾸므로 CPU 서버의 실행 코드·배포 서비스 재시작은 필요하지 않다.
+
 ### 고정 서명 지문
 
 ```text
