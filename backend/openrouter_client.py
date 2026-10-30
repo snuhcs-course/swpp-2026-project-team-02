@@ -154,6 +154,9 @@ def parse_reply(response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
         reason = reason if isinstance(reason, str) and INCOMPLETE_REASON_PATTERN.fullmatch(reason) else "unknown"
         raise InferenceError(f"OpenRouter response was incomplete ({reason})")
     if status != "completed":
+        LOGGER.warning("OpenRouter Responses response shape mismatch: keys=%s status=%r output_type=%s choices_type=%s",
+                       sorted(str(key) for key in response), status, type(response.get("output")).__name__,
+                       type(response.get("choices")).__name__)
         raise InferenceError("OpenRouter response did not complete")
     output = response.get("output")
     if not isinstance(output, list) or not all(
