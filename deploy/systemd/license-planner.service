@@ -1,0 +1,18 @@
+[Unit]
+Description=License Planner API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=swpp26-45
+WorkingDirectory=/home/swpp26-45/apps/swpp-2026-project-team-02/backend
+EnvironmentFile=/home/swpp26-45/apps/swpp-2026-project-team-02/backend/.env
+Environment=APP_API_HOST=127.0.0.1
+Environment=APP_API_PORT=8000
+ExecStart=/usr/bin/python3 /home/swpp26-45/apps/swpp-2026-project-team-02/backend/api_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

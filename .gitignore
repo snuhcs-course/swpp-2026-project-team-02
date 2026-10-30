@@ -6,8 +6,15 @@ backend/config/user_availability.json
 **/.idea
 backend/license_planner/output/
 /backend/coverage-results/
+/backend/demo_output/
 # Scenario runner outputs are regenerated on every run; keep only each folder's README.
 /backend/scenarios/results/*/*
 !/backend/scenarios/results/*/README.md
 backend/assessment_questionnaire/output/
 .vscode/
+
+# Local SSH credentials and course-server private keys must never enter Git.
+**/.ssh/
+/swpp26-*
+**/id_rsa
+**/id_ed25519
