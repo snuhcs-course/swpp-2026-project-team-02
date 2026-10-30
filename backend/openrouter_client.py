@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -19,6 +20,8 @@ REQUEST_TIMEOUT_SECONDS = 45  # 모델 요청 하나의 최대 대기 시간(초
 # 사용량 기록에 남길 수 있는 숫자 필드입니다. 그 밖의 응답 필드는 기록하지 않습니다.
 USAGE_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cost")
 INCOMPLETE_REASON_PATTERN = re.compile(r"[a-z_]{1,40}")  # 공개해도 되는 미완료 사유 형식입니다.
+SECRET_PATTERN = re.compile(r"(?:sk-or-v1-|Bearer\\s+)[A-Za-z0-9._-]+", re.IGNORECASE)
+LOGGER = logging.getLogger(__name__)
 
 
 class InferenceConfigurationError(RuntimeError):
@@ -94,7 +97,9 @@ def create_response(api_key: str, *, instructions: str, input_items: list[dict[s
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             raw = response.read()
     except urllib.error.HTTPError as error:
-        error.close()  # 제공자 오류 본문은 읽거나 전달하지 않습니다.
+        detail = _safe_provider_detail(error)
+        LOGGER.warning("OpenRouter Responses request rejected: HTTP %s (%s)", error.code, detail)
+        error.close()
         raise InferenceError(f"OpenRouter request failed: {_http_failure(error.code)}") from None
     except (OSError, http.client.HTTPException) as error:
         raise InferenceError(f"OpenRouter request failed: network error ({type(error).__name__})") from None
@@ -121,6 +126,19 @@ def _http_failure(status: int) -> str:
     if status >= 500:
         return f"provider unavailable (HTTP {status})"
     return f"request rejected (HTTP {status})"
+
+
+def _safe_provider_detail(error: urllib.error.HTTPError) -> str:
+    """Return a bounded provider message for server logs without credentials or raw payloads."""
+    try:
+        payload = json.loads(error.read().decode("utf-8", errors="replace"))
+        message = payload.get("error", {}).get("message", "") if isinstance(payload, dict) else ""
+        if not isinstance(message, str):
+            message = ""
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        message = ""
+    message = SECRET_PATTERN.sub("[redacted]", message).replace("\n", " ").strip()
+    return message[:500] or "no provider message"
 
 
 def parse_reply(response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
