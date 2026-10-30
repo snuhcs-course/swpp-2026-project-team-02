@@ -1,13 +1,14 @@
 # Android frontend API integration
 
 This guide documents the HTTP contract used by `frontend/`'s Android `live`
-flavor. Run the API from this repository's `backend/` directory. The API key is
-server-side only and must remain in `backend/.env`.
+flavor. Run the API from this repository's `backend/` directory. The OpenRouter
+API key is server-side only and must remain in the backend process environment or
+`backend/.env`.
 
 ## Run locally
 
-Start the backend with the project Python environment and `GEMINI_API_KEY`
-configured:
+Start the backend with the project Python environment and `OPENROUTER_API_KEY`
+configured (generation and adjustment use OpenRouter model `openai/gpt-6-luna`):
 
 ```powershell
 cd backend
@@ -25,6 +26,8 @@ Check connectivity with `GET /api/v1/health`, which returns
 
 - `GET /api/v1/certifications/{certification_id}/questions`
 - `POST /api/v1/study-plans`
+- `POST /api/v1/schedules/adjust`
+- `GET /api/v1/study-plans` for explicit reload of a retained plan
 
 The current MVP uses `computer_specialist_level_2`.
 
@@ -107,20 +110,47 @@ invalid input, `502` for upstream planning errors, `503` for missing server
 configuration, and `500` for unexpected server errors. Error bodies use
 `{"error":{"code":"...","message":"..."}}`.
 
+`502`/`503` `UPSTREAM_ERROR` messages are fixed public sentences, not the
+server's exception text: `Study plan generation failed. Try again later.` for
+generation, `Schedule adjustment failed. Try again later.` for adjustment, and
+`The planning service is not configured on the server.` when the OpenRouter key
+is missing. They never include provider responses, tool names or arguments, agent
+traces, or server paths, so clients must not parse them for a cause. `422`
+`INVALID_INPUT` messages, including `NOT_ENOUGH_TIME`, and the `404`/`409`/`500`
+plan-storage messages keep their specific text.
+
+When the available time provably cannot give every required topic at least one
+minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
+that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the
+topic basis, and advises adding study windows, starting preparation earlier, or
+choosing a later exam date. No schedule fields are returned and no plan file is
+saved. The check runs in two stages. Before any model call the exact topic count
+is unknown, so only zero usable minutes is rejected there, even when no server key
+is configured. After the model maps the questions to topics, the actual number of
+distinct assessed topics is checked before any schedule is built. Passing the
+check does not mean the time is enough to prepare. Invalid model allocations,
+repeated tool failures and provider errors stay `502`/`503`; they never become
+`NOT_ENOUGH_TIME`. On success, `agent_summary` is a short server-written summary
+of the accepted schedule. No response fields were added.
+
 ## Other backend endpoints
 
-The API also exposes availability profile read/write and schedule adjustment
-endpoints for other clients. The current Android MVP does not call them; it
-sends weekly availability as part of each plan request.
+The API also exposes availability profile read/write for other clients. Android
+does not call the profile endpoints; it sends availability with generation and
+uses the selected plan's original windows for adjustment. Android calls the
+adjustment endpoint and explicitly reloads a retained plan through the plan-list
+endpoint as described below; it does not import the server's plans into its list.
 
 ## Task 2: select, adjust, and update a saved plan
 
-Implementation status: added on 2026-10-17. Fifteen isolated HTTP/storage tests
+Historical backend verification (2026-10-17): Fifteen isolated HTTP/storage tests
 passed using a replacement agent that executes the real domain tools. Fifteen
 existing adjustment tests passed; the planner suite passed 12/13 with an existing
 weekday-normalization expectation mismatch. Live Gemini calls were not run
 because no key was configured. Android tests could not run because the SDK
-location was unavailable. The Android UI is not changed by this backend task.
+location was unavailable. That backend task did not change the Android UI.
+Later frontend adjustment and recovery implementation is described here and in `../frontend/README.md`; the
+old suite/SDK observations above are dated evidence, not current blockers.
 
 ### Select a plan
 
@@ -128,6 +158,17 @@ location was unavailable. The Android UI is not changed by this backend task.
 Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`.
 An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
 an unreadable or malformed plan produces `500 STORAGE_ERROR`.
+
+To read back one retained plan, add the optional query
+`?schedule_csv_file=<URL-encoded identifier>` (encode it once; the `+` in the
+identifier must be sent as `%2B`). The server then reads only that file, so a
+damaged unrelated plan does not block it. The response keeps the same envelope:
+one item for the selected plan, or `{"plans": []}` when that valid identifier no
+longer exists. A selected plan that is unreadable or malformed still returns
+`500 STORAGE_ERROR`. A blank, repeated, or invalid identifier (path, symlink, or
+anything that is not a server-issued identifier) returns `422 INVALID_INPUT`
+without reading files. Without the query, listing behaves as above; other
+query parameters are ignored.
 
 ```json
 {
@@ -146,8 +187,8 @@ an unreadable or malformed plan produces `500 STORAGE_ERROR`.
 
 Alternatively, retain `schedule_csv_file` and `schedules` directly from the
 existing generation response. Treat the identifier as opaque and retain it with
-the schedule; do not construct a filename. The current Android DTO ignores this
-field and must be extended by the FE integration task.
+the schedule; do not construct a filename. The Android DTO retains this
+field and uses it unchanged for adjustment and exact-identity reload.
 
 ### Adjust the selected plan
 
@@ -217,8 +258,13 @@ shape and omit the two file fields.
 | 500 / `STORAGE_ERROR` | Report storage failure |
 | 502 or 503 / `UPSTREAM_ERROR` | Report agent/configuration failure |
 
-Errors keep `{"error":{"code":"...","message":"..."}}`. The current Android
-error mapper needs a dedicated 409 path in the FE integration task.
+Errors keep `{"error":{"code":"...","message":"..."}}`. Android distinguishes
+adjustment 404 `PLAN_NOT_FOUND` and 409 `PLAN_CONFLICT` from route errors. Any
+adjustment 409, lost connection/timeout, or unreadable/mismatched success requires
+an explicit reload before a fresh selection and submission; it never replays the
+uncertain mutation. A missing plan stays viewable but unavailable for adjustment
+for the app session. These client paths have controlled-test evidence; real
+Android/OpenRouter Luna same-file A/B acceptance remains pending.
 
 If a call times out, reload before retrying: the write may have completed.
 There is no idempotency key. File reads and replacements share a process lock;
@@ -234,7 +280,7 @@ constraints. The store retains up to 100 generated plans on a best-effort basis.
 
 ### Local execution
 
-With `GEMINI_API_KEY` configured on the backend, start from the repository root:
+With `OPENROUTER_API_KEY` configured on the backend, start from the repository root:
 
 ```powershell
 Set-Location backend
@@ -261,7 +307,7 @@ Invoke-RestMethod -Method Post `
     -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))
 ```
 
-For a static payload template, see `api_test_inputs/plan_adjustment_request.json`.
+For a static payload template, see `scenarios/inputs/api/plan_adjustment_request.json`.
 Its sample file does not exist automatically; replace both the identifier and
 schedule rows with those from generation or listing. The Android Emulator base
 URL remains `http://10.0.2.2:8000/api/v1`.

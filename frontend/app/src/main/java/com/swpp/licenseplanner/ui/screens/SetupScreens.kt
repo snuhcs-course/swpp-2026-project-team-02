@@ -20,6 +20,7 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.Validation
 import com.swpp.licenseplanner.ui.components.AppScreen
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.FieldLabel
@@ -35,13 +36,13 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** FLOW-01: the only supported certification; continue stays disabled until it is selected. */
+/** The only supported certification; continue stays disabled until it is selected. */
 @Composable
-fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onContinue: () -> Unit) {
+fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onBack: () -> Unit, onContinue: () -> Unit) {
     val selected = form.certificationId == CERTIFICATION_ID
     AppScreen(
         title = "자격증",
-        navIcon = null,
+        onNav = onBack,
         footer = { PrimaryButton("다음", onContinue, enabled = selected) },
     ) {
         Heading("어떤 시험을 준비하나요?", "지금은 컴퓨터활용능력 2급만 지원해요.")
@@ -55,7 +56,7 @@ fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onConti
 }
 
 /**
- * FLOW-02, adapted from frame 2004:479 for the written-only prototype (design D14): the written
+ * Adapted from frame 2004:479 for the written-only prototype: the written
  * exam card plus preparation start and written exam date fields. The preparation period is
  * shown once the dates are valid.
  */
@@ -102,6 +103,40 @@ fun DatesScreen(
 private const val START = "start"
 private const val EXAM = "exam"
 
+/**
+ * Frames 2122:2/2122:58: changes only the exam date after a demo shortfall. The draft
+ * (epoch day) is committed only by [onConfirm]; back leaves it uncommitted.
+ */
+@Composable
+fun ExamDateEditScreen(form: PlanFormState, onBack: () -> Unit, onConfirm: (LocalDate) -> Unit) {
+    var draftDay by rememberSaveable { mutableStateOf(form.examDate?.toEpochDay()) }
+    var picking by rememberSaveable { mutableStateOf(false) }
+    val draft = draftDay?.let(LocalDate::ofEpochDay)
+    val error = Validation.datesError(form.preparationStart, draft)
+    AppScreen(
+        title = CERTIFICATION_NAME,
+        onNav = onBack,
+        footer = {
+            PrimaryButton(
+                "변경한 날짜로 계획 확인",
+                { if (draft != null) onConfirm(draft) },
+                enabled = error == null,
+                subtitle = "모의고사를 다시 풀지 않아요",
+            )
+        },
+    ) {
+        Heading("시험 일정 바꾸기", "모의고사 답안과 공부 시간은 그대로예요. 바꾼 날짜로 계획을 다시 확인해요.")
+        DateField("필기 시험일", draft) { picking = true }
+        if (draft != null && error != null) Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
+    }
+    if (picking) {
+        DatePickerSheet(draft ?: form.preparationStart.plusDays(1), onDismiss = { picking = false }) {
+            draftDay = it.toEpochDay()
+            picking = false
+        }
+    }
+}
+
 @Composable
 private fun DateField(label: String, date: LocalDate?, onClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -127,7 +162,7 @@ private fun DatePickerSheet(initial: LocalDate, onDismiss: () -> Unit, onPick: (
     }
 }
 
-/** FLOW-03: three level choices; each carries the fixed self-assessment sentence. */
+/** Three level choices; each carries the fixed self-assessment sentence. */
 @Composable
 fun LevelScreen(form: PlanFormState, onSelect: (CurrentLevel) -> Unit, onBack: () -> Unit, onContinue: () -> Unit) {
     AppScreen(

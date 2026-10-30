@@ -73,7 +73,7 @@ enum class NavIcon(@param:DrawableRes val drawable: Int, val description: String
 }
 
 /**
- * Screen frame shared by every step (design D10): top bar with the demo badge,
+ * Screen frame shared by every step: top bar with the demo badge,
  * scrollable content padded 20dp, and an optional footer above a divider.
  */
 @Composable
@@ -271,6 +271,7 @@ fun OutlinedCard(
 /**
  * Selectable option card; the selected card gets a 2dp Ink border and a filled indicator.
  * A non-null [choiceLabel] exposes it as a labeled radio option (assessment answers).
+ * A disabled card turns to the muted fill and keeps showing its selection but ignores taps.
  */
 @Composable
 fun ChoiceCard(
@@ -278,13 +279,15 @@ fun ChoiceCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     choiceLabel: String? = null,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     OptionSurface(
         choice = choiceLabel?.let { SingleChoice(it, selected) },
         onClick = onClick,
+        enabled = enabled,
         shape = MaterialTheme.shapes.medium,
-        color = Paper,
+        color = if (enabled) Paper else MutedSurface,
         border = BorderStroke(if (selected) 2.dp else 1.5.dp, if (selected) Ink else Outline),
         modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
     ) {

@@ -7,7 +7,7 @@ sealed interface QuestionOutcome {
     data class Failure(val error: ApiError) : QuestionOutcome
 }
 
-/** Example-question source; live GET or the demo fixture, chosen by flavor (design D6). */
+/** Example-question source; live GET or the demo fixture, chosen by flavor. */
 interface QuestionRepository {
     suspend fun load(certificationId: String): QuestionOutcome
 }

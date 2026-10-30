@@ -6,11 +6,12 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from api_service import (adjust_schedule, create_study_plan, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import get_public_certifications, get_public_questions
+from openrouter_client import InferenceConfigurationError
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
@@ -22,6 +23,22 @@ DEFAULT_API_CONFIG = {
     "max_request_bytes": 1_048_576,
 }
 API_PREFIX = "/api/v1"
+
+# 상위 서비스 오류는 내부 도구 인자·trace·경로가 노출되지 않도록 고정 문구로만 응답합니다.
+UPSTREAM_MESSAGES = {
+    f"{API_PREFIX}/study-plans": "Study plan generation failed. Try again later.",
+    f"{API_PREFIX}/schedules/adjust": "Schedule adjustment failed. Try again later.",
+}
+DEFAULT_UPSTREAM_MESSAGE = "The upstream service failed. Try again later."
+CONFIGURATION_MESSAGE = "The planning service is not configured on the server."
+
+
+def _is_missing_configuration(error: Exception) -> bool:
+    """입력 값: 서비스 예외
+    출력 값: 모델 API 키 설정 누락 오류 여부
+    기능: 예외 메시지가 아니라 전용 예외 종류로 서버 설정 누락을 판별합니다.
+    """
+    return isinstance(error, InferenceConfigurationError)
 
 
 def load_api_config() -> dict[str, Any]:
@@ -133,7 +150,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             출력 값: 상태 확인 또는 사용자 가능 시간 JSON
             기능: 읽기 전용 API 경로를 처리합니다.
             """
-            path = urlparse(self.path).path
+            url = urlparse(self.path)
+            path = url.path
             try:
                 if path == f"{API_PREFIX}/health":
                     self._send_json(200, {"status": "ok"})
@@ -148,7 +166,15 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                         return
                     self._send_json(200, get_public_questions(certification_id))
                 elif path == f"{API_PREFIX}/study-plans":
-                    self._send_json(200, list_study_plans())
+                    selected = parse_qs(url.query, keep_blank_values=True).get("schedule_csv_file")
+                    try:
+                        if selected is not None and len(selected) != 1:
+                            raise ValueError("schedule_csv_file must be given at most once")
+                        result = list_study_plans(selected[0] if selected else None)
+                    except ValueError as error:
+                        self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
+                        return
+                    self._send_json(200, result)
                 elif path.startswith(f"{API_PREFIX}/study-plans/"):
                     filename = path[len(f"{API_PREFIX}/study-plans/"):]
                     content, safe_filename = read_study_plan_csv(filename)
@@ -205,15 +231,13 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             except PlanStorageError as error:
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ValueError as error:
-                message = str(error)
-                if "GEMINI_API_KEY" in message or "API key" in message:
-                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
-                else:
-                    self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": message}})
+                self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:
-                message = str(error)
-                code = 503 if "GEMINI_API_KEY" in message or "API key" in message else 502
-                self._send_json(code, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
+                if _is_missing_configuration(error):
+                    self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
+                else:
+                    message = UPSTREAM_MESSAGES.get(path, DEFAULT_UPSTREAM_MESSAGE)
+                    self._send_json(502, {"error": {"code": "UPSTREAM_ERROR", "message": message}})
             except Exception:
                 self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}})
 

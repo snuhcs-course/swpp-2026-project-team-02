@@ -3,19 +3,21 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from license_planner.agent import GeminiToolAgent
+from license_planner.agent import PlanningAgent
 from license_planner.csv_io import parse_busy_csv, parse_datetime, render_schedule_csv
 from license_planner.models import PlanRequest
+from license_planner.tools import check_initial_capacity
 from assessment_service import get_public_questions, parse_assessment_results
 from license_planner.user_availability import (
     WEEKDAY_NAMES, load_personal_availability, parse_weekly_availability,
     save_personal_availability,
 )
-from schedule_adjuster.agent import GeminiAdjustmentAgent
+from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as render_adjusted_csv
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import (
@@ -27,7 +29,8 @@ from study_plan_store import StudyPlanStore, PlanConflictError, plan_fields
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
-STUDY_PLAN_OUTPUT_DIR = BACKEND_ROOT / "license_planner" / "output"
+STUDY_PLAN_OUTPUT_DIR = Path(os.getenv("APP_STUDY_PLAN_DIR",
+                                       BACKEND_ROOT / "license_planner" / "output"))
 
 
 def _save_study_plan_csv(content: str) -> str:
@@ -38,8 +41,8 @@ def read_study_plan_csv(filename: str) -> tuple[str, str]:
     return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).download(filename)
 
 
-def list_study_plans() -> dict[str, Any]:
-    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans()}
+def list_study_plans(schedule_csv_file: str | None = None) -> dict[str, Any]:
+    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans(schedule_csv_file)}
 
 
 def _datetime(value: Any, field: str) -> datetime:
@@ -131,10 +134,11 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
 def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
     """입력 값: 학습 계획 API 요청 JSON 객체
     출력 값: 생성 CSV와 일정 행을 포함한 JSON 객체
-    기능: JSON 요청을 검증하고 Gemini Agent로 계획을 만듭니다.
+    기능: JSON 요청을 검증하고 계획 Agent로 계획을 만듭니다.
     """
     request = build_plan_request(payload, require_assessment=True)
-    tools, summary = GeminiToolAgent().run(request)
+    check_initial_capacity(request)  # 모델 설정이나 호출 없이 0분 가용 시간을 거절합니다.
+    tools, summary = PlanningAgent().run(request)
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
     csv_text = render_schedule_csv(request.busy_periods, tools.schedule)
@@ -182,7 +186,7 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))
     expected_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
     request = AdjustmentRequest(target_id, entries, availability)
-    tools, summary = GeminiAdjustmentAgent().adjust(request)
+    tools, summary = AdjustmentAgent().adjust(request)
     if (tools.outcome is None or tools.outcome.schedule_id != target_id
             or tools.outcome.action != expected_action):
         raise RuntimeError("Agent did not apply the requested schedule adjustment")

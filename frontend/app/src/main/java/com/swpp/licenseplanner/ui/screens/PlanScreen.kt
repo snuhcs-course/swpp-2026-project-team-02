@@ -33,6 +33,7 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.IconButton44
@@ -53,13 +54,14 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 /**
- * VIEW-01–VIEW-04, adapted from frame 2007:253: one Monday-based week at a time with
+ * Adapted from frame 2007:253: one Monday-based week at a time with
  * bounded previous/next, seven day sections, returned session cards, the AI-authored
  * summary when present, and the demo statement for local plans. The phase timeline,
  * on-track status and calendar export from the frame are omitted (no backing data).
+ * [onHome] and [onAdjust] lead to the home and plan-list screens.
  */
 @Composable
-fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit) {
+fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit, onHome: () -> Unit, onAdjust: () -> Unit) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
@@ -75,7 +77,7 @@ fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit)
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Written-only scope (VIEW-03, design D14), shown for nonempty and empty plans alike.
+            // Written-only scope, shown for nonempty and empty plans alike.
             item { Heading(CERTIFICATION_NAME, "필기 시험 준비 계획") }
             if (isDemo) {
                 item {
@@ -105,13 +107,15 @@ fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit)
                 }
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
             }
+            item { SecondaryButton("계획 조정하기", onAdjust) }
             item { SecondaryButton("입력 수정하기", onEdit) }
+            item { SecondaryButton("처음으로", onHome) }
         }
     }
 }
 
 @Composable
-private fun AiSummary(summary: String) {
+internal fun AiSummary(summary: String) {
     DashedBox {
         Tag("AI", mono = true)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -122,7 +126,7 @@ private fun AiSummary(summary: String) {
 }
 
 @Composable
-private fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
+internal fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         IconButton44(R.drawable.ic_back, "이전 주", onPrevious, enabled = index > 0)
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -142,12 +146,23 @@ private fun weekRange(week: WeekPlan): String {
     return "${monthDay(week.monday)} – $endText"
 }
 
-private fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
+internal fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
 
 private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
 
+/**
+ * One day of the plan. With [onSelect], study sessions become single-choice options with
+ * [selectedId] marked; existing schedules stay plain rows. The study session [movedId] gets a
+ * “옮긴 일정” tag.
+ */
 @Composable
-private fun DaySection(day: DayPlan) {
+internal fun DaySection(
+    day: DayPlan,
+    selectedId: String? = null,
+    onSelect: ((String) -> Unit)? = null,
+    selectionEnabled: Boolean = true,
+    movedId: String? = null,
+) {
     if (day.sessions.isEmpty()) {
         MutedBox {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -161,7 +176,11 @@ private fun DaySection(day: DayPlan) {
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             DayStamp(day.date)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                for (session in day.sessions) SessionRow(session)
+                for (session in day.sessions) {
+                    val moved = !session.isExternal && session.scheduleId == movedId
+                    if (onSelect == null || session.isExternal) SessionRow(session, moved)
+                    else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved) { onSelect(session.scheduleId) }
+                }
             }
         }
     }
@@ -176,7 +195,29 @@ private fun DayStamp(date: LocalDate) {
 }
 
 @Composable
-private fun SessionRow(session: PlanSession) {
+private fun SelectableSession(
+    session: PlanSession,
+    date: LocalDate,
+    selected: Boolean,
+    enabled: Boolean,
+    moved: Boolean,
+    onClick: () -> Unit,
+) {
+    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}" +
+        (if (moved) " $MOVED_TAG" else "") + (if (enabled) "" else " $SELECTION_LOCKED")
+    ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SessionRow(session, moved)
+            if (!enabled) Text(SELECTION_LOCKED, style = MaterialTheme.typography.labelSmall, color = InkSecondary)
+        }
+    }
+}
+
+private fun sessionTime(session: PlanSession) =
+    "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"
+
+@Composable
+private fun SessionRow(session: PlanSession, moved: Boolean = false) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Topic exactly as returned; long topics wrap.
@@ -185,11 +226,15 @@ private fun SessionRow(session: PlanSession) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}",
+                sessionTime(session),
                 style = MonoStyles.number,
                 color = InkBody,
             )
             if (session.isExternal) Tag("기존 일정")
+            if (moved) Tag(MOVED_TAG)
         }
     }
 }
+
+private const val MOVED_TAG = "옮긴 일정"
+private const val SELECTION_LOCKED = "선택 변경 불가"

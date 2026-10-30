@@ -46,11 +46,15 @@ jobs:
         run: python -m coverage erase
 
       - name: License planner unit tests
-        run: python -m coverage run -m unittest discover -s license_planner_tests -v
+        run: python -m coverage run -m unittest discover -s tests/license_planner_tests -v
 
       - name: Schedule adjuster unit tests
         if: ${{ !cancelled() && steps.coverage-erase.outcome == 'success' }}
-        run: python -m coverage run --append -m unittest discover -s schedule_adjuster_tests -v
+        run: python -m coverage run --append -m unittest discover -s tests/schedule_adjuster_tests -v
+
+      - name: API unit tests
+        if: ${{ !cancelled() && steps.coverage-erase.outcome == 'success' }}
+        run: python -m coverage run --append -m unittest discover -s tests/api_tests -v
 
       - name: Coverage reports
         if: ${{ always() && steps.coverage-erase.outcome == 'success' }}

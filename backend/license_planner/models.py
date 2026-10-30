@@ -7,6 +7,10 @@ from typing import Optional
 from .settings import DEFAULT_CERTIFICATION_ID, DEFAULT_STUDY_DAYS_PER_WEEK
 
 
+class InsufficientCapacityError(ValueError):
+    """Usable study minutes cannot give every required topic its minimum one minute."""
+
+
 @dataclass(frozen=True)
 class BusyPeriod:
     """기존에 사용자가 입력한 바쁜 일정 구간입니다."""

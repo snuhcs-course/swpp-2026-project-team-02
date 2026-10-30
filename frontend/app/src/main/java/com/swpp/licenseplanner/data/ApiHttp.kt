@@ -9,7 +9,7 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** OkHttp client with design D7's timeouts: 10 s connect, 120 s read and whole call (Gemini latency). */
+/** OkHttp client with timeouts of 10 s connect, 120 s read and whole call (Gemini latency). */
 fun createApiHttpClient(): OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(10, TimeUnit.SECONDS)
     .readTimeout(120, TimeUnit.SECONDS)
@@ -25,30 +25,53 @@ internal sealed interface HttpOutcome {
     data class Failed(val error: ApiError) : HttpOutcome
 }
 
-/** Executes [request] off the main thread and maps non-2xx statuses and I/O errors (GEN-04). */
-internal suspend fun OkHttpClient.executeApi(request: Request, io: CoroutineDispatcher = Dispatchers.IO): HttpOutcome =
+/**
+ * Executes [request] off the main thread and maps non-2xx statuses and I/O errors.
+ * [planErrors] enables the stored-plan codes, which only the adjustment route returns.
+ *
+ * Every exchange asks for `Connection: close`: the API server closes the socket after each
+ * response without saying so, and a pooled connection reused shortly afterwards fails on send,
+ * which a one-shot adjustment body cannot recover from.
+ */
+internal suspend fun OkHttpClient.executeApi(
+    request: Request,
+    io: CoroutineDispatcher = Dispatchers.IO,
+    planErrors: Boolean = false,
+): HttpOutcome =
     withContext(io) {
         try {
-            newCall(request).execute().use { response ->
+            newCall(request.newBuilder().header("Connection", "close").build()).execute().use { response ->
                 val body = response.body.string()
                 if (response.isSuccessful) HttpOutcome.Ok(body)
-                else HttpOutcome.Failed(errorForStatus(response.code, body))
+                else HttpOutcome.Failed(errorForStatus(response.code, body, planErrors))
             }
         } catch (_: IOException) {
             HttpOutcome.Failed(ApiError.Connection)
         }
     }
 
-internal fun errorForStatus(status: Int, body: String): ApiError {
-    val message = try {
-        ApiJson.decodeFromString(ApiErrorEnvelope.serializer(), body).error?.message?.takeIf { it.isNotBlank() }
+internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = false): ApiError {
+    val error = try {
+        ApiJson.decodeFromString(ApiErrorEnvelope.serializer(), body).error
     } catch (_: Exception) {
         null // Lenient: fall back to a generic message.
     }
-    return when (status) {
+    val message = error?.message?.takeIf { it.isNotBlank() }
+    // Only the exact status/code pairs; anything else keeps its generic category.
+    return when {
+        planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
+        planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
+        else -> genericError(status, message)
+    }
+}
+
+private const val PLAN_NOT_FOUND = "PLAN_NOT_FOUND"
+private const val PLAN_CONFLICT = "PLAN_CONFLICT"
+
+private fun genericError(status: Int, message: String?): ApiError =
+    when (status) {
         422 -> ApiError.InvalidInput(message)
         404 -> ApiError.Configuration
         503 -> ApiError.ServerUnavailable(message)
         else -> ApiError.ServerFailure(status)
     }
-}

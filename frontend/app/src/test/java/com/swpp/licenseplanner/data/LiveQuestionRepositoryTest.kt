@@ -12,7 +12,7 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
-/** FLOW-04 question GET transport and validation against a local mock server. */
+/** Question GET transport and validation against a local mock server. */
 class LiveQuestionRepositoryTest {
     private lateinit var server: MockWebServer
 
@@ -92,6 +92,9 @@ class LiveQuestionRepositoryTest {
     fun httpErrorsMapAndNeverFallBack() {
         assertEquals(QuestionOutcome.Failure(ApiError.Configuration), load("""{"error":{"code":"NOT_FOUND","message":"x"}}""", 404))
         assertEquals(QuestionOutcome.Failure(ApiError.ServerFailure(500)), load("""{"error":{"code":"INTERNAL_ERROR","message":"x"}}""", 500))
+        // Stored-plan codes belong to adjustment only.
+        assertEquals(QuestionOutcome.Failure(ApiError.Configuration), load("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""", 404))
+        assertEquals(QuestionOutcome.Failure(ApiError.ServerFailure(409)), load("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}""", 409))
     }
 
     @Test

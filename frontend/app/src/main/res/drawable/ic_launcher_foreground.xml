@@ -1,0 +1,37 @@
+<!-- Figma 2140:5 app icon foreground (license-planner-foreground.svg). The 1024 master
+     fills the 72dp visible area, so it sits 256 units inside the 108dp adaptive canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1536"
+    android:viewportHeight="1536">
+  <group
+      android:translateX="256"
+      android:translateY="256">
+    <path
+        android:pathData="M708,316H316C276.235,316 244,348.235 244,388V696C244,735.764 276.235,768 316,768H708C747.764,768 780,735.764 780,696V388C780,348.235 747.764,316 708,316Z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M388,280C388,266.745 377.255,256 364,256C350.745,256 340,266.745 340,280V348C340,361.255 350.745,372 364,372C377.255,372 388,361.255 388,348V280Z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M684,280C684,266.745 673.255,256 660,256C646.745,256 636,266.745 636,280V348C636,361.255 646.745,372 660,372C673.255,372 684,361.255 684,348V280Z"
+        android:fillColor="#FFFFFF"/>
+    <path
+        android:pathData="M702,428H322C314.268,428 308,434.268 308,442C308,449.732 314.268,456 322,456H702C709.732,456 716,449.732 716,442C716,434.268 709.732,428 702,428Z"
+        android:fillColor="#1A1A1A"/>
+    <path
+        android:pathData="M414,518H326C316.059,518 308,526.059 308,536C308,545.941 316.059,554 326,554H414C423.941,554 432,545.941 432,536C432,526.059 423.941,518 414,518Z"
+        android:fillColor="#1A1A1A"/>
+    <path
+        android:pathData="M374,602H326C316.059,602 308,610.059 308,620C308,629.941 316.059,638 326,638H374C383.941,638 392,629.941 392,620C392,610.059 383.941,602 374,602Z"
+        android:fillColor="#1A1A1A"/>
+    <path
+        android:pathData="M492,590L558,656L698,508"
+        android:strokeWidth="52"
+        android:fillColor="#00000000"
+        android:strokeColor="#1A1A1A"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+  </group>
+</vector>

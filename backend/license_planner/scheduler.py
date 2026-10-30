@@ -43,6 +43,44 @@ def _free_segments(start: datetime, end: datetime, busy_periods) -> list[tuple[d
     return [(left, right) for left, right in segments if left < right]
 
 
+def _free_segments_by_day(request: PlanRequest) -> dict[date, list[tuple[datetime, datetime]]]:
+    """Free intervals per date from preparation_start through exam_date, busy periods removed."""
+    free_by_day: dict[date, list[tuple[datetime, datetime]]] = {}
+    current_day = request.preparation_start.date()
+    final_day = request.exam_date.date()
+    while current_day <= final_day:
+        day_segments: list[tuple[datetime, datetime]] = []
+        for window in request.weekly_availability.for_weekday(current_day.weekday()):
+            window_start = datetime.combine(current_day, window.start_time)
+            window_end = datetime.combine(current_day, window.end_time)
+            if current_day == request.preparation_start.date():
+                window_start = max(window_start, request.preparation_start)
+            if current_day == request.exam_date.date():
+                window_end = min(window_end, request.exam_date)
+            if window_start < window_end:
+                day_segments.extend(_free_segments(window_start, window_end, request.busy_periods))
+        day_segments.sort(key=lambda segment: segment[0])
+        free_by_day[current_day] = day_segments
+        current_day += timedelta(days=1)
+    return free_by_day
+
+
+def _segment_minutes(start: datetime, end: datetime) -> int:
+    """Whole minutes usable inside one free segment."""
+    return int((end - start).total_seconds() // 60)
+
+
+def usable_minutes_by_date(request: PlanRequest) -> dict[date, int]:
+    """Whole free minutes per date, using the same segments as placement."""
+    return {day: sum(_segment_minutes(start, end) for start, end in segments)
+            for day, segments in _free_segments_by_day(request).items()}
+
+
+def available_minutes(request: PlanRequest) -> int:
+    """Total whole free minutes between preparation_start and exam_date."""
+    return sum(usable_minutes_by_date(request).values())
+
+
 def generate_schedule(request: PlanRequest, cert: Certification,
                       topic_statistics: tuple[TopicStatistics, ...],
                       daily_topic_minutes: list[dict]) -> list[StudyBlock]:
@@ -89,27 +127,9 @@ def generate_schedule(request: PlanRequest, cert: Certification,
         missing = sorted(set(topic_order) - set(planned_topic_totals))
         raise ValueError(f"daily_topic_minutes must include each assessed topic; missing={missing}")
 
-    free_by_day: dict[date, list[tuple[datetime, datetime]]] = {}
-    current_day = request.preparation_start.date()
-    final_day = request.exam_date.date()
-    while current_day <= final_day:
-        day_segments: list[tuple[datetime, datetime]] = []
-        for window in request.weekly_availability.for_weekday(current_day.weekday()):
-            window_start = datetime.combine(current_day, window.start_time)
-            window_end = datetime.combine(current_day, window.end_time)
-            if current_day == request.preparation_start.date():
-                window_start = max(window_start, request.preparation_start)
-            if current_day == request.exam_date.date():
-                window_end = min(window_end, request.exam_date)
-            if window_start < window_end:
-                day_segments.extend(_free_segments(window_start, window_end, request.busy_periods))
-        day_segments.sort(key=lambda segment: segment[0])
-        free_by_day[current_day] = day_segments
-        current_day += timedelta(days=1)
-
+    free_by_day = _free_segments_by_day(request)
     for plan_date, topic_minutes in planned_by_day.items():
-        capacity = sum(int((end - start).total_seconds() // 60)
-                       for start, end in free_by_day.get(plan_date, []))
+        capacity = sum(_segment_minutes(start, end) for start, end in free_by_day.get(plan_date, []))
         requested = sum(topic_minutes.values())
         if requested > capacity:
             raise ValueError(
@@ -124,12 +144,12 @@ def generate_schedule(request: PlanRequest, cert: Certification,
         remaining_by_topic = dict(planned_by_day[day])
         for segment_start, segment_end in free_by_day[day]:
             cursor = segment_start
-            segment_minutes = int((segment_end - segment_start).total_seconds() // 60)
+            segment_minutes = _segment_minutes(segment_start, segment_end)
             while cursor < segment_end and segment_minutes > 0:
                 topic = next((name for name in topic_order if remaining_by_topic.get(name, 0) > 0), None)
                 if topic is None:
                     break
-                remaining_segment = int((segment_end - cursor).total_seconds() // 60)
+                remaining_segment = _segment_minutes(cursor, segment_end)
                 minutes = min(remaining_segment, segment_minutes, remaining_by_topic[topic])
                 if minutes <= 0:
                     break

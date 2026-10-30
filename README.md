@@ -23,8 +23,10 @@ cd backend
 python api_server.py
 ```
 
-The API defaults to `http://127.0.0.1:8000/api/v1`. Configure the Gemini key in
-`backend/.env`; never put API keys in frontend files. `.env` files and local
+The API defaults to `http://127.0.0.1:8000/api/v1`. Study-plan generation and
+schedule adjustment call OpenRouter model `openai/gpt-6-luna`; configure
+`OPENROUTER_API_KEY` in the backend process environment or `backend/.env`. Never
+put API keys in frontend files. `.env` files and local
 availability profiles are excluded from Git.
 
 ## Frontend (Android)
@@ -41,12 +43,13 @@ Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
-pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the backend
-unit tests with coverage, and the Android unit tests, request contract check,
+pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the three
+offline backend unit suites in `backend/tests/` with coverage (not the scenario
+runners in `backend/scenarios/`), and the Android unit tests, request contract check,
 coverage, debug APK builds, and lint. Commands and report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
-[`frontend/README.md`](frontend/README.md#checks). CI uses no Gemini key, running
-backend, or emulator, so it does not verify live Gemini planning or the Android UI.
+[`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key, running
+backend, or emulator, so it does not verify live model planning or the Android UI.
 
 ## Open decisions
 
@@ -54,6 +57,10 @@ backend, or emulator, so it does not verify live Gemini planning or the Android 
   plans for the written exam only.
 - **Question bank:** replace the example questions with the team's agreed bank
   (for example, the eight questions on branch `assessment`).
-- **Not enough study time:** the API has no structured response for this, so the
-  live app shows it as a generic error.
+- **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
+  topic basis and recovery advice in `error.message`; the live app presents it in
+  Korean. A richer structured shortfall schema remains an open decision.
+- **Summary labeling:** generation summaries are composed by server code from
+  accepted schedule counts. The app still labels them “AI가 작성한 설명”; aligning
+  that label with the summary source remains a copy decision.
 - **Deployment:** server address, authentication, and per-user storage.

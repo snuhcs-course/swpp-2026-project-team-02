@@ -45,13 +45,14 @@ import com.swpp.licenseplanner.ui.theme.InkSecondary
 import java.time.LocalTime
 
 /**
- * FLOW-06, adapted from frame 2005:371: per-weekday duration steppers plus a start-time
+ * Adapted from frame 2005:371: per-weekday duration steppers plus a start-time
  * control. “0시간” means the day is off. No buffer day or readiness claims.
  */
 @Composable
 fun AvailabilityScreen(
     form: PlanFormState,
     generating: Boolean,
+    plansSaved: Boolean,
     onEnable: (Weekday, Boolean) -> Unit,
     onStep: (Weekday, Int) -> Unit,
     onStart: (Weekday, LocalTime) -> Unit,
@@ -69,7 +70,9 @@ fun AvailabilityScreen(
             PrimaryButton(
                 text = if (generating) "계획을 만드는 중…" else "계획 만들기",
                 onClick = onGenerate,
-                enabled = error == null && !generating,
+                enabled = error == null && !generating && plansSaved,
+                // A new plan joins the saved list, so that list must be read and saved first.
+                subtitle = if (!generating && !plansSaved) "저장된 계획을 확인한 뒤 만들 수 있어요" else null,
             )
         },
     ) {

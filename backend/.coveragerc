@@ -17,6 +17,8 @@ include =
     assessment_questionnaire/*
     certification_selector/*
 omit =
+    tests/*
+    scenarios/*
     */output/*
     */__pycache__/*
 
