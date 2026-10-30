@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,8 @@ DEFAULT_API_CONFIG = {
     "max_request_bytes": 1_048_576,
 }
 API_PREFIX = "/api/v1"
+LOGGER = logging.getLogger(__name__)
+SECRET_PATTERN = re.compile(r"(?:sk-or-v1-|Bearer\\s+)[A-Za-z0-9._-]+", re.IGNORECASE)
 
 # 상위 서비스 오류는 내부 도구 인자·trace·경로가 노출되지 않도록 고정 문구로만 응답합니다.
 UPSTREAM_MESSAGES = {
@@ -233,6 +237,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             except ValueError as error:
                 self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:
+                detail = SECRET_PATTERN.sub("[redacted]", str(error)).replace("\n", " ")[:500]
+                LOGGER.warning("API upstream failure on %s: %s: %s", path, type(error).__name__, detail)
                 if _is_missing_configuration(error):
                     self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
                 else:
