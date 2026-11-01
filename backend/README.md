@@ -165,7 +165,7 @@ python -m coverage html
 The application has no third-party dependencies; to reproduce this locally,
 install `requirements-ci.txt` into a separate virtual environment rather than the
 `swpp` runtime environment. `.coveragerc` measures branch coverage over the
-production modules listed in its `include` setting (the shared `openrouter_client.py` is not listed yet), leaves
+production modules listed in its `include` setting (the shared `openrouter_client.py` and `study_plan_store.py` are not listed yet), leaves
 `tests/` and `scenarios/` out of the report, and writes `coverage-results/coverage.xml` and `coverage-results/html/`
 (generated; do not commit them). CI uploads both as the `backend-coverage`
 artifact, kept 7 days. No minimum percentage is enforced; agree on any threshold

@@ -1,6 +1,6 @@
 # 2. HE 사례와 기대 결과
 
-기준: `iteration-3-pr4-base` `66e1221`의 release APK(`app-live-release.apk`, [Actions run 41016125574](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41016125574))와 배포 서버 `http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
+기준: `iteration-3-pr4-base` `d8ba7688`의 release APK(`app-live-release.apk`, [Actions run 41016125574](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41016125574))와 배포 서버 `http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
 
 평가자에게는 각 과제의 "평가자 과제"만 전달합니다. 기대 결과는 팀 내부 검증 기준입니다.
 
@@ -42,7 +42,7 @@
 - 계획 목록에 "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요." 문구와 "계획 1 · 컴퓨터활용능력 2급"이 보임
 - 계획을 열면 과제 1과 같은 일정이 보임
 - 서버를 재시작한 뒤에도 같은 계획을 불러올 수 있고, 그 계획을 조정할 수 있음
-  - 재시작 후 계획 조회 유지: 10/30 준우 님이 서버 측에서 확인 완료
+  - 재시작 후 계획 조회 유지: 10/30 준우 님·훈일 님이 서버 측에서 확인 완료 ([배포 문서 검증](../../deploy/README.md#verification))
   - 재시작 전에 만든 계획을 재시작 후 조정하는 것: 기록 없음 (미확인)
   - 토요일(10/31) 재확인: 기록 없음 (미확인)
 

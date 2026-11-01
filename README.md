@@ -9,6 +9,12 @@ project/
 └── README.md   # Repository overview and team setup
 ```
 
+## Documentation
+
+Start with the [documentation and verification index](docs/README.md) for setup,
+API contracts, deployment, evaluator installation, HE results, and historical
+performance evidence. It identifies the branches and dates behind each result.
+
 ## Backend
 
 The existing backend project is in [`backend/`](backend/). Backend commands and
@@ -63,8 +69,9 @@ submission details are in [`ITER3_SUBMISSION.md`](ITER3_SUBMISSION.md).
 
 - **Practical exam (실기):** whether and how to support it. The app currently
   plans for the written exam only.
-- **Question bank:** replace the example questions with the team's agreed bank
-  (for example, the eight questions on branch `assessment`).
+- **Question bank:** the HE package retains five authored spreadsheet questions.
+  Computer-general questions are absent; replacement or expansion remains a later
+  decision. See the [question review](docs/iter3-HE/01_question_review.md).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.

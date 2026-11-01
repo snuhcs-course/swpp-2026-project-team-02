@@ -4,7 +4,7 @@ An extensible backend-side certification picker. Add future certifications to
 `certifications.json`; entries with `enabled: false` remain in the catalog but
 are not selectable. The current enabled entry is Computer Specialist Level 2.
 
-The selector only returns the selected certification. It does not call Gemini
+The selector only returns the selected certification. It does not call a model provider
 or attempt to retrieve exam availability. Users should check the official
 KCCI page and enter their chosen preparation start and exam date in the
 Planning API request.
