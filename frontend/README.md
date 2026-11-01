@@ -26,7 +26,8 @@ diagnostic.
 Open this `frontend/` directory (not the repository root) in Android Studio and
 let Gradle sync. Pick a build variant: `demoDebug` (default) or `liveDebug`.
 
-The Gradle daemon requires Java 25 (`gradle/gradle-daemon-jvm.properties`).
+The checked-in Gradle daemon requests Java 17
+(`gradle/gradle-daemon-jvm.properties`).
 From the command line, using Android Studio's bundled Java runtime:
 
 ```bash
@@ -39,8 +40,9 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ## Checks
 
-CI runs these in order (Java 25, Android SDK platform 36 and build-tools
-36.0.0, Python 3.14):
+CI runs these in order (Android SDK platform 36 and build-tools 36.0.0,
+Python 3.14). `ci.yml` provisions Java 25, while the checked-in Gradle daemon
+criteria select Java 17. The separate signed-release workflow provisions Java 17:
 
 ```bash
 # from frontend/
@@ -102,9 +104,16 @@ the live variant with:
 
 For a USB-connected device, run `adb reverse tcp:8000 tcp:8000` and set the
 build property to `http://127.0.0.1:8000/api/v1`. Debug builds allow cleartext
-HTTP only to `10.0.2.2`, `127.0.0.1`, and `localhost`. API keys stay in the
-backend; the app never calls the model provider directly. The live API URL and
-contract are unchanged by the backend's model choice.
+HTTP to `10.0.2.2`, `127.0.0.1`, `localhost`, and the assigned deployment host
+`swpp26t02.147-46-242-174.sslip.io`. Release builds allow cleartext HTTP only
+to that deployment host. API keys stay in the backend; the app never calls the
+model provider directly. The live API contract is unchanged by the model choice.
+
+For the signed evaluator APK and public endpoint, follow the
+[HE submission package](../docs/iter3-HE/04_submission_package.md) and
+[deployment guide](../deploy/README.md). The APK used in the recorded device run
+was built from `iteration-3-pr4-base` at `d8ba7688e533c06c66b00ad43aa41b6dde11a4a4`;
+it is separate from a local debug build.
 
 Planning calls the model synchronously and can take tens of seconds (request timeout
 120 s). The matching routes and JSON contract are documented in
@@ -325,13 +334,19 @@ returns the full list, which the app matches the same way, but there an
 unreadable unrelated plan still makes the whole list fail (500). An older server
 without the list route answers the reload with a route 404, which the app
 reports as such and keeps the plan blocked. The client recovery flow above is
-checked against MockWebServer and a scripted local server only;
-Android/OpenRouter Luna same-file verification against the real backend is
-still pending.
+covered by MockWebServer and scripted-server checks. Later deployment and
+physical-device records cover real OpenRouter generation, viewing, adjustment,
+restart retention, and reload after a lost adjustment response. They do not
+attach the full two-plan same-file/CSV/original-window isolation procedure;
+that detailed gate remains unverified. See [Verification](#verification).
 
 ## Verification
 
-- Unit tests pass for both flavors (JVM, with MockWebServer for HTTP).
+These are recorded results from different source revisions, not a fresh test run
+of this checkout. See the [verification index](../docs/README.md#verification-status)
+for source identities and remaining gaps.
+
+- Previous JVM checks passed for both flavors, with MockWebServer for HTTP.
 - `contract_checks/verify_request.py` checks the request the app serializes
   against a backend revision's source, offline (no server or model). CI uses
   `--backend-ref HEAD`, the backend in the same checkout.
@@ -340,8 +355,8 @@ still pending.
 - Plan adjustment: JVM tests cover the request body, response checks, the demo
   rule and the session/adjustment state. The demo flow and the live screens
   (against a scripted local test server, not the backend or model) were run on
-  an emulator. Adjustment against a real backend is not verified yet (see the
-  backend dependency above).
+  an emulator. Later live adjustment evidence is listed below; it does not
+  replace the full isolation procedure described above.
 - Adjustment error recovery: JVM tests (MockWebServer) cover the 404/409
   mapping, the reload GET and its identity matching and validation, and
   request sequences such as conflict → failed reload → reload → fresh
@@ -355,8 +370,17 @@ still pending.
   adjustments right after loading questions and generating a plan. Each
   request must reach the server once, and the adjustment is still never
   resent automatically. The emulator retest at normal speed is described
-  under [Controlled adjustment server](#controlled-adjustment-server); the real
-  backend has not been checked for this.
+  under [Controlled adjustment server](#controlled-adjustment-server). The later
+  device journey is not a repetition of this exact request-count matrix.
+- Physical device and deployed backend: the [2026-10-30–31 device report](../docs/iter3-HE/03_device_verification.md)
+  records Galaxy S26 Ultra / Android 17 on off-campus 5G, generation, app-restart
+  retention, adjustment, generation retry, and reload after a lost adjustment
+  response. Adjustment is **conditional**: intermittent HTTP 307 needed about
+  four explicit retries before success. The cause is unresolved; later
+  non-reproduction does not establish a fix. Server-restart retention is a
+  separately attributed 2026-10-30 team result
+  ([deployment record](../deploy/README.md#verification)), not a restart
+  performed in that device run. No new live check was performed for this documentation pass.
 
 ### Controlled adjustment server
 
@@ -445,7 +469,13 @@ time. Live adjustment results mean nothing until the backend dependency in
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
-- Not tested on a physical device; TalkBack support is incomplete.
+- Physical-device evidence is limited to the [recorded Galaxy S26 Ultra run](../docs/iter3-HE/03_device_verification.md);
+  it is not broad device coverage. TalkBack support is incomplete.
+- Deployed adjustment can intermittently fail with HTTP 307; the cause and fix
+  remain unverified. See the device report's failure record 1.
+- A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
+  failure with retry, not as a storage problem. Retrying cannot succeed until the
+  saved plan file on the server is repaired; the plan stays viewable and unchanged.
 - Form state is held in memory and is lost if the process is killed. The
   generated-plan list is saved on this device only (no sync or server import).
 - Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.

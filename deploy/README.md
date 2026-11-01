@@ -4,7 +4,13 @@ This directory records the deployed Team 2 CPU B configuration and contains no c
 Server installation and maintenance require `ssh swpp-b` from the school network. Public API
 verification works from any network.
 
-## Current deployment
+## Recorded deployment (2026-10-30)
+
+These settings and results describe the deployment recorded on 2026-10-30;
+they were not rechecked against the running server during the 2026-11-01
+documentation pass. Deployment documentation was merged by [PR #6](https://github.com/snuhcs-course/swpp-2026-project-team-02/pull/6)
+into `iteration-3-pr4-base`, not `main`. Branch and verification scope are
+summarized in the [documentation index](../docs/README.md).
 
 - SSH alias: `swpp-b`
 - Public host: `swpp26t02.147-46-242-174.sslip.io`
@@ -28,6 +34,7 @@ ssh swpp-b
 
 sudo apt update
 sudo apt install -y nginx
+cd /home/swpp26-45/apps/swpp-2026-project-team-02
 
 sudo cp deploy/nginx/license-planner.conf /etc/nginx/sites-available/licenseplanner
 sudo ln -sfn /etc/nginx/sites-available/licenseplanner /etc/nginx/sites-enabled/licenseplanner
@@ -92,6 +99,9 @@ The verifier is read-only. Actual model verification must separately create, que
 plan. After a service restart or server reboot, query the same `schedule_csv_file` again to verify
 persistence. On 2026-10-30, both service restart and full reboot recovery were verified, followed
 by a successful off-campus generation, lookup, adjustment, CSV download, and retained-plan check.
+These results were reported in the team chat on 2026-10-30 by Junwoo Cho (16:16 KST: service
+restart with the saved CSV and plan lookup retained) and Hunil Son (17:32 KST: service restart,
+full reboot and the off-campus flow). The 2026-10-30–31 device run did not repeat these restarts.
 
 ## Evaluator APK
 
@@ -102,6 +112,9 @@ the fixed device flow.
 
 ## Limitations
 
+- The [device report](../docs/iter3-HE/03_device_verification.md) records intermittent
+  HTTP 307 adjustment failures on 2026-10-30–31. The cause is unresolved;
+  successful retries or a later failure to reproduce do not establish a fix.
 - The assigned public endpoint is HTTP, not HTTPS.
 - The API has no authentication or per-user server storage.
 - Generated plans are retained as CSV files under `backend/license_planner/output/`, up to the

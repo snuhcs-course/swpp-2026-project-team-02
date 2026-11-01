@@ -286,7 +286,7 @@ external-101,2026/10/12/18/00,2026/10/12/20/00,
 
 ## 설정과 실행
 
-`.env`에는 `OPENROUTER_API_KEY`만 설정합니다(OS 환경 변수가 우선). 모델명(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에, Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 [config/user_availability.json](config/user_availability.json)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
+`.env`에는 `OPENROUTER_API_KEY`만 설정합니다(OS 환경 변수가 우선). 모델 기본값(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에 있습니다. 서버 환경의 `OPENROUTER_MODEL`로 모델을 바꿀 수 있으며, Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 `config/user_availability.json` (실행 중 생성되는 로컬 파일)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
 
 Python 3.10 이상을 사용하고, 이 프로젝트는 현재 Python 표준 라이브러리만 사용합니다. 단일 요청 실행 예시:
 
@@ -298,7 +298,7 @@ python -m license_planner.cli `
   2> scenarios/results/license_planner/manual_agent_log.txt
 ```
 
-`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`end` 구간으로 지정합니다. 프론트엔드는 로컬 채점된 `assessment_results`를 API에 보내며, 주간 시간표 저장은 `PUT /api/v1/availability`를 사용합니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
+`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`end` 구간으로 지정합니다. Android는 로컬 채점된 `assessment_results`와 `weekly_availability`를 생성 요청에 보내고, 조정에는 선택한 계획의 원래 시간표를 보냅니다. Android는 `PUT /api/v1/availability`를 호출하지 않으며, 이 프로필 저장 경로는 다른 클라이언트용입니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
 
 계획 CSV 결과는 표준 출력으로도 제공되며, API 서비스는 생성 결과를 `license_planner/output/`에 저장합니다. HTTP 응답의 `schedule_csv_url`은 그 파일을 내려받는 GET 경로입니다. CLI에서 stdout 결과를 파일로 저장하려면 PowerShell 리디렉션(`python -m license_planner.cli ... > plan.csv`)을 사용할 수 있습니다. Agent 요약과 도구 호출명은 표준 오류로 나옵니다.
 
@@ -319,7 +319,7 @@ python -m scenarios.run_license_planner_availability_test_cases
 python -m scenarios.run_license_planner_test_cases --case-id license_planner_case_04_personal_availability_api
 ```
 
-이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 OpenRouter `openai/gpt-6-luna`에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제, 준비 기간 내 일정 여부, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 공부 날짜는 모델이 정하므로 정확한 시작 시각은 검사하지 않습니다. 결과 CSV와 상세 trace는 `scenarios/results/license_planner/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 실호출 케이스를 실행합니다. HTTP 429가 발생하면 AI Studio에서 프로젝트별 모델 한도와 사용량을 확인하고 한도 회복 후 재실행합니다.
+이 통합 러너는 임시 로컬 HTTP 서버를 띄우고 각 JSON 본문을 실제 `POST /api/v1/study-plans` 경로로 보냅니다. 각 계획 요청은 OpenRouter `openai/gpt-6-luna`에 실제 요청을 하며, API의 HTTP 200 응답, 필수 도구 호출 순서, 첫 주제, 준비 기간 내 일정 여부, 요일별 가능 시간 준수, 바쁜 일정 충돌 여부를 검사합니다. 공부 날짜는 모델이 정하므로 정확한 시작 시각은 검사하지 않습니다. 결과 CSV와 상세 trace는 `scenarios/results/license_planner/`에 기록됩니다. 요약 파일은 마지막 실행 결과로 덮어쓰므로, 이전 통과 기록이 현재 API 쿼터나 네트워크 상태를 보장하지 않습니다. `--case-id`를 생략하면 전체 실호출 케이스를 실행합니다. 제공자의 속도 제한·크레딧 오류는 공개 API에서 HTTP 502 `UPSTREAM_ERROR`로 반환됩니다. OpenRouter 계정의 사용량·크레딧·한도를 확인하고, 원인을 해결한 뒤 별도 실행으로 기록합니다. 자동 재시도는 하지 않습니다.
 
 각 케이스는 `scenarios/inputs/license_planner/license_planner_test_cases.json`에서 `request` 객체에 API 요청 필드 전체를 JSON으로 지정합니다. `assessment_results`, `busy_schedules`, `weekly_availability`를 포함해 HTTP API 계약을 확인합니다. 실제 API 응답과 일정은 통합 테스트에서 검증합니다. 실행 결과는 다음처럼 저장됩니다.
 
@@ -329,7 +329,11 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 
 통합 테스트 통과 기준은 HTTP 200, 자격증 프로필 조회 → 문항별 토픽 분석 → 일정 생성 도구 순서, 예상 첫 토픽, 준비 기간 내 일정, 요일별 가능 시간 준수, 바쁜 일정과의 충돌 없음, CSV 반환입니다. 모델이 공부 날짜를 정하므로 정확한 시작 시각은 고정하지 않습니다. 자기평가는 학습 분량의 입력이며 별도의 수준 평가 도구는 없습니다. HTTP 문항 매핑은 선택 자격증 카탈로그의 토픽을 사용합니다.
 
-### 가용 시간 사전 확인·종료 흐름 개선 전후 비교
+### 가용 시간 사전 확인·종료 흐름 개선 전후 비교 (과거 Gemini 측정)
+
+아래는 2026-10-20의 Gemini 관측을 보존한 기록입니다. 현재 OpenRouter
+`openai/gpt-6-luna`의 속도·성공률이나 개선 효과를 입증하지 않습니다. 배포·실기기
+동작 기록과 남은 검증 범위는 [문서·검증 인덱스](../docs/README.md)를 따릅니다.
 
 개선 전 값은 License Planner Task 3 보고서에 있는 백엔드 `d706ad2`의 측정 결과로, 케이스마다 5번 실행했습니다. 개선 후 값은 `1d0e3c0` 이후 코드에 같은 입력을 넣어 2026-10-20에 케이스마다 한 번 실행한 결과입니다. 두 측정의 모델(`gemini-3.5-flash-lite`)과 모델 요청 한도(6회)는 같습니다. 개선 전 코드는 다시 실행하지 않았습니다.
 

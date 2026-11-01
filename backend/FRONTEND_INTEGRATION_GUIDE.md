@@ -143,6 +143,13 @@ endpoint as described below; it does not import the server's plans into its list
 
 ## Task 2: select, adjust, and update a saved plan
 
+Later deployed OpenRouter and physical-device results are linked in the
+[verification index](../docs/README.md#verification-status). The 2026-10-30 to 31
+device report includes successful adjustment and explicit reload after a lost
+response, but records an unresolved intermittent HTTP 307. It does not attach
+the full two-plan same-file/CSV/original-window isolation matrix. These recorded
+results are distinct from the historical backend-only check below.
+
 Historical backend verification (2026-10-17): Fifteen isolated HTTP/storage tests
 passed using a replacement agent that executes the real domain tools. Fifteen
 existing adjustment tests passed; the planner suite passed 12/13 with an existing

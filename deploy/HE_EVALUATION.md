@@ -5,18 +5,22 @@ Use a physical Android device on mobile data or non-campus Wi-Fi. Install the si
 
 ## Fixed input
 
+This is the baseline from `docs/iter3-HE/02_he_cases.md`, which was used for the physical-device
+verification. Keep both files in sync.
+
 - Certification: 컴퓨터활용능력 2급 필기
 - Current level: `기본 기능은 알아요`
-- Assessment answers: `1=B, 2=A, 3=A, 4=B, 5=C`
-- Preparation start: `2026-10-31`
-- Exam date: `2026-11-30`
-- Weekly availability:
-  - Monday `18:00-21:00`
-  - Wednesday `18:00-21:00`
-  - Saturday `10:00-14:00`
+- Assessment answers: `1=B, 2=B, 3=모르겠음, 4=B, 5=C`
+- Preparation start: `2026-11-04`
+- Exam date: `2026-11-25`
+- Weekly availability (all other days 0 hours):
+  - Monday `19:00-20:30`
+  - Wednesday `19:00-20:30`
+  - Friday `19:00-20:30`
+  - Saturday `10:00-12:00`
 
 The fixed answers produce three correct and two incorrect results with the pinned five-question
-example bank.
+example bank: 스프레드시트 기본 2/2, 함수와 데이터 관리 1/2, 차트와 분석 0/1.
 
 ## Required flow
 
@@ -31,7 +35,7 @@ example bank.
 
 ## Failure checks
 
-- Disable network access before generation. Confirm that the app remains open, preserves the form,
+- Disable network access during generation. Confirm that the app remains open, preserves the form,
   and offers retry.
 - Restore the network and retry once.
 - Disable network access during adjustment. Confirm that the existing plan remains visible and the
@@ -46,3 +50,5 @@ example bank.
 - Screen recording of generation, saved-list lookup, adjustment, and app restart
 - Server request timestamps when available
 - Any provider failure, delay, or known limitation
+- Every HTTP 307 failure on adjustment, with its timestamp and the number of retries needed. This
+  failure is intermittent and its cause is unresolved; a successful retry does not show it is fixed.
