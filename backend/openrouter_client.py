@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -12,12 +13,18 @@ from typing import Any, Iterable
 
 # OpenRouter 접속 설정입니다. 모델과 요청 한도는 프론트엔드가 아니라 백엔드 코드에서만 바꿉니다.
 OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses"  # 비스트리밍 Responses API 주소입니다.
-OPENROUTER_MODEL = "openai/gpt-6-luna"  # 일정 생성과 조정이 함께 쓰는 모델 ID입니다.
+OPENROUTER_MODEL = "openai/gpt-6-luna"  # 환경 변수가 없을 때의 호환 기본 모델 ID입니다.
 OPENROUTER_API_KEY_NAME = "OPENROUTER_API_KEY"  # 백엔드 전용 비밀 키 이름입니다.
+OPENROUTER_MODEL_NAME = "OPENROUTER_MODEL"  # 서버에서만 바꾸는 모델 선택 환경 변수입니다.
 REQUEST_TIMEOUT_SECONDS = 45  # 모델 요청 하나의 최대 대기 시간(초)입니다.
 # 사용량 기록에 남길 수 있는 숫자 필드입니다. 그 밖의 응답 필드는 기록하지 않습니다.
 USAGE_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cost")
 INCOMPLETE_REASON_PATTERN = re.compile(r"[a-z_]{1,40}")  # 공개해도 되는 미완료 사유 형식입니다.
+# 로그에 남기기 전에 가리는 OpenRouter 키와 Bearer 토큰 형식입니다.
+SECRET_PATTERN = re.compile(r"(?:sk-or-v1-|Bearer\s+)[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+DIAGNOSTIC_MAX_CHARS = 500  # 서버 로그에 남기는 진단 문구의 최대 길이입니다.
+DIAGNOSTIC_READ_LIMIT_BYTES = 64 * 1024  # 진단용으로 읽는 제공자 오류 본문의 최대 크기입니다.
+LOGGER = logging.getLogger(__name__)
 
 
 class InferenceConfigurationError(RuntimeError):
@@ -36,16 +43,29 @@ def load_api_key(dotenv_paths: Iterable[Path]) -> str:
     value = os.environ.get(OPENROUTER_API_KEY_NAME, "").strip()
     if value:
         return value
+    value = _dotenv_value(OPENROUTER_API_KEY_NAME, dotenv_paths)
+    if value:
+        return value
+    raise InferenceConfigurationError(f"{OPENROUTER_API_KEY_NAME} is not configured on the server.")
+
+
+def load_model(dotenv_paths: Iterable[Path]) -> str:
+    """Return the server-selected OpenRouter model without exposing any credential."""
+    value = os.environ.get(OPENROUTER_MODEL_NAME, "").strip()
+    return value or _dotenv_value(OPENROUTER_MODEL_NAME, dotenv_paths) or OPENROUTER_MODEL
+
+
+def _dotenv_value(name: str, dotenv_paths: Iterable[Path]) -> str:
     for path in dotenv_paths:
         if not path.is_file():
             continue
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             key, separator, raw_value = raw_line.strip().partition("=")
-            if separator and key.strip() == OPENROUTER_API_KEY_NAME:
+            if separator and key.strip() == name:
                 value = raw_value.strip().strip("\"'")
                 if value:
                     return value
-    raise InferenceConfigurationError(f"{OPENROUTER_API_KEY_NAME} is not configured on the server.")
+    return ""
 
 
 def function_tools(declarations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -60,12 +80,12 @@ def function_tools(declarations: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def create_response(api_key: str, *, instructions: str, input_items: list[dict[str, Any]],
                     tools: list[dict[str, Any]], reasoning_effort: str,
-                    max_output_tokens: int) -> dict[str, Any]:
+                    max_output_tokens: int, model: str = OPENROUTER_MODEL) -> dict[str, Any]:
     """입력 값: API 키, 시스템 지시, 요청별 대화 기록, 도구 선언, 추론 강도, 출력 토큰 한도
     출력 값: OpenRouter 응답 JSON 객체
     기능: 재시도나 다른 모델 전환 없이 Responses API에 요청 한 번을 보냅니다.
     """
-    body = {"model": OPENROUTER_MODEL, "instructions": instructions, "input": input_items,
+    body = {"model": model, "instructions": instructions, "input": input_items,
             "tools": function_tools(tools), "tool_choice": "auto", "parallel_tool_calls": False,
             "reasoning": {"effort": reasoning_effort}, "max_output_tokens": max_output_tokens,
             "store": False, "stream": False}
@@ -80,7 +100,11 @@ def create_response(api_key: str, *, instructions: str, input_items: list[dict[s
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             raw = response.read()
     except urllib.error.HTTPError as error:
-        error.close()  # 제공자 오류 본문은 읽거나 전달하지 않습니다.
+        try:
+            detail = _safe_provider_detail(error)
+        finally:
+            error.close()
+        LOGGER.warning("OpenRouter Responses request rejected: HTTP %s (%s)", error.code, detail)
         raise InferenceError(f"OpenRouter request failed: {_http_failure(error.code)}") from None
     except (OSError, http.client.HTTPException) as error:
         raise InferenceError(f"OpenRouter request failed: network error ({type(error).__name__})") from None
@@ -109,6 +133,35 @@ def _http_failure(status: int) -> str:
     return f"request rejected (HTTP {status})"
 
 
+def sanitize_diagnostic(text: str) -> str:
+    """입력 값: 서버 로그에 남길 오류 문구
+    출력 값: 인증 정보를 가리고 한 줄로 만든 최대 500자 문구
+    기능: 잘린 토큰이 남지 않도록 먼저 가린 뒤 줄바꿈을 없애고 길이를 제한합니다.
+    """
+    redacted = SECRET_PATTERN.sub("[redacted]", text)
+    return " ".join(redacted.splitlines()).strip()[:DIAGNOSTIC_MAX_CHARS]
+
+
+def _safe_provider_detail(error: urllib.error.HTTPError) -> str:
+    """입력 값: 제공자 HTTP 오류 응답
+    출력 값: 서버 로그용 제공자 오류 설명 또는 대체 문구
+    기능: 본문을 한도까지만 읽고, 읽기 실패·한도 도달·형식 오류는 대체 문구로 처리합니다.
+    """
+    try:
+        raw = error.read(DIAGNOSTIC_READ_LIMIT_BYTES)
+    except (OSError, http.client.HTTPException):
+        return "provider message unreadable"
+    if len(raw) >= DIAGNOSTIC_READ_LIMIT_BYTES:
+        return "provider message too large"
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+    except (ValueError, RecursionError):
+        payload = None
+    nested = payload.get("error") if isinstance(payload, dict) else None
+    message = nested.get("message") if isinstance(nested, dict) else None
+    return sanitize_diagnostic(message if isinstance(message, str) else "") or "no provider message"
+
+
 def parse_reply(response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """입력 값: Responses API 응답 객체
     출력 값: 다음 요청에 되돌려 줄 출력 항목, 순서대로 된 함수 호출 항목, 응답 텍스트
@@ -122,6 +175,9 @@ def parse_reply(response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[di
         reason = reason if isinstance(reason, str) and INCOMPLETE_REASON_PATTERN.fullmatch(reason) else "unknown"
         raise InferenceError(f"OpenRouter response was incomplete ({reason})")
     if status != "completed":
+        LOGGER.warning("OpenRouter Responses response shape mismatch: keys=%s status=%r output_type=%s choices_type=%s",
+                       sorted(str(key) for key in response), status, type(response.get("output")).__name__,
+                       type(response.get("choices")).__name__)
         raise InferenceError("OpenRouter response did not complete")
     output = response.get("output")
     if not isinstance(output, list) or not all(
@@ -196,12 +252,12 @@ def usage_record(response: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-def inference_summary(request_count: int, usage_records: list[dict[str, Any]],
+def inference_summary(selected_model: str | None, request_count: int, usage_records: list[dict[str, Any]],
                       elapsed_seconds: float) -> dict[str, Any]:
-    """입력 값: 시도한 모델 요청 수, 응답별 사용량 기록, 경과 시간(초)
+    """입력 값: Agent가 실제로 요청에 쓴 모델, 시도한 모델 요청 수, 응답별 사용량 기록, 경과 시간(초)
     출력 값: 시나리오 결과 파일에만 쓰는 추론 실행 정보
-    기능: 선택 모델과 요청 수·시간·사용량을 묶습니다. 공개 API 응답에는 넣지 않습니다.
+    기능: 선택 모델과 요청 수·시간·사용량을 묶습니다. 요청이 없으면 선택 모델은 None이며 공개 API 응답에는 넣지 않습니다.
     """
-    return {"provider": "openrouter", "selected_model": OPENROUTER_MODEL,
+    return {"provider": "openrouter", "selected_model": selected_model if request_count else None,
             "model_request_count": request_count, "elapsed_seconds": round(elapsed_seconds, 3),
             "usage": usage_records}

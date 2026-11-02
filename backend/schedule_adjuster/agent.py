@@ -7,7 +7,7 @@ from openrouter_client import create_response, decode_call, function_output, par
 
 from .models import AdjustmentRequest
 from .settings import (AGENT_MAX_OUTPUT_TOKENS, AGENT_MAX_STEPS, AGENT_REASONING_EFFORT,
-                       AGENT_SYSTEM_PROMPT, load_api_key)
+                       AGENT_SYSTEM_PROMPT, load_api_key, load_model)
 from .tools import ScheduleAdjustmentTools, tool_schemas
 
 
@@ -21,19 +21,21 @@ class AdjustmentAgent:
         """
         # 비밀 키는 요청 헤더에만 사용하며 로그에 출력하지 않습니다.
         self.api_key = api_key
+        self.model: str | None = None  # 첫 모델 요청 직전에 정하고 이 Agent의 이후 요청에 그대로 씁니다.
         self.api_request_count = 0  # OpenRouter에 보낸 요청 횟수입니다.
         self.usage_records: list[dict] = []  # 응답별 반환 모델과 토큰/비용 사용량입니다.
 
     def _ask_model(self, input_items: list[dict]) -> dict:
         """입력 값: 요청별 모델 대화 기록
         출력 값: OpenRouter 응답 객체
-        기능: 키를 확인한 뒤 추론 없이 함수 호출 가능 요청을 한 번 보냅니다.
+        기능: 키와 모델을 확인한 뒤 추론 없이 함수 호출 가능 요청을 한 번 보냅니다.
         """
         self.api_key = self.api_key or load_api_key()
+        self.model = self.model or load_model()
         self.api_request_count += 1
         result = create_response(self.api_key, instructions=AGENT_SYSTEM_PROMPT, input_items=input_items,
                                  tools=tool_schemas(), reasoning_effort=AGENT_REASONING_EFFORT,
-                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS)
+                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS, model=self.model)
         self.usage_records.append(usage_record(result))
         return result
 

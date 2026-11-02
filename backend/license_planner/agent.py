@@ -7,7 +7,7 @@ from openrouter_client import create_response, decode_call, function_output, par
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
-from .settings import DATETIME_FORMAT, load_api_key
+from .settings import DATETIME_FORMAT, load_api_key, load_model
 from .tools import PlannerTools, check_initial_capacity, tool_schemas, usable_date_minutes
 
 # Agent settings: the shared transport in openrouter_client.py selects the model and timeout.
@@ -49,6 +49,7 @@ class PlanningAgent:
         """
         self.api_key = api_key
         self.max_steps = max_steps
+        self.model: str | None = None  # 첫 모델 요청 직전에 정하고 이 Agent의 이후 요청에 그대로 씁니다.
         self.api_request_count = 0  # OpenRouter에 전송을 시도한 요청 수입니다.
         self.successful_response_count = 0  # OpenRouter에서 정상 JSON 응답을 받은 요청 수입니다.
         self.usage_records: list[dict] = []  # 응답별 반환 모델과 토큰/비용 사용량입니다.
@@ -56,13 +57,14 @@ class PlanningAgent:
     def _ask_model(self, input_items: list[dict], tools: list[dict]) -> dict:
         """입력 값: 요청별 대화 기록과 도구 선언
         출력 값: OpenRouter 응답 객체
-        기능: 키를 확인한 뒤 낮은 추론 강도로 함수 호출 가능 요청을 한 번 보냅니다.
+        기능: 키와 모델을 확인한 뒤 낮은 추론 강도로 함수 호출 가능 요청을 한 번 보냅니다.
         """
         self.api_key = self.api_key or load_api_key()
+        self.model = self.model or load_model()
         self.api_request_count += 1
         result = create_response(self.api_key, instructions=AGENT_SYSTEM_PROMPT, input_items=input_items,
                                  tools=tools, reasoning_effort=AGENT_REASONING_EFFORT,
-                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS)
+                                 max_output_tokens=AGENT_MAX_OUTPUT_TOKENS, model=self.model)
         self.successful_response_count += 1
         self.usage_records.append(usage_record(result))
         return result

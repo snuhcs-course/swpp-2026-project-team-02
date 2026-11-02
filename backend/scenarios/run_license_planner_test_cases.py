@@ -108,6 +108,8 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "schedule_csv_returned": isinstance(payload.get("schedule_csv"), str)
                                   and bool(payload["schedule_csv"]),
     }
+    # The API creates one agent per generation; a case without model requests has no selected model.
+    selected_model = next((agent.model for agent in case_agents if agent.api_request_count), None)
     result = {
         "case_id": case["case_id"],
         "passed": all(checks.values()),
@@ -123,7 +125,7 @@ def evaluate_case(api_url: str, case: dict[str, Any]) -> dict[str, Any]:
         "schedules": schedules,
         "schedule_csv": payload.get("schedule_csv"),
         "error": payload.get("error"),
-        "inference": inference_summary(sum(agent.api_request_count for agent in case_agents),
+        "inference": inference_summary(selected_model, sum(agent.api_request_count for agent in case_agents),
                                        [record for agent in case_agents for record in agent.usage_records],
                                        elapsed_seconds),
     }

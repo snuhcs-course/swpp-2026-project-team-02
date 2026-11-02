@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from api_service import (adjust_schedule, create_study_plan, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import get_public_certifications, get_public_questions
-from openrouter_client import InferenceConfigurationError
+from openrouter_client import InferenceConfigurationError, sanitize_diagnostic
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
@@ -23,6 +24,7 @@ DEFAULT_API_CONFIG = {
     "max_request_bytes": 1_048_576,
 }
 API_PREFIX = "/api/v1"
+LOGGER = logging.getLogger(__name__)
 
 # 상위 서비스 오류는 내부 도구 인자·trace·경로가 노출되지 않도록 고정 문구로만 응답합니다.
 UPSTREAM_MESSAGES = {
@@ -233,6 +235,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
             except ValueError as error:
                 self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:
+                detail = sanitize_diagnostic(str(error))
+                LOGGER.warning("API upstream failure on %s: %s: %s", path, type(error).__name__, detail)
                 if _is_missing_configuration(error):
                     self._send_json(503, {"error": {"code": "UPSTREAM_ERROR", "message": CONFIGURATION_MESSAGE}})
                 else:

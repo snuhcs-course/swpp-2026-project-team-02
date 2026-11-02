@@ -46,3 +46,8 @@ def load_api_key() -> str:
     기능: OS 환경 변수, schedule_adjuster/.env, backend/.env 순서로 OPENROUTER_API_KEY만 읽습니다.
     """
     return openrouter_client.load_api_key((DOTENV_PATH, WORKSPACE_DOTENV_PATH))
+
+
+def load_model() -> str:
+    """Return the optional server model override from either supported .env file."""
+    return openrouter_client.load_model((DOTENV_PATH, WORKSPACE_DOTENV_PATH))

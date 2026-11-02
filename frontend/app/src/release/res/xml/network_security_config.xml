@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Course evaluation server is HTTP-only. Keep this allowlist narrow. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">swpp26t02.147-46-242-174.sslip.io</domain>
+    </domain-config>
+</network-security-config>

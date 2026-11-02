@@ -82,7 +82,7 @@ python -m scenarios.run_schedule_adjuster_test_cases --case-id schedule_adjuster
 
 성공 여부는 세 가지로 확인합니다. 터미널에 모든 케이스가 `PASS`로 표시되고 프로세스 종료 코드가 0이어야 합니다. 각 `*_tool_trace.json`에서 `inference.model_request_count`가 1 이상이고 `called_tools`가 `inspect_schedule` 다음에 기대한 변경 도구 순서로 기록되어야 합니다. 마지막으로 결과 CSV에서 공부 일정 이동 또는 취소 외부 일정 제거가 반영되고 다른 일정 행이 유지됐는지 확인합니다. `schedule_adjuster_test_summary.json`에는 전체 케이스의 판정이 모입니다.
 
-`inference`에는 선택 모델(`selected_model`), 모델 요청 수, 경과 시간(초), 응답별 반환 모델과 토큰·비용 사용량이 기록되며, 제공자가 반환하지 않은 값은 0이 아니라 `null`입니다. 이 trace는 요청이 실제 OpenRouter 호출 경로를 거쳐 Agent의 도구 응답까지 돌아왔다는 점을 보여줍니다. 이전 결과 파일의 `gemini_api_request_count`는 Gemini 시절 기록입니다. API 키 자체나 원시 HTTP 응답 본문은 저장하지 않습니다. 인증, 네트워크, 모델 응답 오류가 발생하면 해당 케이스는 `FAIL`이며 요약에 오류가 기록됩니다.
+`inference`에는 Agent가 실제로 요청에 쓴 선택 모델(`selected_model`), 모델 요청 수, 경과 시간(초), 응답별 반환 모델과 토큰·비용 사용량이 기록되며, 제공자가 반환하지 않은 값은 0이 아니라 `null`입니다. 응답 없이 실패한 요청도 선택 모델을 기록하고, 해당 케이스에서 모델 요청이 없었으면 `selected_model`은 `null`입니다. 러너는 한 Agent를 모든 케이스에 재사용하므로 Agent가 첫 요청 직전에 고른 모델이 실행 전체에 유지되고, 실행 중 바꾼 `OPENROUTER_MODEL`은 다음 실행부터 적용됩니다. 이 trace는 요청이 실제 OpenRouter 호출 경로를 거쳐 Agent의 도구 응답까지 돌아왔다는 점을 보여줍니다. 이전 결과 파일의 `gemini_api_request_count`는 Gemini 시절 기록입니다. API 키 자체나 원시 HTTP 응답 본문은 저장하지 않습니다. 인증, 네트워크, 모델 응답 오류가 발생하면 해당 케이스는 `FAIL`이며 요약에 오류가 기록됩니다.
 
 ## 현재 동작 가정과 필요한 제품 결정
 
