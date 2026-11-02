@@ -1,6 +1,7 @@
 """Public HTTP error messages hide upstream diagnostics but keep useful input explanations."""
 import contextlib
 import copy
+import http.client
 import io
 import json
 import os
@@ -42,6 +43,21 @@ DIAGNOSTIC = (f"Agent exceeded max steps; tool trace: [{{'arguments': {{'topic':
               "OpenRouter request failed: HTTP 429 RESOURCE_EXHAUSTED Traceback at /Users/someone/backend/.env")
 
 
+class ReadTrackingBody(io.BytesIO):
+    """Provider error body that records requested read sizes, or fails while being read."""
+
+    def __init__(self, data, failure=None):
+        super().__init__(data)
+        self.failure = failure
+        self.read_sizes = []
+
+    def read(self, size=-1):
+        self.read_sizes.append(size)
+        if self.failure is not None:
+            raise self.failure
+        return super().read(size)
+
+
 def inspecting_topic_forever():
     """The production adjustment loop with a provider that only ever inspects the topic."""
     class Agent(AdjustmentAgent):
@@ -66,6 +82,7 @@ def openrouter_key(value):
             patch("schedule_adjuster.settings.DOTENV_PATH", Path(temp) / "adjuster.env"), \
             patch("schedule_adjuster.settings.WORKSPACE_DOTENV_PATH", Path(temp) / "workspace.env"):
         os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("OPENROUTER_MODEL", None)
         if value is not None:
             os.environ["OPENROUTER_API_KEY"] = value
         yield
@@ -150,6 +167,80 @@ class UpstreamErrorMessageTests(unittest.TestCase):
                         patch.object(api_server, handler_name, side_effect=error):
                     response = self.post(path, payload)
                     self.assert_public_error(response, status, message or UPSTREAM_MESSAGES["/api/v1" + path])
+        self.assert_store_unchanged()
+
+    def test_dispatcher_warning_is_one_bounded_credential_free_line(self):
+        openrouter_secret = "sk-or-v1-" + "d15b" * 16
+        bearer = "abc.def-123"
+        diagnostic = (f"Provider rejected {openrouter_secret}\r\nAuthorization: BeArEr {bearer}\n"
+                      f"{DIAGNOSTIC}" + "z" * 600)
+        for path, handler_name, payload in (("/study-plans", "create_study_plan", GENERATION_REQUEST),
+                                            ("/schedules/adjust", "adjust_schedule", self.adjust_payload)):
+            with self.subTest(path), patch.object(api_server, handler_name, side_effect=RuntimeError(diagnostic)), \
+                    self.assertLogs("api_server", "WARNING") as logs:
+                response = self.post(path, payload)
+            self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1" + path])
+            line, = [record.getMessage() for record in logs.records]
+            prefix = f"API upstream failure on /api/v1{path}: RuntimeError: "
+            self.assertTrue(line.startswith(prefix))
+            detail = line[len(prefix):]
+            self.assertLessEqual(len(detail), 500)
+            self.assertTrue(detail.startswith("Provider rejected [redacted] Authorization: [redacted] Agent exceeded"))
+            for secret in (openrouter_secret, "d15bd15b", bearer, "\n", "\r"):
+                self.assertNotIn(secret, line)
+        self.assert_store_unchanged()
+
+    def test_dispatcher_warning_keeps_a_useful_nonsecret_explanation(self):
+        explanation = "OpenRouter request failed: rate limited (HTTP 429)"
+        with patch.object(api_server, "create_study_plan", side_effect=RuntimeError(explanation)), \
+                self.assertLogs("api_server", "WARNING") as logs:
+            response = self.post("/study-plans", GENERATION_REQUEST)
+        self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1/study-plans"])
+        self.assertEqual([record.getMessage() for record in logs.records],
+                         [f"API upstream failure on /api/v1/study-plans: RuntimeError: {explanation}"])
+
+    def test_malformed_or_interrupted_provider_errors_stay_upstream_errors_on_both_routes(self):
+        bodies = {
+            "null error": (json.dumps({"error": None}).encode(), None),
+            "string error": (json.dumps({"error": PROVIDER_BODY}).encode(), None),
+            "list error": (json.dumps({"error": [PROVIDER_BODY]}).encode(), None),
+            "number error": (json.dumps({"error": 401}).encode(), None),
+            "list root": (json.dumps([PROVIDER_BODY]).encode(), None),
+            "number message": (json.dumps({"error": {"message": 3}}).encode(), None),
+            "invalid JSON": (b"{\"error\": ", None),
+            "capped body": (b"{\"error\": {\"message\": \"" + b"q" * openrouter_client.DIAGNOSTIC_READ_LIMIT_BYTES
+                            + b"\"}}", None),
+            "interrupted read": (b"", http.client.IncompleteRead(PROVIDER_BODY.encode())),
+            "reset read": (b"", ConnectionResetError(PROVIDER_BODY)),
+            "credential message": (json.dumps({"error": {"message": (
+                f"Bearer {SYNTHETIC_KEY} and sk-or-v1-{'ab' * 32}\nare over quota")}}).encode(), None),
+        }
+        routes = {"/study-plans": GENERATION_REQUEST, "/schedules/adjust": self.adjust_payload}
+        for path, payload in routes.items():
+            for status in (401, 429):
+                for label, (data, failure) in bodies.items():
+                    attempts, error_bodies = [], []
+
+                    def rejecting_provider(request, timeout=None):
+                        attempts.append(json.loads(request.data)["model"])
+                        body = ReadTrackingBody(data, failure)
+                        error_bodies.append(body)
+                        raise HTTPError(request.full_url, status, PROVIDER_BODY, {}, body)
+
+                    with self.subTest(path=path, status=status, body=label), openrouter_key(SYNTHETIC_KEY), \
+                            patch.object(openrouter_client.urllib.request, "urlopen", rejecting_provider), \
+                            self.assertLogs("openrouter_client", "WARNING") as provider_logs, \
+                            self.assertLogs("api_server", "WARNING") as dispatcher_logs:
+                        response = self.post(path, payload)
+                        self.assert_public_error(response, 502, UPSTREAM_MESSAGES["/api/v1" + path])
+                        self.assertEqual(attempts, ["openai/gpt-6-luna"], "one attempt, no model fallback")
+                        self.assertTrue(error_bodies[0].closed)
+                        self.assertEqual(error_bodies[0].read_sizes, [openrouter_client.DIAGNOSTIC_READ_LIMIT_BYTES])
+                        logged = " ".join(record.getMessage()
+                                          for record in provider_logs.records + dispatcher_logs.records)
+                        self.assertIn(f"HTTP {status}", logged)
+                        for secret in (PROVIDER_BODY, SYNTHETIC_KEY, "abababab", "\n"):
+                            self.assertNotIn(secret, logged)
         self.assert_store_unchanged()
 
     def test_missing_openrouter_key_uses_the_configuration_message_on_both_routes(self):

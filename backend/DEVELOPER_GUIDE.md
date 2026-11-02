@@ -286,7 +286,7 @@ external-101,2026/10/12/18/00,2026/10/12/20/00,
 
 ## 설정과 실행
 
-`.env`에는 `OPENROUTER_API_KEY`만 설정합니다(OS 환경 변수가 우선). 모델 기본값(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에 있습니다. 서버 환경의 `OPENROUTER_MODEL`로 모델을 바꿀 수 있으며, Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 `config/user_availability.json` (실행 중 생성되는 로컬 파일)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
+`.env`에는 `OPENROUTER_API_KEY`를 설정합니다(OS 환경 변수가 우선). 모델 기본값(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에 있습니다. 서버 환경 또는 `.env`의 `OPENROUTER_MODEL`로 모델을 바꿀 수 있습니다(OS 환경 변수 우선, `.env.example`에서는 주석 처리되어 기본값 유지). Agent는 첫 모델 요청 직전에 모델을 한 번 읽어 그 Agent의 이후 요청에 그대로 쓰므로, 설정 변경은 새로 만든 Agent부터 적용됩니다. 또한 Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 `config/user_availability.json` (실행 중 생성되는 로컬 파일)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
 
 Python 3.10 이상을 사용하고, 이 프로젝트는 현재 Python 표준 라이브러리만 사용합니다. 단일 요청 실행 예시:
 

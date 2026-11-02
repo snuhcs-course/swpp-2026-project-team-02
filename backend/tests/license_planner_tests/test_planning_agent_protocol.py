@@ -10,6 +10,7 @@ from unittest.mock import patch
 import openrouter_client
 from api_service import build_plan_request
 from license_planner.agent import AGENT_MAX_STEPS, PlanningAgent
+from license_planner.settings import load_model as planner_load_model
 from license_planner.tools import PlannerTools
 from openrouter_client import InferenceConfigurationError, InferenceError
 
@@ -66,7 +67,20 @@ class ScriptedProvider:
         return Response()
 
 
+def isolate_model_configuration(test):
+    """Point the planner's local configuration at an empty temporary file and clear the process model."""
+    temp = tempfile.TemporaryDirectory()
+    test.addCleanup(temp.cleanup)
+    for patcher in (patch.dict(os.environ), patch("license_planner.settings.DOTENV_PATH", Path(temp.name) / ".env")):
+        patcher.start()
+        test.addCleanup(patcher.stop)
+    os.environ.pop("OPENROUTER_MODEL", None)
+
+
 class PlanningProtocolTests(unittest.TestCase):
+    def setUp(self):
+        isolate_model_configuration(self)
+
     def run_agent(self, replies, payload=PAYLOAD, api_key="synthetic-openrouter-key"):
         provider = ScriptedProvider(replies)
         agent = PlanningAgent(api_key=api_key)
@@ -180,6 +194,62 @@ class PlanningProtocolTests(unittest.TestCase):
         self.assertTrue(all(body["max_output_tokens"] == 16384 for body in provider.bodies))
 
 
+class PlanningModelLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        isolate_model_configuration(self)
+        os.environ["OPENROUTER_MODEL"] = "vendor/model-a"
+
+    def test_one_agent_keeps_its_first_model_after_the_configuration_changes(self):
+        replies = [reply(call("call_profile", *PROFILE)), reply(call("call_analysis", *ANALYSIS)),
+                   reply(call("call_build", *BUILD))]
+        provider = ScriptedProvider(replies)
+
+        def changing_configuration(request, timeout=None):
+            os.environ["OPENROUTER_MODEL"] = "vendor/model-b"
+            return provider(request, timeout)
+
+        agent = PlanningAgent(api_key="synthetic-openrouter-key")
+        self.assertIsNone(agent.model)
+        loads = []
+
+        def counting_load_model():
+            loads.append(os.environ["OPENROUTER_MODEL"])
+            return planner_load_model()
+
+        with patch.object(openrouter_client.urllib.request, "urlopen", changing_configuration), \
+                patch("license_planner.agent.load_model", counting_load_model):
+            tools, _ = agent.run(build_plan_request(copy.deepcopy(PAYLOAD), require_assessment=True))
+        self.assertEqual([body["model"] for body in provider.bodies], ["vendor/model-a"] * 3)
+        self.assertEqual((loads, agent.model, agent.api_request_count), (["vendor/model-a"], "vendor/model-a", 3))
+        self.assertEqual(len(agent.usage_records), 3)
+        self.assertEqual(len(tools.schedule), 1)
+        for body in provider.bodies:
+            self.assertEqual((body["reasoning"], body["max_output_tokens"]), ({"effort": "low"}, 16384))
+
+        fresh = ScriptedProvider([RuntimeError("stop after the first request")])
+        new_agent = PlanningAgent(api_key="synthetic-openrouter-key")
+        with patch.object(openrouter_client.urllib.request, "urlopen", fresh), \
+                self.assertRaisesRegex(RuntimeError, "stop after the first request"):
+            new_agent.run(build_plan_request(copy.deepcopy(PAYLOAD), require_assessment=True))
+        self.assertEqual(([body["model"] for body in fresh.bodies], new_agent.model), (["vendor/model-b"], "vendor/model-b"))
+
+    def test_selection_survives_the_step_limit_without_reloading(self):
+        loads = []
+
+        def counting_load_model():
+            loads.append(1)
+            return "vendor/model-a"
+
+        provider = ScriptedProvider([reply(call(f"c{index}", *PROFILE)) for index in range(AGENT_MAX_STEPS)])
+        agent = PlanningAgent(api_key="synthetic-openrouter-key")
+        with patch.object(openrouter_client.urllib.request, "urlopen", provider), \
+                patch("license_planner.agent.load_model", counting_load_model), \
+                self.assertRaisesRegex(RuntimeError, f"max_steps={AGENT_MAX_STEPS}"):
+            agent.run(build_plan_request(copy.deepcopy(PAYLOAD), require_assessment=True))
+        self.assertEqual((len(provider.bodies), len(loads)), (AGENT_MAX_STEPS, 1))
+        self.assertEqual({body["model"] for body in provider.bodies}, {"vendor/model-a"})
+
+
 class PlanningCredentialTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -214,14 +284,16 @@ class PlanningCredentialTests(unittest.TestCase):
             PlanningAgent().run(build_plan_request(copy.deepcopy(PAYLOAD), require_assessment=True))
         self.assertEqual(captured, ["Bearer synthetic-file-key"])
 
-    def test_zero_capacity_is_rejected_before_credentials_or_requests(self):
+    def test_zero_capacity_is_rejected_before_credentials_model_or_requests(self):
         payload = {**copy.deepcopy(PAYLOAD), "preparation_start": "2026/10/05/17/00", "exam_date": "2026/10/05/18/00"}
         provider = ScriptedProvider([])
         with patch.object(openrouter_client.urllib.request, "urlopen", provider), \
                 patch("license_planner.agent.load_api_key", side_effect=AssertionError("key read")), \
+                patch("license_planner.agent.load_model", side_effect=AssertionError("model read")), \
                 self.assertRaisesRegex(ValueError, "^NOT_ENOUGH_TIME: "):
-            PlanningAgent().run(build_plan_request(payload, require_assessment=True))
-        self.assertEqual(provider.bodies, [])
+            agent = PlanningAgent()
+            agent.run(build_plan_request(payload, require_assessment=True))
+        self.assertEqual((provider.bodies, agent.model, agent.api_request_count), ([], None, 0))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_csv
 from schedule_adjuster.models import AdjustmentRequest
 from schedule_adjuster.settings import AGENT_MAX_STEPS
+from schedule_adjuster.settings import load_model as adjuster_load_model
 
 
 SAMPLE_CSV = """schedule_id,start_date,end_date,topic
@@ -256,6 +257,7 @@ class AdjustmentProtocolTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("OPENROUTER_MODEL", None)
 
     def run_agent(self, schedule_id, replies, api_key="synthetic-openrouter-key", entries=None):
         """
@@ -341,6 +343,52 @@ class AdjustmentProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "max steps") as raised:
             self.run_agent("study-11", replies)
         self.assertEqual((len(raised.exception.provider.bodies), AGENT_MAX_STEPS), (5, 5))
+
+    def test_reused_agent_keeps_its_first_model_after_the_configuration_changes(self):
+        """
+        입력 값: 첫 요청 뒤 서버 모델 설정이 A에서 B로 바뀌는 두 조정 요청
+        출력 값: 모든 검증 단언 통과 시 테스트 통과
+        기능: 같은 Agent는 처음 고른 모델을 유지하고 새 Agent는 바뀐 설정을 읽습니다.
+        """
+        self.program_env.write_text("OPENROUTER_MODEL=vendor/model-a\n", encoding="utf-8")
+        provider = ScriptedProvider([
+            reply(call("inspect_schedule", schedule_id="study-11")),
+            reply(call("inspect_topic_schedule", topic="Charts")),
+            reply(call("reschedule_failed_study", schedule_id="study-11")),
+            reply(call("inspect_schedule", schedule_id="external-10")),
+            reply(call("remove_cancelled_external_schedule", schedule_id="external-10")),
+        ])
+
+        def changing_configuration(request, timeout=None):
+            self.program_env.write_text("OPENROUTER_MODEL=vendor/model-b\n", encoding="utf-8")
+            return provider(request, timeout)
+
+        loads = []
+
+        def counting_load_model():
+            loads.append(1)
+            return adjuster_load_model()
+
+        agent = AdjustmentAgent(api_key="synthetic-openrouter-key")
+        self.assertIsNone(agent.model)
+        with patch.object(openrouter_client.urllib.request, "urlopen", changing_configuration), \
+                patch("schedule_adjuster.agent.load_model", counting_load_model):
+            moved, _ = agent.adjust(AdjustmentRequest("study-11", self.entries))
+            cancelled, _ = agent.adjust(AdjustmentRequest("external-10", self.entries))
+        self.assertEqual((moved.outcome.action, cancelled.outcome.action), ("rescheduled_study", "cancelled_external"))
+        self.assertEqual([body["model"] for body in provider.bodies], ["vendor/model-a"] * 5)
+        self.assertEqual((len(loads), agent.model, agent.api_request_count, len(agent.usage_records)),
+                         (1, "vendor/model-a", 5, 5))
+        for body in provider.bodies:
+            self.assertEqual((body["reasoning"], body["max_output_tokens"]), ({"effort": "none"}, 2048))
+
+        fresh = ScriptedProvider([reply(call("inspect_schedule", schedule_id="external-10")),
+                                  reply(call("remove_cancelled_external_schedule", schedule_id="external-10"))])
+        new_agent = AdjustmentAgent(api_key="synthetic-openrouter-key")
+        with patch.object(openrouter_client.urllib.request, "urlopen", fresh):
+            new_agent.adjust(AdjustmentRequest("external-10", self.entries))
+        self.assertEqual([body["model"] for body in fresh.bodies], ["vendor/model-b"] * 2)
+        self.assertEqual(new_agent.model, "vendor/model-b")
 
     def test_legacy_key_alone_makes_no_provider_request(self):
         """

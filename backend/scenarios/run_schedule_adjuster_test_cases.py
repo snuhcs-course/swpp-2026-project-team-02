@@ -129,7 +129,7 @@ def run_case(agent: AdjustmentAgent, case: dict) -> dict:
         "uses_personal_availability": weekly_availability is not None,
         "availability_profile_loaded": availability_profile_loaded,
         "availability_respected": availability_respected,
-        "inference": inference_summary(agent.api_request_count - request_count_before,
+        "inference": inference_summary(agent.model, agent.api_request_count - request_count_before,
                                        agent.usage_records[usage_before:], elapsed_seconds),
         "result_csv": result_name,
         "agent_summary": summary,
@@ -163,7 +163,7 @@ def main() -> int:
         except Exception as error:
             outcome = {"case_id": case.get("case_id", "unknown"), "passed": False,
                        "error": f"{type(error).__name__}: {error}",
-                       "inference": inference_summary(agent.api_request_count - request_count_before,
+                       "inference": inference_summary(agent.model, agent.api_request_count - request_count_before,
                                                       agent.usage_records[usage_before:],
                                                       time.perf_counter() - started)}
             trace_path = RESULT_DIR / f"{outcome['case_id']}_tool_trace.json"
