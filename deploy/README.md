@@ -24,6 +24,22 @@ summarized in the [documentation index](../docs/README.md).
 Nginx is the only public listener. Do not expose port 8000. The release APK permits cleartext
 HTTP only for the assigned `.174` host; debug builds additionally permit local development hosts.
 
+### Proxy read timeout
+
+The checked-in `/api/v1/` location sets `proxy_read_timeout 300s`. Nginx applies it between two
+successive reads from the backend, not to the whole request, so it is an idle limit rather than a
+guaranteed completion time. Plan generation and adjustment answer only after all model calls
+finish, sending no data meanwhile. 300 seconds covers the planner's nominal budget of six
+45-second OpenRouter requests (adjustment allows five) plus local work, and matches the planner
+scenario client's 300-second timeout. Nginx's 60-second default could discard valid operations.
+
+The Android app keeps its 120-second call deadline, so it can time out before the proxy does. In
+that case, existing recovery applies: the app reports an uncertain outcome, does not resend an
+adjustment automatically, and reloads the plan only when the user asks. The backend may still
+finish that request. The timeout reaches the deployed server only after a later deployment copies
+this file to `/etc/nginx/sites-available/licenseplanner`, passes `sudo nginx -t`, and reloads Nginx
+as shown below. Until then, the server keeps its previously installed configuration.
+
 ## Install or reconcile from the school network
 
 The checked-in unit matches the current server. If another account or path is used later, update
@@ -109,6 +125,10 @@ Use the signed `app-live-release.apk` artifact produced by `.github/workflows/pr
 artifact URL, signature fingerprint, installation steps, and known limitations are recorded in
 [`../ITER3_SUBMISSION.md`](../ITER3_SUBMISSION.md). Use [HE_EVALUATION.md](HE_EVALUATION.md) for
 the fixed device flow.
+
+The workflow's API URL (the `api_base_url` input, otherwise `LIVE_API_BASE_URL`) must be
+`http://swpp26t02.147-46-242-174.sslip.io/api/v1` or an HTTPS URL. Gradle rejects any other HTTP
+host before packaging because the release network policy would block it on the device.
 
 ## Limitations
 
