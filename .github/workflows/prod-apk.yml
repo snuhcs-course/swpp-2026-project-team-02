@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: Optional live API base URL override; otherwise LIVE_API_BASE_URL is used.
+        description: Optional live API base URL override (HTTPS, or HTTP only for the release-allowlisted host); otherwise LIVE_API_BASE_URL is used.
         required: false
         type: string
   push:

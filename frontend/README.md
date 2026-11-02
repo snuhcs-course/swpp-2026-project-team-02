@@ -115,6 +115,32 @@ For the signed evaluator APK and public endpoint, follow the
 was built from `iteration-3-pr4-base` at `d8ba7688e533c06c66b00ad43aa41b6dde11a4a4`;
 it is separate from a local debug build.
 
+### Live release builds
+
+Before packaging, `assembleLiveRelease` and `bundleLiveRelease` check
+`licensePlanner.apiBaseUrl`. It must be an absolute `http://` or `https://` URL
+with a host. HTTP is accepted only for a host that
+`app/src/release/res/xml/network_security_config.xml` permits for cleartext
+(currently `swpp26t02.147-46-242-174.sslip.io`). Host case, port, and a trailing
+slash do not matter. Any HTTPS host is accepted; the build does not contact it,
+so passing does not prove that the server is reachable or its certificate valid.
+The default emulator URL, `localhost`, the raw server IP, and other HTTP hosts fail
+the build with the allowed host named. Debug and demo builds are not checked.
+
+```bash
+./gradlew assembleLiveRelease -PlicensePlanner.apiBaseUrl=http://swpp26t02.147-46-242-174.sslip.io/api/v1
+```
+
+Release signing uses four properties: `licensePlanner.releaseStoreFile`,
+`licensePlanner.releaseStorePassword`, `licensePlanner.releaseKeyAlias`, and
+`licensePlanner.releaseKeyPassword`. With none of them set, the release is
+unsigned: `app/build/outputs/apk/live/release/app-live-release-unsigned.apk`,
+which cannot be installed as is and is not the evaluator APK. If any of them is
+set, all four must be nonblank. Otherwise Gradle stops during configuration, for
+every task, and names the missing or blank properties without printing their
+values. Pass signing values only from a protected source such as CI secrets. The
+`Prod APK` workflow requires all four secrets and verifies the APK signature.
+
 Planning calls the model synchronously and can take tens of seconds (request timeout
 120 s). The matching routes and JSON contract are documented in
 [`backend/FRONTEND_INTEGRATION_GUIDE.md`](../backend/FRONTEND_INTEGRATION_GUIDE.md).
