@@ -33,17 +33,22 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
+import com.swpp.licenseplanner.ui.components.EXPORT_SUBTITLE
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.IconButton44
 import com.swpp.licenseplanner.ui.components.MutedBox
 import com.swpp.licenseplanner.ui.components.NavIcon
 import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
+import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.Tag
 import com.swpp.licenseplanner.ui.components.TopBar
+import com.swpp.licenseplanner.ui.components.exportBlockText
+import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkBody
 import com.swpp.licenseplanner.ui.theme.InkSecondary
@@ -56,12 +61,22 @@ import java.util.Locale
 /**
  * Adapted from frame 2007:253: one Monday-based week at a time with
  * bounded previous/next, seven day sections, returned session cards, the AI-authored
- * summary when present, and the demo statement for local plans. The phase timeline,
- * on-track status and calendar export from the frame are omitted (no backing data).
- * [onHome] and [onAdjust] lead to the home and plan-list screens.
+ * summary when present, and the demo statement for local plans. The phase timeline and
+ * on-track status from the frame are omitted (no backing data). The calendar export action
+ * (2007:352) copies [exportCount] study sessions to a chosen device calendar; [exportBlock]
+ * disables it with the reason. [onHome] and [onAdjust] lead to the home and plan-list screens.
  */
 @Composable
-fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit, onHome: () -> Unit, onAdjust: () -> Unit) {
+fun PlanScreen(
+    response: StudyPlanResponse,
+    isDemo: Boolean,
+    exportCount: Int,
+    exportBlock: ExportBlock?,
+    onExport: () -> Unit,
+    onEdit: () -> Unit,
+    onHome: () -> Unit,
+    onAdjust: () -> Unit,
+) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
@@ -106,6 +121,14 @@ fun PlanScreen(response: StudyPlanResponse, isDemo: Boolean, onEdit: () -> Unit,
                     )
                 }
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
+            }
+            item {
+                PrimaryButton(
+                    exportButtonText(exportCount),
+                    onExport,
+                    enabled = exportBlock == null,
+                    subtitle = exportBlock?.let(::exportBlockText) ?: EXPORT_SUBTITLE,
+                )
             }
             item { SecondaryButton("계획 조정하기", onAdjust) }
             item { SecondaryButton("입력 수정하기", onEdit) }

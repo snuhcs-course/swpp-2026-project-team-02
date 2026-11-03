@@ -366,6 +366,86 @@ restart retention, and reload after a lost adjustment response. They do not
 attach the full two-plan same-file/CSV/original-window isolation procedure;
 that detailed gate remains unverified. See [Verification](#verification).
 
+## Calendar export
+
+A plan's study sessions can be copied once into a calendar that already exists
+on the device, through Android's calendar provider. It is a one-way copy: the
+app never reads, updates or deletes calendar events afterwards, and it never
+creates a calendar or account.
+
+- **Permissions.** The app declares `READ_CALENDAR` and `WRITE_CALENDAR` and
+  asks for them only after 캘린더에 N개 일정 추가 is tapped, never at start or
+  while viewing a plan. Reading lists the calendars the app may write to
+  (contributor access or higher); writing adds the events. If access is denied,
+  nothing is written and the app explains how to allow it under 설정 › 앱 ›
+  권한; it does not ask again by itself.
+- **Device calendar setup.** At least one writable calendar must exist, for
+  example a Google account added in the device's Settings or a local calendar
+  created in a calendar app. Without one the app reports that no calendar can
+  receive events. An emulator image without a calendar app or account cannot
+  complete an export.
+- **What is copied.** Each `study-N` row of the selected plan, across all weeks
+  and including past dates, becomes one timed event with the exact topic as its
+  title. Existing schedules (`external-N`) are not copied, and no reminders,
+  repetition, exam milestones or attendees are added. If any study row has a bad
+  timestamp, an end not after its start, or a repeated ID, nothing is copied.
+- **Korean time.** The plan's timestamps have no time zone; export reads them
+  as Korean time (`Asia/Seoul`) and the confirmation says so. A calendar set to
+  another zone shows the same instant in its own zone (18:00 KST is 09:00 UTC).
+- **Demo builds write real events.** The demo planner is a local simulation,
+  but its export adds real events to the chosen calendar. The confirmation says
+  so, and every demo event's description carries “로컬 시연 계산”. Export never
+  contacts the backend or the model provider, in either flavor.
+- **Success means the device accepted the events.** The result counts only
+  events the calendar provider confirmed on this device. Whether and when they
+  appear on other devices or in Google Calendar on the web depends on that
+  calendar account's sync, which the app does not check.
+
+**Steps.** On a generated plan (내 계획) the action sits below the weeks; on a
+plan opened from 계획 조정 it sits beside the adjustment actions. It counts the
+plan's current study sessions across all weeks. Tap 캘린더에 N개 일정 추가 →
+allow calendar access if asked → choose a calendar (equal names show the
+account) → 다음 → check the plan number, calendar, count and 한국 시간
+(Asia/Seoul) → tap N개 일정 추가. Back or 취소 before that last tap adds
+nothing. While events are being added, the dialog cannot be closed and every
+other plan action waits; rotation keeps the same export. The action is
+unavailable for a plan with no study sessions, a plan that needs 최신 계획
+불러오기 or can no longer be found on the server, while plans are being saved
+or could not be saved, and while generation, adjustment or reload runs. A live
+plan without a server file identity can still be exported.
+
+**Results.** Full success names the calendar and the number added. If adding
+stops part way, the result shows how many were confirmed and, when the last
+attempt's outcome is unknown, that more may have been added; check the
+calendar before exporting again. There is no retry button and no automatic
+retry; nothing already added is deleted.
+
+**Limits.** Every export adds new copies: exporting the same plan again
+duplicates its events, also after a restart, and the confirmation warns about
+this each time. Adjusting a plan afterwards does not move or delete exported
+events; export again to copy the new times, then remove the old events in the
+calendar app. Export state is not saved, so closing the app never resumes or
+repeats an export, and the saved plans are unchanged by it.
+
+**Manual check (Android Studio).** JVM tests cover the mapping, the flow and
+the insert counting with fakes, not the real calendar provider. To check a
+device: open `frontend/` in Android Studio, run `demoDebug` on an emulator or
+device that has a disposable writable calendar (add one in the calendar app or
+device settings; an emulator without one shows only the no-calendar message).
+Do not clear app data. Generate a demo plan and note its study-session count;
+confirm no calendar prompt appeared before tapping export. Deny once and check
+the settings guidance and that nothing was added; export again, allow, cancel at
+choice and at confirmation (nothing added), then export once and compare the
+new events' topics, times and durations with the plan and the “로컬 시연 계산”
+description. Rotate during choice and confirmation. Export the same plan again
+to see the duplicate warning and N more copies. For a non-Korean display zone,
+check one event's instant against its plan time in Asia/Seoul. For live saved
+plans, use the [controlled adjustment server](#controlled-adjustment-server)
+with `--scenario normal` (and `conflict` / `plan-not-found` for the unavailable
+states); export sends no request, which `requests.jsonl` can show. Record the
+variant, device and API level, calendar type, expected and observed counts and
+times, without account names. These checks have not been run for this change.
+
 ## Verification
 
 These are recorded results from different source revisions, not a fresh test run
