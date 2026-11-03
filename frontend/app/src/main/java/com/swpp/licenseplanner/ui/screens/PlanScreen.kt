@@ -102,7 +102,7 @@ fun PlanScreen(
                     }
                 }
             }
-            if (summary != null) item { AiSummary(summary) }
+            if (summary != null) item { PlanSummary(summary) }
             if (week == null) {
                 item {
                     OutlinedCard {
@@ -138,13 +138,10 @@ fun PlanScreen(
 }
 
 @Composable
-internal fun AiSummary(summary: String) {
-    DashedBox {
-        Tag("AI", mono = true)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("AI가 작성한 설명", style = MaterialTheme.typography.titleSmall, color = Ink)
-            Text(summary, style = MaterialTheme.typography.bodyMedium, color = Ink)
-        }
+internal fun PlanSummary(summary: String) {
+    MutedBox {
+        Text("계획 요약", style = MaterialTheme.typography.titleSmall, color = Ink)
+        Text(summary, style = MaterialTheme.typography.bodyMedium, color = Ink)
     }
 }
 

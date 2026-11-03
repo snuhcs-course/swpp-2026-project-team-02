@@ -219,7 +219,7 @@ fun PlanAdjustmentScreen(
                         Text("계획이 조정됐어요", style = MaterialTheme.typography.titleSmall, color = Ink)
                         Note("옮긴 일정이 있는 주를 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
                     }
-                    if (summary != null) AiSummary(summary)
+                    if (summary != null) PlanSummary(summary)
                 }
                 state is AdjustmentState.Failure -> {
                     AlertCard("일정을 조정하지 못했어요", state.error.adjustmentMessage())
