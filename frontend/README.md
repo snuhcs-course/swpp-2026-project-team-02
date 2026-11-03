@@ -591,6 +591,4 @@ time. Live adjustment results mean nothing until the backend dependency in
   remains demo-only.
 - Validation wording depends on the backend's free-text `error.message`. If that
   text changes, the app shows the neutral fallback until the mapping is updated.
-- Generation summaries are composed by backend code from the accepted schedule.
-  The current “AI가 작성한 설명” label does not establish model authorship of that
-  text; its wording still needs reconciliation.
+- The app shows them under “계획 요약” in a plain gray box, without the AI tag, so the label does not claim model authorship.
