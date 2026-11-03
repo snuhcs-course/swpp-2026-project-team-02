@@ -14,6 +14,7 @@ assuming every branch or APK contains the same behavior.
 | Android build, flavors, saved plans and recovery | [Frontend README](../frontend/README.md) |
 | Backend commands, model configuration and offline checks | [Backend README](../backend/README.md) |
 | Android HTTP request/response contract | [Frontend integration guide](../backend/FRONTEND_INTEGRATION_GUIDE.md) |
+| Calendar conflict-aware scheduling decision and P29→P30 contract | [P30 scheduler approach](P30_SCHEDULER_APPROACH.md) |
 | Backend tools, validation and historical comparisons | [Developer guide](../backend/DEVELOPER_GUIDE.md) |
 | Server setup, public endpoint and operating checks | [Deployment guide](../deploy/README.md) |
 | Evaluator download, installation, tasks and limitations | [HE submission package](iter3-HE/04_submission_package.md) |

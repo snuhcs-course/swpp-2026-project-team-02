@@ -1,0 +1,82 @@
+# P30 — Calendar conflict-aware scheduling approach
+
+**Decision date:** 2026-11-03  
+**Baseline:** `main` at `09d66ef` (Iteration 3 PR #8 merge)
+
+## Decision
+
+Keep and extend the repository's deterministic Python scheduler in
+`backend/license_planner/scheduler.py`.  Do **not** add an external scheduler
+package for P30.
+
+The scheduler already subtracts `PlanRequest.busy_periods` from each weekly
+availability window before calculating capacity and placing study blocks.  It
+therefore provides the required invariant for US-C9(A): a generated study
+block must not overlap a calendar event supplied as a busy period.
+
+## External review
+
+| Project | Useful idea | Decision |
+| --- | --- | --- |
+| [study-planner](https://github.com/dguywhoknows/study-planner) | Deadline-aware priority, replan and calendar presentation | Reference only. Its JavaScript app and spaced-repetition policy do not match the current Python/API contract. |
+| [PrepFlow](https://github.com/piyusshhjangid/PrepFlow) | Keep AI output structured, then let deterministic code enforce capacity and priority | Adopt this principle. The TypeScript/PostgreSQL application itself is not a dependency. |
+| [task_scheduler](https://github.com/longauer/task_scheduler) | Time slots and deadline-aware placement | Reference only. Its generic CLI task model would require replacing the existing plan, topic and Android contracts. |
+
+## P29 → P30 contract
+
+P29 converts each readable calendar event into this API item and supplies the
+list in `StudyPlanRequest.busySchedules`:
+
+```json
+{
+  "schedule_id": "calendar:<provider-id>",
+  "start_date": "2026/11/04/19/00",
+  "end_date": "2026/11/04/20/00",
+  "topic": "외부 일정"
+}
+```
+
+`RequestMapper` serializes this list as `busy_schedules`; `api_service` parses
+it into `PlanRequest.busy_periods`.  P30 treats intervals as half-open
+`[start, end)`: a study block ending exactly when an event starts is allowed,
+but any positive-duration overlap is rejected by placement.
+
+Until P29 lands, P30 uses fixed JSON/CSV fixtures only.  Calendar permissions,
+recurrence expansion and all-day-event interpretation remain P29's ownership.
+
+## Implementation and test scope
+
+1. Retain `_free_segments` as the single subtraction implementation for both
+   capacity calculation and block placement; do not duplicate conflict logic
+   in the model prompt or Android client.
+2. Extend the fixed availability fixture/runner only for scenarios absent from
+   the unit suite.  Existing unit tests already cover overlapping, adjacent,
+   partially clipped and fully blocked busy intervals.
+3. For P30 acceptance, record: source commit, fixture input, generated blocks,
+   and a check that every study block is disjoint from every busy interval.
+4. When P29 is available, add the Android request-mapper test and one
+   live-flavor fixed-response E2E path.  Do not make that E2E test call
+   OpenRouter.
+
+## P30 completion criteria
+
+- A fixed busy event inside a user's available window is excluded from all
+  generated study blocks.
+- When busy events remove all usable time, generation returns the existing
+  `NOT_ENOUGH_TIME` input error before a model call.
+- Adjacent intervals remain valid and overlapping/nested calendar intervals do
+  not double-subtract capacity.
+- The P29 mapping test proves that the calendar list reaches the backend as
+  `busy_schedules`.
+
+## Commands
+
+Run from `backend/`:
+
+```bash
+python -m unittest tests.license_planner_tests.test_planning_capacity
+python -m scenarios.run_license_planner_availability_test_cases
+```
+
+The second command writes ignored, local traces beneath
+`scenarios/results/license_planner_availability/`; it does not call a model.
