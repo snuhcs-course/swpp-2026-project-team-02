@@ -18,6 +18,7 @@ import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
+import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.adjustmentMessage
 import com.swpp.licenseplanner.ui.components.AlertCard
@@ -30,6 +31,7 @@ import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
+import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.reloadMessage
 import com.swpp.licenseplanner.ui.theme.Ink
 
@@ -69,6 +71,8 @@ private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
  * Day and session cards reuse the plan screen's rendering (frame 2007:253). While a request
  * runs, back and every other action are held so it is neither abandoned nor repeated.
  * Requests wait while the plans are being saved or after a failed save; viewing does not.
+ * Plans that can be viewed without a recovery step also offer the calendar export of their
+ * [exportCount] study sessions, beside the adjustment actions; [exportBlock] disables it.
  */
 @Composable
 fun PlanAdjustmentScreen(
@@ -82,6 +86,9 @@ fun PlanAdjustmentScreen(
     onBack: () -> Unit,
     onCreate: () -> Unit,
     onRetrySave: () -> Unit,
+    exportCount: Int,
+    exportBlock: ExportBlock?,
+    onExport: () -> Unit,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
@@ -110,6 +117,10 @@ fun PlanAdjustmentScreen(
     val shownIndex = weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0))
     val week = weeks.getOrNull(shownIndex)
     val summary = plan.current.agentSummary?.takeIf { it.isNotBlank() }
+    // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
+    val exportAction: @Composable () -> Unit = {
+        if (exportBlock != ExportBlock.NoStudy) SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
+    }
 
     AppScreen(
         title = "실패한 일정 선택",
@@ -132,15 +143,18 @@ fun PlanAdjustmentScreen(
                 }
                 AdjustmentMode.NoIdentity -> {
                     PrimaryButton("새 계획 만들기", onCreate)
+                    exportAction()
                     SecondaryButton("목록으로", onBack)
                 }
                 AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onBack)
                 AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure) {
                     PrimaryButton("다시 시도", onRetry, enabled = canSend)
+                    exportAction()
                     SecondaryButton("목록으로", onBack)
                 } else if (state == AdjustmentState.DemoNoSlot) {
                     // The same selection would give the same result; another session or a new plan can.
                     PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
+                    exportAction()
                     SecondaryButton("목록으로", onBack)
                     SecondaryButton("새 계획 만들기", onCreate)
                 } else {
@@ -150,6 +164,7 @@ fun PlanAdjustmentScreen(
                         enabled = !loading && selection.failedScheduleId != null && canSend,
                         subtitle = if (!loading && selection.failedScheduleId == null) "놓친 공부 일정을 하나 골라 주세요" else null,
                     )
+                    exportAction()
                 }
             }
         },

@@ -10,7 +10,13 @@ import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.AndroidCalendarExportRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
+import com.swpp.licenseplanner.data.CalendarDestination
+import com.swpp.licenseplanner.data.CalendarExportRepository
+import com.swpp.licenseplanner.data.CalendarListOutcome
+import com.swpp.licenseplanner.data.CalendarWriteOutcome
+import com.swpp.licenseplanner.data.ExportNotStarted
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.MappingResult
@@ -23,8 +29,10 @@ import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.RequestMapper
+import com.swpp.licenseplanner.data.UnavailableCalendarExport
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.PlanFormState
@@ -99,7 +107,8 @@ data class AdjustmentSelection(
  * Activity-scoped state for the whole input flow and the generated plans.
  * Form inputs survive back navigation and configuration changes, not process death; the plans
  * are restored from [planStore] and saved there after each accepted change. Repositories come
- * from the build flavor, with no runtime fallback.
+ * from the build flavor, with no runtime fallback; [calendarExportRepository] writes to the device
+ * calendar in both flavors.
  */
 class PlanFormViewModel(
     private val questionRepository: QuestionRepository,
@@ -107,6 +116,7 @@ class PlanFormViewModel(
     private val adjustmentRepository: AdjustmentRepository,
     today: LocalDate = LocalDate.now(),
     private val planStore: LocalPlanStore,
+    private val calendarExportRepository: CalendarExportRepository = UnavailableCalendarExport,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -145,12 +155,21 @@ class PlanFormViewModel(
     private val _savedPlans = MutableStateFlow<List<SessionPlan>>(emptyList())
     val savedPlans: StateFlow<List<SessionPlan>> = _savedPlans.asStateFlow()
 
+    /** The open calendar export flow, or null. It is never saved, so a restart never resumes it. */
+    private val _calendarExport = MutableStateFlow<CalendarExportState?>(null)
+    val calendarExport: StateFlow<CalendarExportState?> = _calendarExport.asStateFlow()
+    private var nextExportId = 1
+
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
+    private val exporting get() = _calendarExport.value != null
 
-    /** An adjustment or reload is in flight; it must finish on the plan it started from. */
-    private val busy get() = adjusting || reloading
+    /**
+     * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
+     * on the plan it started from.
+     */
+    private val busy get() = adjusting || reloading || exporting
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -285,7 +304,7 @@ class PlanFormViewModel(
      * Does nothing for a plan that needs a reload or is missing.
      */
     fun retryAdjustment() {
-        if (_adjustment.value.state !is AdjustmentState.Failure || generating || !storageReady) return
+        if (_adjustment.value.state !is AdjustmentState.Failure || generating || exporting || !storageReady) return
         val (ordinal, input) = pendingAdjustment ?: return
         if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
         sendAdjustment(ordinal, input)
@@ -325,6 +344,92 @@ class PlanFormViewModel(
         }
         return true
     }
+
+    /**
+     * Opens a calendar export of plan [ordinal]'s current study rows, captured now. Refused unless the
+     * plan has study rows, is saved, needs no reload and nothing else runs. Writes nothing; while the
+     * flow is open the plan is held against generation, adjustment, reload and plan switching.
+     */
+    fun startCalendarExport(ordinal: Int): Boolean {
+        val plan = plan(ordinal) ?: return false
+        if (exportBlock(plan, _storage.value, generating || busy) != null) return false
+        val events = CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo)
+        val phase = if (events == null) CalendarExportPhase.InvalidRows else CalendarExportPhase.RequestingPermission
+        _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty()), phase)
+        return true
+    }
+
+    /** Marks the system permission prompt as shown; true only once per request, so it is never shown twice. */
+    fun calendarPermissionPrompted(): Boolean {
+        val state = _calendarExport.value?.takeIf { it.phase == CalendarExportPhase.RequestingPermission } ?: return false
+        _calendarExport.value = state.copy(phase = CalendarExportPhase.AwaitingPermission)
+        return true
+    }
+
+    /** Access granted leads to the calendar list, never to a write; denial ends the flow without a write. */
+    fun onCalendarPermission(granted: Boolean) {
+        val state = _calendarExport.value ?: return
+        if (state.phase != CalendarExportPhase.RequestingPermission && state.phase != CalendarExportPhase.AwaitingPermission) return
+        if (!granted) {
+            _calendarExport.value = state.copy(phase = CalendarExportPhase.PermissionDenied)
+            return
+        }
+        _calendarExport.value = state.copy(phase = CalendarExportPhase.LoadingCalendars)
+        viewModelScope.launch {
+            val phase = when (val outcome = calendarExportRepository.calendars()) {
+                is CalendarListOutcome.Loaded ->
+                    if (outcome.calendars.isEmpty()) CalendarExportPhase.NoCalendars else CalendarExportPhase.Choosing(outcome.calendars)
+                CalendarListOutcome.PermissionMissing -> CalendarExportPhase.PermissionDenied
+                CalendarListOutcome.Unavailable -> CalendarExportPhase.CalendarsUnavailable
+            }
+            _calendarExport.update { if (it?.id == state.id && it.phase == CalendarExportPhase.LoadingCalendars) it.copy(phase = phase) else it }
+        }
+    }
+
+    fun chooseCalendar(destination: CalendarDestination) = _calendarExport.update { state ->
+        val phase = state?.phase as? CalendarExportPhase.Choosing
+        if (phase == null || destination !in phase.calendars) state else state.copy(phase = phase.copy(selected = destination))
+    }
+
+    /** Shows the confirmation for the chosen calendar; nothing is written yet. */
+    fun reviewCalendarExport() = _calendarExport.update { state ->
+        val phase = state?.phase as? CalendarExportPhase.Choosing
+        val destination = phase?.selected ?: return@update state
+        state.copy(phase = CalendarExportPhase.Confirming(phase.calendars, destination))
+    }
+
+    fun chooseAnotherCalendar() = _calendarExport.update { state ->
+        val phase = state?.phase as? CalendarExportPhase.Confirming ?: return@update state
+        state.copy(phase = CalendarExportPhase.Choosing(phase.calendars, phase.destination))
+    }
+
+    /**
+     * Writes the captured events to the confirmed calendar, once: the flow leaves confirmation before
+     * the write starts, so a second call sends nothing. If the plan changed or may no longer be
+     * exported, nothing is written. Returns whether the write started.
+     */
+    fun confirmCalendarExport(): Boolean {
+        val state = _calendarExport.value ?: return false
+        val destination = (state.phase as? CalendarExportPhase.Confirming)?.destination ?: return false
+        val source = state.source
+        val plan = plan(source.planOrdinal)
+        val eligible = plan != null && exportBlock(plan, _storage.value, generating || adjusting || reloading) == null &&
+            CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo) == source.events
+        if (!eligible) {
+            val outcome = CalendarWriteOutcome.NotStarted(ExportNotStarted.PlanUnavailable)
+            _calendarExport.value = state.copy(phase = CalendarExportPhase.Finished(destination, outcome))
+            return false
+        }
+        _calendarExport.value = state.copy(phase = CalendarExportPhase.Writing(destination))
+        viewModelScope.launch {
+            val outcome = calendarExportRepository.export(destination, source.events)
+            _calendarExport.update { if (it?.id == state.id) it.copy(phase = CalendarExportPhase.Finished(destination, outcome)) else it }
+        }
+        return true
+    }
+
+    /** Cancels or dismisses the flow and releases its plan; refused while writing. */
+    fun closeCalendarExport() = _calendarExport.update { if (it?.phase is CalendarExportPhase.Writing) it else null }
 
     private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
 
@@ -443,7 +548,7 @@ class PlanFormViewModel(
     }
 
     companion object {
-        /** Uses the flavor's repositories and this build's plan storage scope. */
+        /** Uses the flavor's repositories, this build's plan storage scope and the device calendar. */
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val application = checkNotNull(this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
@@ -455,6 +560,7 @@ class PlanFormViewModel(
                         application,
                         PlanStorageScope.of(BuildConfig.DEMO_MODE, BuildConfig.API_BASE_URL),
                     ),
+                    calendarExportRepository = AndroidCalendarExportRepository.create(application),
                 )
             }
         }
