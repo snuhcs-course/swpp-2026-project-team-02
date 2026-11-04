@@ -88,6 +88,16 @@ through `POST /api/v1/study-plans`:
 The Android calendar-reader implementation remains P29 work; these cases use
 the final `busy_schedules` wire format as fixed input.
 
+## Adjustment boundary
+
+For a failed study-session adjustment, the Android client resends the original
+plan's `exam_date` with the saved weekly availability.  The adjustment API
+requires that value for study rows, and the deterministic slot search caps each
+candidate window at the exam timestamp.  If a same-topic continuation cannot
+fit before the exam, it returns `NOT_ENOUGH_TIME` before invoking the adjustment
+agent or changing the saved plan.  This prevents an otherwise valid adjustment
+from moving a study session beyond the exam.
+
 ## Commands
 
 Run from `backend/`:

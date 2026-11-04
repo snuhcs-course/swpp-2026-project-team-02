@@ -86,7 +86,8 @@ class PlanUpdateTests(unittest.TestCase):
         self.identifier = self.store.create(self.original)
         self.filename = self.identifier.rsplit("/", 1)[1]
         self.payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
-                        "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS}
+                        "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
+                        "exam_date": "2026/10/20/22/00"}
         for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root),
                             ("AdjustmentAgent", ToolAgent)]:
             p = patch.object(api_service, name, value)
@@ -181,10 +182,21 @@ class PlanUpdateTests(unittest.TestCase):
 
     def test_external_removal(self):
         self.payload["schedule_id"] = "external-2"
+        del self.payload["exam_date"]
         status, result = self.call("/schedules/adjust", self.payload)
         self.assertEqual(status, 200)
         self.assertEqual(result["action"], "cancelled_external")
         self.assertEqual(result["schedules"], [ROWS[0]])
+
+    def test_reschedule_stops_before_exam_and_keeps_stored_plan(self):
+        """A failed session is not moved past its plan's original exam time."""
+        self.payload["exam_date"] = "2026/10/19/20/30"
+        with patch.object(api_service, "AdjustmentAgent") as agent:
+            status, result = self.call("/schedules/adjust", self.payload)
+        self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+        self.assertIn("NOT_ENOUGH_TIME", result["error"]["message"])
+        agent.assert_not_called()
+        self.assertEqual(self.store.download(self.filename)[0], self.original)
 
     def test_agent_failure_leaves_file_unchanged(self):
         with patch.object(ToolAgent, "adjust", side_effect=RuntimeError("upstream failed")):

@@ -169,6 +169,11 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     target = next((entry for entry in entries if entry.schedule_id == target_id), None)
     if target is None:
         raise ValueError("schedule_id must identify an entry in schedules")
+    exam_date = None
+    if target.schedule_type == "study":
+        if payload.get("exam_date") is None:
+            raise ValueError("exam_date is required when rescheduling a study entry")
+        exam_date = _datetime(payload["exam_date"], "exam_date")
     store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
     snapshot = None
     if "schedule_csv_file" in payload:
@@ -182,10 +187,10 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         availability = load_adjuster_availability()
     # Preflight constraints and guard agent output before any file mutation.
-    expected = (move_study_entry(entries, target_id, availability)
+    expected = (move_study_entry(entries, target_id, availability, exam_date)
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))
     expected_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
-    request = AdjustmentRequest(target_id, entries, availability)
+    request = AdjustmentRequest(target_id, entries, availability, exam_date)
     tools, summary = AdjustmentAgent().adjust(request)
     if (tools.outcome is None or tools.outcome.schedule_id != target_id
             or tools.outcome.action != expected_action):

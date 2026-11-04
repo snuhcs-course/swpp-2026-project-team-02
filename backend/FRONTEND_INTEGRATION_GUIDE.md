@@ -200,12 +200,13 @@ field and uses it unchanged for adjustment and exact-identity reload.
 ### Adjust the selected plan
 
 `POST /api/v1/schedules/adjust` retains the existing request fields and accepts
-two additional fields:
+three additional fields:
 
 | Field | Behavior |
 | --- | --- |
 | `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
 | `weekly_availability` | Optional request override; otherwise read the saved profile. An explicit null or empty profile is invalid |
+| `exam_date` | Required when moving a `study-N` row. Reuse the original plan's exam timestamp so a moved session cannot end after the exam. Not required for `external-N` removal. |
 
 Always send the complete schedule currently displayed, not only the failed row.
 The rows must match the stored plan (array order does not matter). Existing IDs,
@@ -218,6 +219,7 @@ Example request (replace the example identifier and rows with actual values):
 {
   "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
   "schedule_id": "study-1",
+  "exam_date": "2026/11/30/09/00",
   "schedules": [{
     "schedule_id": "study-1",
     "start_date": "2026/10/19/18/00",
@@ -281,9 +283,11 @@ Cross-process locking is not provided.
 
 Availability in a generation or adjustment request is not saved automatically.
 If neither an override nor a saved profile exists, adjustment uses the legacy
-conflict-only rule. CSV files do not retain exam dates or plan-specific
-availability, and this task does not add partial-completion or exam-deadline
-constraints. The store retains up to 100 generated plans on a best-effort basis.
+conflict-only rule. The Android app retains the original creation request and
+therefore resends its plan-specific availability and exam timestamp. A study
+session with no slot before that exam returns `422 INVALID_INPUT` with
+`NOT_ENOUGH_TIME` and leaves the stored plan unchanged. The store retains up to
+100 generated plans on a best-effort basis.
 
 ### Local execution
 
@@ -303,9 +307,11 @@ $selected = $plans.plans | Select-Object -First 1
 if ($null -eq $selected) { throw 'Generate a plan before adjusting.' }
 $failed = $selected.schedules | Where-Object { $_.schedule_id -like 'study-*' } | Select-Object -First 1
 if ($null -eq $failed) { throw 'The selected plan has no study session.' }
+$examDate = "2026/11/30/09/00" # Replace with the timestamp used to create this plan.
 $payload = @{
     schedule_csv_file = $selected.schedule_csv_file
     schedule_id = $failed.schedule_id
+    exam_date = $examDate
     schedules = @($selected.schedules)
 } | ConvertTo-Json -Depth 10
 Invoke-RestMethod -Method Post `

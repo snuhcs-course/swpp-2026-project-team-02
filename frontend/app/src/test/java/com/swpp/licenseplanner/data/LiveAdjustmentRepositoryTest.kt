@@ -64,7 +64,7 @@ class LiveAdjustmentRepositoryTest {
            "target_schedule_id":"$target","agent_summary":"study-1을 옮겼어요","tool_calls":[{"name":"t"}],"debug":1$extra}"""
 
     @Test
-    fun postsFourFieldBodyWithOriginalAvailability() {
+    fun postsCreationWindowsAndExamDate() {
         server.enqueue(MockResponse().setBody(body()))
         adjust()
         val recorded = server.takeRequest()
@@ -78,12 +78,13 @@ class LiveAdjustmentRepositoryTest {
               {"schedule_id":"study-1","start_date":"2026/10/05/18/00","end_date":"2026/10/05/19/00","topic":"함수와 데이터 관리"},
               {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
               {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]}}
+             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
+             "exam_date":"${originalA.examDate}"}
         """).jsonObject
         assertEquals(expected, sent)
         // A's windows, not the edited form's.
         assertTrue(formB.weeklyAvailability != originalA.weeklyAvailability)
-        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
+        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
     }
 
     @Test

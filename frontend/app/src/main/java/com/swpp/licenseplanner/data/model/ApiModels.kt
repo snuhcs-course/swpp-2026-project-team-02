@@ -86,7 +86,7 @@ data class StudyPlanResponse(
 
 /**
  * `POST /schedules/adjust` request: the selected plan's server file,
- * the failed study row, the plan's full current rows, and its original creation windows.
+ * the failed study row, the plan's full current rows, and its original creation windows and exam time.
  */
 @Serializable
 data class ScheduleAdjustmentRequest(
@@ -94,6 +94,7 @@ data class ScheduleAdjustmentRequest(
     @SerialName("schedule_id") val scheduleId: String,
     val schedules: List<ScheduleRow>,
     @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+    @SerialName("exam_date") val examDate: String,
 )
 
 /** `POST /schedules/adjust` response; `tool_calls` and future fields are ignored. */
