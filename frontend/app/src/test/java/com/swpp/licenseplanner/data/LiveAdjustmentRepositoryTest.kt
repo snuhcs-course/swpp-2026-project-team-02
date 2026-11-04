@@ -198,6 +198,17 @@ class LiveAdjustmentRepositoryTest {
         ApiError.ServerUnavailable("busy"),
     )
 
+    /**
+     * A redirect could have reached the deployed proxy. Adjustment deliberately exposes it instead
+     * of replaying a state-changing POST, so the user can explicitly retry the unchanged snapshot.
+     */
+    @Test
+    fun redirectIsNotFollowedOrReplayed() = assertNotReplayed(
+        MockResponse().setResponseCode(307)
+            .setHeader("Location", server.url("/api/v1/schedules/adjust-redirected")),
+        ApiError.ServerFailure(307),
+    )
+
     @Test
     fun disconnectAfterSendingIsNotReplayed() = assertNotReplayed(
         MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST),
