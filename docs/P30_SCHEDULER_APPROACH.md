@@ -29,17 +29,20 @@ list in `StudyPlanRequest.busySchedules`:
 
 ```json
 {
-  "schedule_id": "calendar:<provider-id>",
+  "schedule_id": "12345",
   "start_date": "2026/11/04/19/00",
   "end_date": "2026/11/04/20/00",
   "topic": "외부 일정"
 }
 ```
 
-`RequestMapper` serializes this list as `busy_schedules`; `api_service` parses
-it into `PlanRequest.busy_periods`.  P30 treats intervals as half-open
-`[start, end)`: a study block ending exactly when an event starts is allowed,
-but any positive-duration overlap is rejected by placement.
+`schedule_id` is the provider event ID converted to a positive base-10 string;
+it must not use a prefix such as `calendar:` because the existing backend
+validates numeric IDs.  Once P29 supplies the list, `RequestMapper` must
+serialize it as `busy_schedules`; `api_service` parses it into
+`PlanRequest.busy_periods`.  P30 treats intervals as half-open `[start, end)`:
+a study block ending exactly when an event starts is allowed, but any
+positive-duration overlap is rejected by placement.
 
 Until P29 lands, P30 uses fixed JSON/CSV fixtures only.  Calendar permissions,
 recurrence expansion and all-day-event interpretation remain P29's ownership.
@@ -69,11 +72,28 @@ recurrence expansion and all-day-event interpretation remain P29's ownership.
 - The P29 mapping test proves that the calendar list reaches the backend as
   `busy_schedules`.
 
+## 2026-11-04 fixed-input API verification
+
+`tests.api_tests.test_plan_generation` drives a temporary HTTP server with a
+scripted model, so it does not call OpenRouter.  It verifies both P30 outcomes
+through `POST /api/v1/study-plans`:
+
+- A Monday 18:00–20:00 availability window with a fixed 18:00–19:00 busy event
+  produces three 20-minute study blocks beginning at 19:00; every study block
+  is checked to be disjoint from the busy interval.
+- A busy event covering the whole available window returns the existing
+  `NOT_ENOUGH_TIME` input error (HTTP 422) before a model call or plan-file
+  write.
+
+The Android calendar-reader implementation remains P29 work; these cases use
+the final `busy_schedules` wire format as fixed input.
+
 ## Commands
 
 Run from `backend/`:
 
 ```bash
+python -m unittest tests.api_tests.test_plan_generation
 python -m unittest tests.license_planner_tests.test_planning_capacity
 python -m scenarios.run_license_planner_availability_test_cases
 ```
