@@ -190,7 +190,9 @@ jobs:
       - name: Run Android live E2E on emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          # API 30 satisfies minSdk 26 and boots more reliably than API 35 on
+          # GitHub-hosted runners while exercising the same live transport.
+          api-level: 30
           arch: x86_64
           profile: pixel_2
           disable-animations: true
