@@ -125,6 +125,32 @@ It will validate that:
 4. The report revision, commands, date, and CI run URL are recorded by the caller;
    the script does not invent a successful run.
 
+## Fixed live-backend fixture (P16)
+
+The Android `live` flavor's minimal E2E path uses a local fixture server rather
+than the public deployment or a real model call. Start it from the repository
+root before the Android instrumentation test:
+
+```bash
+python backend/test_support/fixed_live_e2e_server.py --host 0.0.0.0 --port 8000
+```
+
+The emulator reaches this server at `http://10.0.2.2:8000/api/v1`, which is the
+existing default `live` base URL. The fixture runs the production
+`api_server.make_handler`, request validation, planner tools/scheduler, and
+`StudyPlanStore`; it isolates persisted CSV files in a temporary directory.
+Only `PlanningAgent._ask_model` is replaced with the checked-in recorded tool
+call trace at `backend/tests/api_tests/fixtures/recorded_model_tool_calls.json`.
+It does not read an OpenRouter key or make an external request, and must not be
+deployed as the public server.
+
+`backend/tests/api_tests/test_fixed_live_e2e_server.py` asserts the same server
+can serve questions, create a plan, and re-read the stored plan through real
+HTTP. This regression test is included by the existing backend API-test
+discovery. Android instrumentation and emulator CI coverage are the subsequent
+P16 steps; actual OpenRouter and public-server validation remain separate
+deployment evidence.
+
 ## Current status
 
 | Evidence | Status | Notes |
