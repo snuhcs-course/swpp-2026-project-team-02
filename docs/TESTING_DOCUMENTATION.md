@@ -3,7 +3,7 @@
 **Owner:** 조준우  
 **Iteration:** 3  
 **Structure confirmed:** 2026-11-05  
-**Reference revision:** `33aae43` (`test(android): verify redirect handling for live requests`)
+**Reference revision:** `7c67a10` (`test(ci): align local reproduction with adjustment contract`)
 
 This document distinguishes repeatable offline CI evidence from paid model calls,
 deployed-server checks, and physical-device runs. A passing offline CI run does not
