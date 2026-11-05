@@ -202,7 +202,7 @@ jobs:
             adb -s emulator-5554 reverse tcp:8000 tcp:8000
             adb -s emulator-5554 reverse --list
             cd frontend
-            ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain \
+            bash ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain \
               -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 
       - name: Print fixed live-backend fixture log
