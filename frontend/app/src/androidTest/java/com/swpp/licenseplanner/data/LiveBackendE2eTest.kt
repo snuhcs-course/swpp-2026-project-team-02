@@ -17,17 +17,18 @@ import org.junit.runner.RunWith
 /**
  * Minimal Android live-flavor E2E path.
  *
- * The test intentionally targets the checked-in Python fixed fixture running
- * on the host at 10.0.2.2:8000. It exercises Android's real OkHttp transport
+ * The test intentionally targets the checked-in Python fixed fixture through
+ * the live-flavor BuildConfig URL. It exercises Android's real OkHttp transport
  * and serializers, then the production Python handler, scheduler, and plan
- * store. No OpenRouter request is made by the fixture.
+ * store. CI maps emulator loopback to the fixture with `adb reverse`; no
+ * OpenRouter request is made by the fixture.
  */
 @RunWith(AndroidJUnit4::class)
 class LiveBackendE2eTest {
     @Test
     fun loadsQuestions_generatesPlan_andReadsSavedPlanFromFixedBackend() = runBlocking {
         assertFalse("Run this test with connectedLiveDebugAndroidTest", BuildConfig.DEMO_MODE)
-        assertEquals("http://10.0.2.2:8000/api/v1", BuildConfig.API_BASE_URL)
+        assertTrue("live API base URL must be configured", BuildConfig.API_BASE_URL.isNotBlank())
 
         val questions = when (val outcome = LiveQuestionRepository(BuildConfig.API_BASE_URL).load(CERTIFICATION_ID)) {
             is QuestionOutcome.Loaded -> outcome.questions
