@@ -3,7 +3,7 @@
 **Owner:** 조준우  
 **Iteration:** 3  
 **Structure confirmed:** 2026-11-05  
-**Reference revision:** `b599e4f` (`test(ci): validate generated evidence reports`)
+**Reference revision:** `e95db19` (`fix(ci): run E2E on compatible API 35 image`)
 
 This document distinguishes repeatable offline CI evidence from paid model calls,
 deployed-server checks, and physical-device runs. A passing offline CI run does not
@@ -14,12 +14,14 @@ establish that the public API, OpenRouter, or an Android device is working.
 The source of truth is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 It runs for pull requests targeting `main`, pushes to `main`, manual dispatch, and
 the daily default-branch schedule at 00:00 UTC (09:00 KST). It has no OpenRouter
-secret and does not start a backend process or emulator.
+secret. Its fixed E2E job starts an isolated backend fixture and emulator; it never
+contacts the public server or a model provider.
 
 | Job | Environment | Checks | Evidence artifact |
 | --- | --- | --- | --- |
 | `Backend` | Ubuntu 24.04, Python 3.14 | Offline `license_planner_tests`, `schedule_adjuster_tests`, `api_tests`; branch coverage | `backend-coverage` — `coverage.xml`, HTML; retained 7 days |
 | `Android` | Ubuntu 24.04, Java 25, Android API 36 | `demoDebug` and `liveDebug` JVM unit tests; request contract check; JaCoCo reports; debug APK build; lint | `android-reports` — JUnit, HTML, lint, JaCoCo; `android-debug-apks`; retained 7 days |
+| `Android live E2E` | Ubuntu 24.04, Python 3.14, Java 25, API 35 emulator | Fixed backend fixture; Android `live` instrumentation path: question GET → plan POST → persisted-plan GET | `android-live-e2e-evidence` — Android connected-test reports and fixture log; retained 7 days |
 
 The contract check reads the request JSON exported by the Android unit tests and
 compares it with the backend source at the checked-out revision. It is offline.
@@ -29,7 +31,7 @@ compares it with the backend source at the checked-out revision. It is offline.
 - `backend/scenarios/` runners, including the real OpenRouter scenario runners
 - OpenRouter credentials, credit, latency, retries, provider failures, and model quality
 - CPU-server systemd/Nginx configuration and public HTTP reachability
-- Android emulator, physical device, calendar provider, and external-network behavior
+- Physical device, calendar provider, and external-network behavior
 - signed `liveRelease` evaluator APK; this belongs to `prod-apk.yml`
 
 Those checks must be recorded separately as live-model, deployment, or device
@@ -94,6 +96,7 @@ without spending model credits or requiring a device.
 | --- | --- | --- | --- |
 | Local offline reproduction — 2026-11-05 | `7c67a10` plus the report-validator working tree | Passed | Backend: 150 tests. Android: demo 193 and live 191 tests, each with one platform-permission skip. |
 | GitHub Actions CI #48 — 2026-11-05 | [`b599e4f`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/b599e4fd74ddd23e24bae8e62bf51119eb27e205) | Passed in 3m 55s | [Run #48](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41963702935): Backend 32s, Android 3m 51s; manually dispatched from `iteration-3-scheduler`. |
+| GitHub Actions CI #57 — 2026-11-05 | [`e95db19`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/e95db19) | Passed in 21m 25s | [Run #57](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/42013613486): Backend 34s, Android 4m 39s, Android live E2E 21m 22s. All three jobs passed; the E2E artifact contains the fixture log and connected-test report. |
 
 ### Measured report summary
 
@@ -104,9 +107,10 @@ without spending model credits or requiring a device.
 | Android live JaCoCo | 1,051 / 2,294 lines | Report contains 251 `com.swpp.licenseplanner` classes. |
 | Android JUnit | demo 193, live 191; failures 0, errors 0 | One permission-dependent `AtomicFilePlanStoreTest` case is skipped in each flavor on this Windows host. The remote CI job passed. |
 
-CI #48 uploaded `backend-coverage`, `android-reports`, and `android-debug-apks` as
-artifacts. The workflow retains test/coverage artifacts for 7 days; debug APKs
-are CI evidence only and are not the evaluator's signed release APK.
+CI #57 uploaded `backend-coverage`, `android-reports`, `android-debug-apks`, and
+`android-live-e2e-evidence` as artifacts. The workflow retains test/coverage
+artifacts for 7 days; debug APKs are CI evidence only and are not the evaluator's
+signed release APK.
 
 ## Evidence-verification script policy
 
@@ -157,19 +161,21 @@ cd frontend
 `LiveBackendE2eTest` exercises the Android `live` BuildConfig URL, real OkHttp
 transport and serializers, then fixture-backed question retrieval, plan
 generation, and server saved-plan readback. It passed locally on 2026-11-05 on
-the `Medium_Phone` AVD: 1 test, 0 failures, 0 skipped (1.666 s). Emulator CI
-coverage is a follow-up automation step; actual OpenRouter and public-server
-validation remain separate deployment evidence.
+the `Medium_Phone` AVD: 1 test, 0 failures, 0 skipped (1.666 s). It also passed
+in CI #57 on an API 35 emulator. The CI job maps emulator loopback port 8000 to
+the fixture with `adb reverse` and supplies the matching live base URL only for
+that test build. Actual OpenRouter and public-server validation remain separate
+deployment evidence.
 
 ## Current status
 
 | Evidence | Status | Notes |
 | --- | --- | --- |
-| CI structure and report paths | Passed — CI #48 | [`ci.yml`](../.github/workflows/ci.yml) invokes the reusable report validator for both jobs. |
+| CI structure and report paths | Passed — CI #57 | [`ci.yml`](../.github/workflows/ci.yml) invokes the reusable report validator for backend/Android and the fixed-fixture E2E job. |
 | Offline backend fresh run | Passed — 2026-11-05 | 57 `license_planner` + 31 `schedule_adjuster` + 62 API tests; total coverage 68%. Reports: `backend/coverage-results/`. |
 | Offline Android fresh run | Passed — 2026-11-05 | `testDemoDebugUnitTest` (193 tests, 1 platform-permission skip) and `testLiveDebugUnitTest` (191 tests, 1 platform-permission skip); failures/errors 0. JaCoCo reports and both debug APKs generated. |
-| Android ↔ backend request contract | Passed — CI #48 | `verify_request.py --backend-ref HEAD` ran before coverage on the GitHub-hosted checkout. |
-| Generated-report validation | Passed — CI #48 | `verify_test_evidence.py` accepted all required JUnit, JaCoCo, and backend coverage reports. |
-| Android live ↔ fixed backend E2E | Passed locally — 2026-11-05 | `connectedLiveDebugAndroidTest` on `Medium_Phone` executed `LiveBackendE2eTest`: question GET → plan POST → persisted-plan GET; 1 test, 0 failures, 0 skipped. |
+| Android ↔ backend request contract | Passed — CI #57 | `verify_request.py --backend-ref HEAD` ran before coverage on the GitHub-hosted checkout. |
+| Generated-report validation | Passed — CI #57 | `verify_test_evidence.py` accepted all required JUnit, JaCoCo, and backend coverage reports. |
+| Android live ↔ fixed backend E2E | Passed locally and in CI #57 — 2026-11-05 | `connectedLiveDebugAndroidTest` executed `LiveBackendE2eTest`: question GET → plan POST → persisted-plan GET; local `Medium_Phone`: 1 test, 0 failures, 0 skipped; CI API 35 emulator: job passed and uploaded `android-live-e2e-evidence`. |
 | Redirect behavior | Offline tests added | `LivePlanningRepositoryTest` verifies generation follows same-origin HTTP 307; `LiveAdjustmentRepositoryTest` verifies adjustment exposes 307 without replaying a state-changing POST. |
 | Public-server/device result | Separate evidence | 2026-11-04 release-APK adjustment returned HTTP 200; historical intermittent 307 remains unresolved and is not a CI result. |
