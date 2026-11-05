@@ -52,6 +52,8 @@ python -m coverage run --append -m unittest discover -s tests/api_tests -v
 python -m coverage report -m
 python -m coverage xml
 python -m coverage html
+cd ..
+python scripts/verify_test_evidence.py --scope backend
 ```
 
 Generated reports are `backend/coverage-results/coverage.xml` and
@@ -67,6 +69,9 @@ python frontend/contract_checks/verify_request.py --backend-ref HEAD \
   --request frontend/app/build/contract-check/study-plan-request.json
 cd frontend
 ./gradlew --no-daemon createDemoDebugUnitTestCoverageReport createLiveDebugUnitTestCoverageReport
+cd ..
+python scripts/verify_test_evidence.py --scope android
+cd frontend
 ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug lintDemoDebug lintLiveDebug
 ```
 
@@ -80,10 +85,11 @@ Generated reports are:
 
 ## Evidence-verification script policy
 
-The Iteration 3 verification script will **not** run scenario runners or duplicate
+[`scripts/verify_test_evidence.py`](../scripts/verify_test_evidence.py) does **not** run scenario runners or duplicate
 their assertions. It will read the generated JUnit and coverage XML files, fail
 when a required report is missing or when a recorded test failure/error is present,
-and print a compact machine-readable summary for the Testing Documentation.
+and print a compact JSON summary for the Testing Documentation. It accepts
+`--scope backend`, `--scope android`, or the default `--scope all`.
 
 It will validate that:
 

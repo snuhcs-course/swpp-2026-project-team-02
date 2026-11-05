@@ -64,22 +64,7 @@ jobs:
           python -m coverage html
 
       - name: Validate coverage reports
-        run: |
-          python - <<'EOF'
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          index = Path("coverage-results/html/index.html")
-          if not index.is_file() or index.stat().st_size == 0:
-              raise SystemExit(f"Missing or empty {index}")
-          root = ET.parse("coverage-results/coverage.xml").getroot()
-          lines = int(root.get("lines-valid", "0"))
-          files = {node.get("filename") for node in root.iter("class")}
-          if lines <= 0 or "api_server.py" not in files:
-              raise SystemExit("coverage.xml lacks the production source denominator")
-          print(f"{len(files)} files, {lines} lines, line rate {root.get('line-rate')}, "
-                f"branch rate {root.get('branch-rate')}")
-          EOF
+        run: python ../scripts/verify_test_evidence.py --repo-root .. --scope backend
 
       - name: Upload coverage reports
         if: always()
@@ -134,24 +119,7 @@ jobs:
         run: bash ./gradlew --no-daemon createDemoDebugUnitTestCoverageReport createLiveDebugUnitTestCoverageReport
 
       - name: Validate coverage reports
-        run: |
-          python - <<'EOF'
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          for flavor in ("demo", "live"):
-              report = Path("app/build/reports/coverage/test") / flavor / "debug"
-              index = report / "index.html"
-              if not index.is_file() or index.stat().st_size == 0:
-                  raise SystemExit(f"Missing or empty {index}")
-              root = ET.parse(report / "report.xml").getroot()
-              classes = [c for c in root.iter("class") if c.get("name", "").startswith("com/swpp/licenseplanner/")]
-              line = next((c for c in root.findall("counter") if c.get("type") == "LINE"), None)
-              lines = int(line.get("missed")) + int(line.get("covered")) if line is not None else 0
-              if not classes or lines <= 0:
-                  raise SystemExit(f"{report / 'report.xml'} lacks project classes or lines")
-              print(f"{flavor}Debug: {len(classes)} classes, {line.get('covered')}/{lines} lines covered")
-          EOF
+        run: python ../scripts/verify_test_evidence.py --repo-root .. --scope android
 
       - name: Build debug APKs and lint
         run: bash ./gradlew --no-daemon assembleDemoDebug assembleLiveDebug lintDemoDebug lintLiveDebug
