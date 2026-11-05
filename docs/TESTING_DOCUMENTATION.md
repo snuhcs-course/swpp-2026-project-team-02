@@ -147,9 +147,19 @@ deployed as the public server.
 `backend/tests/api_tests/test_fixed_live_e2e_server.py` asserts the same server
 can serve questions, create a plan, and re-read the stored plan through real
 HTTP. This regression test is included by the existing backend API-test
-discovery. Android instrumentation and emulator CI coverage are the subsequent
-P16 steps; actual OpenRouter and public-server validation remain separate
-deployment evidence.
+discovery. With the fixture still running and a booted Android emulator, run:
+
+```bash
+cd frontend
+./gradlew --no-daemon :app:connectedLiveDebugAndroidTest
+```
+
+`LiveBackendE2eTest` exercises the Android `live` BuildConfig URL, real OkHttp
+transport and serializers, then fixture-backed question retrieval, plan
+generation, and server saved-plan readback. It passed locally on 2026-11-05 on
+the `Medium_Phone` AVD: 1 test, 0 failures, 0 skipped (1.666 s). Emulator CI
+coverage is a follow-up automation step; actual OpenRouter and public-server
+validation remain separate deployment evidence.
 
 ## Current status
 
@@ -160,5 +170,6 @@ deployment evidence.
 | Offline Android fresh run | Passed — 2026-11-05 | `testDemoDebugUnitTest` (193 tests, 1 platform-permission skip) and `testLiveDebugUnitTest` (191 tests, 1 platform-permission skip); failures/errors 0. JaCoCo reports and both debug APKs generated. |
 | Android ↔ backend request contract | Passed — CI #48 | `verify_request.py --backend-ref HEAD` ran before coverage on the GitHub-hosted checkout. |
 | Generated-report validation | Passed — CI #48 | `verify_test_evidence.py` accepted all required JUnit, JaCoCo, and backend coverage reports. |
+| Android live ↔ fixed backend E2E | Passed locally — 2026-11-05 | `connectedLiveDebugAndroidTest` on `Medium_Phone` executed `LiveBackendE2eTest`: question GET → plan POST → persisted-plan GET; 1 test, 0 failures, 0 skipped. |
 | Redirect behavior | Offline tests added | `LivePlanningRepositoryTest` verifies generation follows same-origin HTTP 307; `LiveAdjustmentRepositoryTest` verifies adjustment exposes 307 without replaying a state-changing POST. |
 | Public-server/device result | Separate evidence | 2026-11-04 release-APK adjustment returned HTTP 200; historical intermittent 307 remains unresolved and is not a CI result. |
