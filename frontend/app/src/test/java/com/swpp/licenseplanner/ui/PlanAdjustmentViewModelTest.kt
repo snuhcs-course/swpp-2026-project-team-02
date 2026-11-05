@@ -933,11 +933,12 @@ class PlanAdjustmentViewModelTest {
             val reloadA = "/api/v1/study-plans?schedule_csv_file=license_planner%2Foutput%2Fstudy_plan_a.csv"
             assertEquals(listOf("/api/v1/schedules/adjust", reloadA, reloadA, "/api/v1/schedules/adjust"), requests.map { it.path })
             val sent = ApiJson.parseToJsonElement(requests[3].body.readUtf8()).jsonObject
-            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
+            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
             assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])
             assertEquals(ApiJson.parseToJsonElement("\"study-2\""), sent["schedule_id"])
             assertEquals(ApiJson.parseToJsonElement(rowsJson(savedA)), sent["schedules"])
             assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+            assertEquals(ApiJson.parseToJsonElement("\"2026/11/16/00/00\""), sent["exam_date"])
         } finally {
             server.shutdown()
         }

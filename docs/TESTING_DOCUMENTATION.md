@@ -99,6 +99,8 @@ It will validate that:
 | Evidence | Status | Notes |
 | --- | --- | --- |
 | CI structure and report paths | Confirmed | This document and `ci.yml` agree. |
-| Offline backend/Android fresh run at `33aae43` | Pending | Execute and record measured coverage in the next step. |
+| Offline backend fresh run | Passed — 2026-11-05 | 57 `license_planner` + 31 `schedule_adjuster` + 62 API tests; total coverage 68%. Reports: `backend/coverage-results/`. |
+| Offline Android fresh run | Passed — 2026-11-05 | `testDemoDebugUnitTest` (193 tests, 1 platform-permission skip) and `testLiveDebugUnitTest` (191 tests, 1 platform-permission skip); failures/errors 0. JaCoCo reports and both debug APKs generated. |
+| Android ↔ backend request contract | Passed — 2026-11-05 | `verify_request.py --backend-ref HEAD` passed with 5 public questions, 5 results, and 0 problems. |
 | Redirect behavior | Offline tests added | `LivePlanningRepositoryTest` verifies generation follows same-origin HTTP 307; `LiveAdjustmentRepositoryTest` verifies adjustment exposes 307 without replaying a state-changing POST. |
 | Public-server/device result | Separate evidence | 2026-11-04 release-APK adjustment returned HTTP 200; historical intermittent 307 remains unresolved and is not a CI result. |

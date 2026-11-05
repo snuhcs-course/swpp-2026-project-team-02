@@ -287,21 +287,31 @@ class PlanUpdateTests(unittest.TestCase):
         self.assertFalse(path.exists())
 
     def test_filtered_list_rejects_invalid_identifiers_without_reading_files(self):
-        link = self.root / "study_plan_20261017T120000000000+0900_abcdef12.csv"
-        link.symlink_to(self.root / self.filename)
+        link_filename = "study_plan_20261017T120000000000+0900_abcdef12.csv"
         encoded = quote(self.identifier, safe="")
         queries = ["schedule_csv_file=", "schedule_csv_file",
                    f"schedule_csv_file={encoded}&schedule_csv_file={encoded}",
                    # An unencoded '+' decodes to a space and no longer names the plan.
                    "schedule_csv_file=" + self.identifier]
         for identifier in ("../outside.csv", "/etc/passwd", "license_planner/output/../x.csv",
-                           self.filename, "license_planner/output/" + link.name):
+                           self.filename):
             queries.append("schedule_csv_file=" + quote(identifier, safe=""))
         for query in queries:
             with self.subTest(query=query):
                 (status, result), read, listed = self.call_with_file_spies("/study-plans?" + query)
                 self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
                 self.assertEqual((read, listed), ([], []))
+
+        # A selected symlink must also be rejected before a read.  Mocking the
+        # symlink attribute keeps the same boundary check testable on Windows,
+        # where creating a real file symlink requires a developer privilege.
+        link = self.root / link_filename
+        with patch.object(Path, "is_symlink", autospec=True,
+                          side_effect=lambda path: path == link):
+            query = "schedule_csv_file=" + quote("license_planner/output/" + link_filename, safe="")
+            (status, result), read, listed = self.call_with_file_spies("/study-plans?" + query)
+        self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+        self.assertEqual((read, listed), ([], []))
 
     def test_unfiltered_list_ignores_unrelated_query_parameters(self):
         other = self.store.create(self.original)

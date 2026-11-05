@@ -139,7 +139,8 @@ class ApiHttpTest {
         val sent = json(recorded[2])
         val expected = ApiJson.parseToJsonElement("""
             {"schedule_csv_file":"$file","schedule_id":"study-1","schedules":[$refreshedJson],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]}}
+             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
+             "exam_date":"2026/11/16/00/00"}
         """).jsonObject
         assertEquals(expected, sent)
     }
