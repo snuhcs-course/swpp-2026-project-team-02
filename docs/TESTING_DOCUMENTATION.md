@@ -3,7 +3,7 @@
 **Owner:** 조준우  
 **Iteration:** 3  
 **Structure confirmed:** 2026-11-05  
-**Reference revision:** `7c67a10` (`test(ci): align local reproduction with adjustment contract`)
+**Reference revision:** `b599e4f` (`test(ci): validate generated evidence reports`)
 
 This document distinguishes repeatable offline CI evidence from paid model calls,
 deployed-server checks, and physical-device runs. A passing offline CI run does not
@@ -83,6 +83,31 @@ Generated reports are:
 - `frontend/app/build/reports/coverage/test/live/debug/report.xml`
 - `frontend/app/build/reports/lint-results-*Debug.*`
 
+## Recorded execution evidence
+
+The commands above were reproduced locally on 2026-11-05 and then validated in
+GitHub Actions against the same pushed revision. The remote run is the
+authoritative CI evidence; local output is retained to make failures reproducible
+without spending model credits or requiring a device.
+
+| Execution | Revision | Result | Evidence |
+| --- | --- | --- | --- |
+| Local offline reproduction — 2026-11-05 | `7c67a10` plus the report-validator working tree | Passed | Backend: 150 tests. Android: demo 193 and live 191 tests, each with one platform-permission skip. |
+| GitHub Actions CI #48 — 2026-11-05 | [`b599e4f`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/b599e4fd74ddd23e24bae8e62bf51119eb27e205) | Passed in 3m 55s | [Run #48](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41963702935): Backend 32s, Android 3m 51s; manually dispatched from `iteration-3-scheduler`. |
+
+### Measured report summary
+
+| Report | Measured result | Interpretation |
+| --- | --- | --- |
+| Backend `coverage report` | 1,642 statements; 68% total coverage | Combined offline backend suites. Cobertura XML line rate is 70.77%; branch rate is 58.92%. |
+| Android demo JaCoCo | 1,082 / 2,326 lines | Report contains 253 `com.swpp.licenseplanner` classes. |
+| Android live JaCoCo | 1,051 / 2,294 lines | Report contains 251 `com.swpp.licenseplanner` classes. |
+| Android JUnit | demo 193, live 191; failures 0, errors 0 | One permission-dependent `AtomicFilePlanStoreTest` case is skipped in each flavor on this Windows host. The remote CI job passed. |
+
+CI #48 uploaded `backend-coverage`, `android-reports`, and `android-debug-apks` as
+artifacts. The workflow retains test/coverage artifacts for 7 days; debug APKs
+are CI evidence only and are not the evaluator's signed release APK.
+
 ## Evidence-verification script policy
 
 [`scripts/verify_test_evidence.py`](../scripts/verify_test_evidence.py) does **not** run scenario runners or duplicate
@@ -104,9 +129,10 @@ It will validate that:
 
 | Evidence | Status | Notes |
 | --- | --- | --- |
-| CI structure and report paths | Confirmed | This document and `ci.yml` agree. |
+| CI structure and report paths | Passed — CI #48 | [`ci.yml`](../.github/workflows/ci.yml) invokes the reusable report validator for both jobs. |
 | Offline backend fresh run | Passed — 2026-11-05 | 57 `license_planner` + 31 `schedule_adjuster` + 62 API tests; total coverage 68%. Reports: `backend/coverage-results/`. |
 | Offline Android fresh run | Passed — 2026-11-05 | `testDemoDebugUnitTest` (193 tests, 1 platform-permission skip) and `testLiveDebugUnitTest` (191 tests, 1 platform-permission skip); failures/errors 0. JaCoCo reports and both debug APKs generated. |
-| Android ↔ backend request contract | Passed — 2026-11-05 | `verify_request.py --backend-ref HEAD` passed with 5 public questions, 5 results, and 0 problems. |
+| Android ↔ backend request contract | Passed — CI #48 | `verify_request.py --backend-ref HEAD` ran before coverage on the GitHub-hosted checkout. |
+| Generated-report validation | Passed — CI #48 | `verify_test_evidence.py` accepted all required JUnit, JaCoCo, and backend coverage reports. |
 | Redirect behavior | Offline tests added | `LivePlanningRepositoryTest` verifies generation follows same-origin HTTP 307; `LiveAdjustmentRepositoryTest` verifies adjustment exposes 307 without replaying a state-changing POST. |
 | Public-server/device result | Separate evidence | 2026-11-04 release-APK adjustment returned HTTP 200; historical intermittent 307 remains unresolved and is not a CI result. |
