@@ -194,7 +194,16 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: cd frontend && ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain
+          script: |
+            adb -s emulator-5554 shell ping -c 1 10.0.2.2
+            adb -s emulator-5554 shell toybox wget -q -O - http://10.0.2.2:8000/api/v1/health
+            cd frontend
+            ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain
+
+      - name: Print fixed live-backend fixture log
+        if: always()
+        shell: bash
+        run: cat "$GITHUB_WORKSPACE/backend/fixed-live-e2e.log"
 
       - name: Upload Android live E2E evidence
         if: always()
