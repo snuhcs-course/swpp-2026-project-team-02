@@ -2,7 +2,15 @@
 
 HE 평가자에게 전달할 APK 링크, 설치 방법, 평가 과제, 알려진 제한입니다. 평가 과제의 입력값과 기대 결과는 `02_he_cases.md`, 실기기 검증 결과는 `03_device_verification.md`를 따릅니다.
 
-## APK
+## 현재 데모 APK 안내 (2026-11-06)
+
+아래 Google Drive APK와 10/30-31 기기 검증은 **이전 HE 버전의 기록**입니다. 현재 scheduler 서버는 공부 조정 요청에 원래 계획의 `exam_date`를 요구하며, 이 필드를 보내지 않는 이전 HE APK는 HTTP 422를 받을 수 있습니다.
+
+현재 생성→조회→조정 데모에는 [Prod APK #34](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/42028937748)의 `live-release-apk-5216f41136a01218766ff5a3e13134d12704a972` artifact에서 추출한 signed `app-live-release.apk`를 사용합니다. GitHub 접근 권한이 필요하며 artifact는 생성 후 30일 보관됩니다. [영문 실행 안내와 기준 소스](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/iteration-3-demo)를 참고하세요.
+
+현재 고정 입력은 준비 시작 2026-11-09, 시험 2026-11-30입니다. 아래 이전 과제와 원래 검증 기록의 날짜는 당시 값으로 보존합니다. 캘린더 내보내기·읽기는 이 APK에 포함되지 않습니다. 공개 Drive 배포 링크의 새 APK 교체와 최종 통합 기기 검증은 남아 있습니다.
+
+## 이전 HE APK
 
 | 항목 | 값 |
 | --- | --- |
