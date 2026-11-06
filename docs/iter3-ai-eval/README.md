@@ -143,3 +143,11 @@ python run_eval.py --base-url http://swpp26t02.147-46-242-174.sslip.io/api/v1 --
 | `cases.json` | 평가셋 37개 |
 | `build_cases.py` | 평가셋 생성 스크립트 (`python build_cases.py ../../backend/assessment_questionnaire/questions.json`) |
 | `run_eval.py` | 평가 실행·판정 스크립트 |
+
+## 10. 재현성 기록 보완 (2026-11-06)
+
+11월 4일 실행의 서버 commit은 미확인, 모델은 `unknown`이며 temperature·decoding 설정·배포 prompt 버전도 기록되지 않았습니다. 현재 소스의 기본값으로 과거 실행 값을 채울 수 없습니다. 기존 FAIL 판정과 원본 결과는 그대로 보존합니다.
+
+사전 등록은 PR #10의 원래 commit `0f38942da605780ee6e3d8eafbf7035255ae0020` (11월 4일 14:12:58 KST)의 `docs/iter3-ai-eval/cases.json`과 README 기준이며, run directory 시작은 14:16:42 KST입니다. squash commit `dbf31ef`에는 계획과 결과가 함께 들어 있으므로 사전 등록 시각은 원래 PR commit을 사용합니다.
+
+다음 실행 전 manifest에 서버 commit, 평가 runner/cases commit·hash, 실제 model/provider, temperature 및 decoding 필드(생략 시 provider default임을 명시), reasoning effort, 출력 token/agent step 한도, prompt·tool schema 버전 또는 hash, 실행 시각과 API 주소를 기록합니다. 원본 요청·응답과 회차별 결과를 함께 남깁니다. 공유 서버에는 계획 100개 보관 제한이 있으므로 별도 평가 저장 공간을 사용하거나 담당자와 보존 대상을 합의한 뒤 실행합니다. 이 문서 보완은 새 실호출이나 과거 설정 복원을 의미하지 않습니다.
