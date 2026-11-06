@@ -33,12 +33,15 @@ import com.swpp.licenseplanner.domain.Validation
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.components.AppScreen
+import com.swpp.licenseplanner.ui.components.AlertCard
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.InfoRow
 import com.swpp.licenseplanner.ui.components.InputBox
 import com.swpp.licenseplanner.ui.components.MutedBox
 import com.swpp.licenseplanner.ui.components.PrimaryButton
+import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.StepperButton
+import com.swpp.licenseplanner.ui.CalendarReadState
 import com.swpp.licenseplanner.ui.theme.Divider
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkSecondary
@@ -53,15 +56,20 @@ fun AvailabilityScreen(
     form: PlanFormState,
     generating: Boolean,
     plansSaved: Boolean,
+    calendarRead: CalendarReadState,
     onEnable: (Weekday, Boolean) -> Unit,
     onStep: (Weekday, Int) -> Unit,
     onStart: (Weekday, LocalTime) -> Unit,
     onBack: () -> Unit,
     onGenerate: () -> Unit,
+    onReadCalendar: () -> Unit,
+    onOpenCalendarSettings: () -> Unit,
 ) {
     var editingStart by rememberSaveable { mutableStateOf<Weekday?>(null) }
     val error = form.availabilityError
     val enabled = Weekday.entries.mapNotNull { day -> form.availability[day]?.takeIf { it.enabled } }
+    val readingCalendar = calendarRead == CalendarReadState.RequestingPermission ||
+        calendarRead == CalendarReadState.AwaitingPermission || calendarRead == CalendarReadState.Loading
 
     AppScreen(
         title = "공부 시간",
@@ -70,7 +78,7 @@ fun AvailabilityScreen(
             PrimaryButton(
                 text = if (generating) "계획을 만드는 중…" else "계획 만들기",
                 onClick = onGenerate,
-                enabled = error == null && !generating && plansSaved,
+                enabled = error == null && !generating && !readingCalendar && plansSaved,
                 // A new plan joins the saved list, so that list must be read and saved first.
                 subtitle = if (!generating && !plansSaved) "저장된 계획을 확인한 뒤 만들 수 있어요" else null,
             )
@@ -95,6 +103,56 @@ fun AvailabilityScreen(
             }
         }
         if (error != null) Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
+
+        Heading(
+            "휴대폰 캘린더",
+            "준비 기간의 개인 일정 시간을 읽어 공부 계획과 겹치지 않게 합니다. 일정 제목은 읽거나 전송하지 않습니다.",
+        )
+        when (calendarRead) {
+            CalendarReadState.Idle -> SecondaryButton("캘린더 일정 불러오기", onReadCalendar)
+            CalendarReadState.RequestingPermission,
+            CalendarReadState.AwaitingPermission,
+            CalendarReadState.Loading,
+            -> SecondaryButton("캘린더 일정을 읽는 중…", onReadCalendar, enabled = false)
+            is CalendarReadState.Loaded -> {
+                MutedBox {
+                    InfoRow("반영한 일정", "${calendarRead.count}개")
+                    if (calendarRead.recurringOccurrences > 0) {
+                        InfoRow("반복 일정 발생분", "${calendarRead.recurringOccurrences}개")
+                    }
+                    if (calendarRead.allDayOccurrences > 0) {
+                        InfoRow("종일 일정", "${calendarRead.allDayOccurrences}개")
+                    }
+                    Text(
+                        "반복 일정은 준비 기간의 각 발생분을, 종일 일정은 해당 날짜 전체를 바쁜 시간으로 반영합니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = InkSecondary,
+                    )
+                }
+                SecondaryButton("캘린더 일정 다시 불러오기", onReadCalendar)
+            }
+            CalendarReadState.Empty -> {
+                MutedBox {
+                    Text("준비 기간에 겹치는 캘린더 일정이 없습니다.", style = MaterialTheme.typography.bodyMedium, color = Ink)
+                }
+                SecondaryButton("캘린더 일정 다시 불러오기", onReadCalendar)
+            }
+            CalendarReadState.PermissionDenied -> {
+                AlertCard(
+                    "캘린더가 반영되지 않았어요",
+                    "캘린더 읽기 권한이 없습니다. 권한 없이 계획을 만들거나 설정에서 권한을 허용한 뒤 다시 불러올 수 있습니다.",
+                )
+                SecondaryButton("권한 다시 요청하기", onReadCalendar)
+                SecondaryButton("앱 설정 열기", onOpenCalendarSettings)
+            }
+            CalendarReadState.Unavailable -> {
+                AlertCard(
+                    "캘린더를 읽지 못했어요",
+                    "캘린더는 반영되지 않았습니다. 계획은 그대로 만들 수 있으며, 잠시 후 다시 시도할 수 있습니다.",
+                )
+                SecondaryButton("다시 시도하기", onReadCalendar)
+            }
+        }
     }
 
     editingStart?.let { day ->

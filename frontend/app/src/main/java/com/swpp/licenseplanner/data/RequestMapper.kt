@@ -57,7 +57,7 @@ object RequestMapper {
                 assessmentResults = AssessmentResults(certificationId, results),
                 studyDaysPerWeek = windows.size,
                 weeklyAvailability = windows,
-                busySchedules = emptyList(),
+                busySchedules = state.busySchedules,
             ),
         )
     }

@@ -11,10 +11,15 @@ import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.AndroidCalendarExportRepository
+import com.swpp.licenseplanner.data.AndroidCalendarReadRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
+import com.swpp.licenseplanner.data.CalendarBusySnapshot
 import com.swpp.licenseplanner.data.CalendarDestination
 import com.swpp.licenseplanner.data.CalendarExportRepository
 import com.swpp.licenseplanner.data.CalendarListOutcome
+import com.swpp.licenseplanner.data.CalendarReadOutcome
+import com.swpp.licenseplanner.data.CalendarReadRepository
+import com.swpp.licenseplanner.data.CalendarReadWindow
 import com.swpp.licenseplanner.data.CalendarWriteOutcome
 import com.swpp.licenseplanner.data.ExportNotStarted
 import com.swpp.licenseplanner.data.FlavorRepositories
@@ -30,6 +35,7 @@ import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.RequestMapper
 import com.swpp.licenseplanner.data.UnavailableCalendarExport
+import com.swpp.licenseplanner.data.UnavailableCalendarRead
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
@@ -62,6 +68,22 @@ sealed interface GenerationState {
     data class Success(val response: StudyPlanResponse, val isDemo: Boolean) : GenerationState
     data class Failure(val error: ApiError) : GenerationState
     data class DemoShortfall(val required: Int, val available: Int) : GenerationState
+}
+
+/** Reading busy occurrences from the device calendar for the current preparation period. */
+sealed interface CalendarReadState {
+    data object Idle : CalendarReadState
+    data object RequestingPermission : CalendarReadState
+    data object AwaitingPermission : CalendarReadState
+    data object Loading : CalendarReadState
+    data class Loaded(
+        val count: Int,
+        val recurringOccurrences: Int,
+        val allDayOccurrences: Int,
+    ) : CalendarReadState
+    data object Empty : CalendarReadState
+    data object PermissionDenied : CalendarReadState
+    data object Unavailable : CalendarReadState
 }
 
 /** Failed-session adjustment lifecycle. */
@@ -108,7 +130,7 @@ data class AdjustmentSelection(
  * Form inputs survive back navigation and configuration changes, not process death; the plans
  * are restored from [planStore] and saved there after each accepted change. Repositories come
  * from the build flavor, with no runtime fallback; [calendarExportRepository] writes to the device
- * calendar in both flavors.
+ * calendar and [calendarReadRepository] reads only busy times in both flavors.
  */
 class PlanFormViewModel(
     private val questionRepository: QuestionRepository,
@@ -117,6 +139,7 @@ class PlanFormViewModel(
     today: LocalDate = LocalDate.now(),
     private val planStore: LocalPlanStore,
     private val calendarExportRepository: CalendarExportRepository = UnavailableCalendarExport,
+    private val calendarReadRepository: CalendarReadRepository = UnavailableCalendarRead,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -160,16 +183,25 @@ class PlanFormViewModel(
     val calendarExport: StateFlow<CalendarExportState?> = _calendarExport.asStateFlow()
     private var nextExportId = 1
 
+    private val _calendarRead = MutableStateFlow<CalendarReadState>(CalendarReadState.Idle)
+    val calendarRead: StateFlow<CalendarReadState> = _calendarRead.asStateFlow()
+    private var calendarReadId = 0
+
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
     private val exporting get() = _calendarExport.value != null
+    private val readingCalendar get() = _calendarRead.value in setOf(
+        CalendarReadState.RequestingPermission,
+        CalendarReadState.AwaitingPermission,
+        CalendarReadState.Loading,
+    )
 
     /**
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
      * on the plan it started from.
      */
-    private val busy get() = adjusting || reloading || exporting
+    private val busy get() = adjusting || reloading || exporting || readingCalendar
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -179,8 +211,8 @@ class PlanFormViewModel(
     }
 
     fun selectCertification(id: String) = edit { it.copy(certificationId = id) }
-    fun setPreparationStart(date: LocalDate) = edit { it.copy(preparationStart = date) }
-    fun setExamDate(date: LocalDate) = edit { it.copy(examDate = date) }
+    fun setPreparationStart(date: LocalDate) = editDates { it.copy(preparationStart = date) }
+    fun setExamDate(date: LocalDate) = editDates { it.copy(examDate = date) }
     fun setLevel(level: CurrentLevel) = edit { it.copy(level = level) }
 
     fun answer(questionId: Int, choiceKey: String) = edit { state ->
@@ -196,6 +228,76 @@ class PlanFormViewModel(
         val minutes = (it.durationMinutes + steps * DayAvailability.STEP_MINUTES)
             .coerceIn(DayAvailability.MIN_DURATION_MINUTES, DayAvailability.MAX_DURATION_MINUTES)
         it.copy(durationMinutes = minutes)
+    }
+
+    /** Starts an explicit device-calendar import. No calendar is read before this action. */
+    fun startCalendarRead(): Boolean {
+        val examDate = _form.value.examDate ?: return false
+        if (generating || busy || !examDate.isAfter(_form.value.preparationStart)) return false
+        clearBusySchedules()
+        calendarReadId += 1
+        _calendarRead.value = CalendarReadState.RequestingPermission
+        return true
+    }
+
+    /** Marks the Android permission prompt as launched, preventing a duplicate prompt on recomposition. */
+    fun calendarReadPermissionPrompted(): Boolean {
+        if (_calendarRead.value != CalendarReadState.RequestingPermission) return false
+        _calendarRead.value = CalendarReadState.AwaitingPermission
+        return true
+    }
+
+    /** Continues the import after Android resolves READ_CALENDAR permission. */
+    fun onCalendarReadPermission(granted: Boolean) {
+        if (_calendarRead.value !in setOf(CalendarReadState.RequestingPermission, CalendarReadState.AwaitingPermission)) return
+        if (!granted) {
+            clearBusySchedules()
+            _calendarRead.value = CalendarReadState.PermissionDenied
+            return
+        }
+        val form = _form.value
+        val examDate = form.examDate
+        if (examDate == null || !examDate.isAfter(form.preparationStart)) {
+            _calendarRead.value = CalendarReadState.Unavailable
+            return
+        }
+        val requestId = calendarReadId
+        val window = CalendarReadWindow(form.preparationStart, examDate)
+        _calendarRead.value = CalendarReadState.Loading
+        viewModelScope.launch {
+            val outcome = calendarReadRepository.read(window)
+            if (requestId != calendarReadId || _form.value.preparationStart != window.start || _form.value.examDate != window.endExclusive) {
+                return@launch
+            }
+            when (outcome) {
+                is CalendarReadOutcome.Loaded -> acceptBusySchedules(outcome.snapshot)
+                CalendarReadOutcome.PermissionMissing -> {
+                    clearBusySchedules()
+                    _calendarRead.value = CalendarReadState.PermissionDenied
+                }
+                CalendarReadOutcome.Unavailable -> {
+                    clearBusySchedules()
+                    _calendarRead.value = CalendarReadState.Unavailable
+                }
+            }
+        }
+    }
+
+    private fun acceptBusySchedules(snapshot: CalendarBusySnapshot) {
+        edit { it.copy(busySchedules = snapshot.schedules) }
+        _calendarRead.value = if (snapshot.schedules.isEmpty()) {
+            CalendarReadState.Empty
+        } else {
+            CalendarReadState.Loaded(
+                snapshot.schedules.size,
+                snapshot.recurringOccurrences,
+                snapshot.allDayOccurrences,
+            )
+        }
+    }
+
+    private fun clearBusySchedules() {
+        edit { if (it.busySchedules.isEmpty()) it else it.copy(busySchedules = emptyList()) }
     }
 
     /**
@@ -542,6 +644,16 @@ class PlanFormViewModel(
         }
     }
 
+    private fun editDates(transform: (PlanFormState) -> PlanFormState) {
+        val before = _form.value
+        val changed = transform(before)
+        if (changed == before) return
+        edit { changed.copy(busySchedules = emptyList()) }
+        if (_form.value == before) return
+        calendarReadId += 1
+        _calendarRead.value = CalendarReadState.Idle
+    }
+
     private fun editDay(day: Weekday, transform: (DayAvailability) -> DayAvailability) = edit { state ->
         val current = state.availability[day] ?: DayAvailability()
         state.copy(availability = state.availability + (day to transform(current)))
@@ -561,6 +673,7 @@ class PlanFormViewModel(
                         PlanStorageScope.of(BuildConfig.DEMO_MODE, BuildConfig.API_BASE_URL),
                     ),
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
+                    calendarReadRepository = AndroidCalendarReadRepository.create(application),
                 )
             }
         }

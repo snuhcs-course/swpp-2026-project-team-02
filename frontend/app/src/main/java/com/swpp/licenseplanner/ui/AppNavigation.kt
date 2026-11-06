@@ -69,9 +69,13 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
 }
 
 private val calendarPermissions = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+private val calendarReadPermission = Manifest.permission.READ_CALENDAR
 
 private fun hasCalendarAccess(context: Context) =
     calendarPermissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+
+private fun hasCalendarReadAccess(context: Context) =
+    ContextCompat.checkSelfPermission(context, calendarReadPermission) == PackageManager.PERMISSION_GRANTED
 
 private fun openAppSettings(context: Context) {
     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
@@ -102,17 +106,27 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
+    val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     // The answer arrives here also after rotation; access is read again rather than taken from the result.
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+    val exportPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         viewModel.onCalendarPermission(hasCalendarAccess(context))
+    }
+    val readPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onCalendarReadPermission(hasCalendarReadAccess(context))
     }
     val requestingPermission = calendarExport?.phase == CalendarExportPhase.RequestingPermission
     LaunchedEffect(requestingPermission) {
         if (!requestingPermission) return@LaunchedEffect
         if (hasCalendarAccess(context)) viewModel.onCalendarPermission(true)
-        else if (viewModel.calendarPermissionPrompted()) permissionLauncher.launch(calendarPermissions)
+        else if (viewModel.calendarPermissionPrompted()) exportPermissionLauncher.launch(calendarPermissions)
+    }
+    val requestingReadPermission = calendarRead == CalendarReadState.RequestingPermission
+    LaunchedEffect(requestingReadPermission) {
+        if (!requestingReadPermission) return@LaunchedEffect
+        if (hasCalendarReadAccess(context)) viewModel.onCalendarReadPermission(true)
+        else if (viewModel.calendarReadPermissionPrompted()) readPermissionLauncher.launch(calendarReadPermission)
     }
     calendarExport?.let { state ->
         CalendarExportDialog(
@@ -214,11 +228,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 form = form,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
+                calendarRead = calendarRead,
                 onEnable = viewModel::setDayEnabled,
                 onStep = viewModel::stepDuration,
                 onStart = viewModel::setDayStart,
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
+                onReadCalendar = { viewModel.startCalendarRead() },
+                onOpenCalendarSettings = { openAppSettings(context) },
             )
         }
         // Each result destination collects the flow itself, so its first frame sees the
