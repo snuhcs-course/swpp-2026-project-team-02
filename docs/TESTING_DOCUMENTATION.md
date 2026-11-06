@@ -3,7 +3,7 @@
 **Owner:** 조준우  
 **Iteration:** 3  
 **Structure confirmed:** 2026-11-05  
-**Reference revision:** `e95db19` (`fix(ci): run E2E on compatible API 35 image`)
+**Reference revision:** `5216f41` (`docs(testing): record Android live E2E CI evidence`)
 
 This document distinguishes repeatable offline CI evidence from paid model calls,
 deployed-server checks, and physical-device runs. A passing offline CI run does not
@@ -97,6 +97,7 @@ without spending model credits or requiring a device.
 | Local offline reproduction — 2026-11-05 | `7c67a10` plus the report-validator working tree | Passed | Backend: 150 tests. Android: demo 193 and live 191 tests, each with one platform-permission skip. |
 | GitHub Actions CI #48 — 2026-11-05 | [`b599e4f`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/b599e4fd74ddd23e24bae8e62bf51119eb27e205) | Passed in 3m 55s | [Run #48](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/41963702935): Backend 32s, Android 3m 51s; manually dispatched from `iteration-3-scheduler`. |
 | GitHub Actions CI #57 — 2026-11-05 | [`e95db19`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/e95db19) | Passed in 21m 25s | [Run #57](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/42013613486): Backend 34s, Android 4m 39s, Android live E2E 21m 22s. All three jobs passed; the E2E artifact contains the fixture log and connected-test report. |
+| GitHub Actions CI #58 — 2026-11-05 | [`5216f41`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/5216f41136a01218766ff5a3e13134d12704a972) | Passed | [Run #58](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/42028945104): documentation revision regression check. |
 
 ### Measured report summary
 
@@ -178,4 +179,38 @@ deployment evidence.
 | Generated-report validation | Passed — CI #57 | `verify_test_evidence.py` accepted all required JUnit, JaCoCo, and backend coverage reports. |
 | Android live ↔ fixed backend E2E | Passed locally and in CI #57 — 2026-11-05 | `connectedLiveDebugAndroidTest` executed `LiveBackendE2eTest`: question GET → plan POST → persisted-plan GET; local `Medium_Phone`: 1 test, 0 failures, 0 skipped; CI API 35 emulator: job passed and uploaded `android-live-e2e-evidence`. |
 | Redirect behavior | Offline tests added | `LivePlanningRepositoryTest` verifies generation follows same-origin HTTP 307; `LiveAdjustmentRepositoryTest` verifies adjustment exposes 307 without replaying a state-changing POST. |
-| Public-server/device result | Separate evidence | 2026-11-04 release-APK adjustment returned HTTP 200; historical intermittent 307 remains unresolved and is not a CI result. |
+| Public-server/current signed APK result | Passed on Android emulator — 2026-11-06 | See the separate live-deployment record below. This is not fixed-fixture CI coverage. |
+
+## Public deployment and signed-APK verification — 2026-11-06
+
+This run is deliberately recorded separately from CI. It used the current signed
+`liveRelease` artifact produced by [Prod APK run #34](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/42028937748), source revision
+[`5216f41`](https://github.com/snuhcs-course/swpp-2026-project-team-02/commit/5216f41136a01218766ff5a3e13134d12704a972), and the public CPU-server API:
+
+```text
+http://swpp26t02.147-46-242-174.sslip.io/api/v1
+```
+
+The public health endpoint returned `{"status":"ok"}`. The server was running the
+same `iteration-3-scheduler` revision and used its server-local OpenRouter
+configuration; no API key was put into the APK, CI secrets, or this record.
+
+| Manual live check | Result | Evidence |
+| --- | --- | --- |
+| Plan generation | Passed | A 컴퓨터활용능력 2급 plan for 2026-11-06 to 2026-11-13 was created and displayed. |
+| Persisted-plan lookup after app relaunch | Passed | The generated plan was re-opened with the same 11/9 18:00–20:30 entries. |
+| Deadline-bounded adjustment | Passed | When no continuation could fit before the 2026-11-13 exam, the app kept the selected entry unchanged and explained that study time before the exam was insufficient. |
+| Persisted adjusted-plan lookup after app relaunch | Passed | The adjusted plan was re-opened with the saved 11/9 20:00–21:30 entries. |
+
+The supporting screenshots are versioned under
+[`docs/images/iter3-live/`](images/iter3-live/):
+
+1. [`01-plan-created-and-reopened.png`](images/iter3-live/01-plan-created-and-reopened.png)
+2. [`02-adjustment-selection.png`](images/iter3-live/02-adjustment-selection.png)
+3. [`03-not-enough-time-before-exam.png`](images/iter3-live/03-not-enough-time-before-exam.png)
+4. [`04-adjusted-plan-reopened.png`](images/iter3-live/04-adjusted-plan-reopened.png)
+
+This is an emulator validation of the signed release connected to the public
+server, not a claim of physical-device compatibility. The historical intermittent
+HTTP 307 adjustment report remains a separate unresolved observation; it was not
+reproduced or declared fixed by this execution.

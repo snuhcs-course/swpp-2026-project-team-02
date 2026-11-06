@@ -110,3 +110,18 @@ python -m scenarios.run_license_planner_availability_test_cases
 
 The second command writes ignored, local traces beneath
 `scenarios/results/license_planner_availability/`; it does not call a model.
+
+## 2026-11-06 live verification record
+
+The signed `liveRelease` APK built from `5216f41` was exercised against the
+public CPU-server API. A plan with a 2026-11-13 exam date was generated and
+re-opened after app relaunch. For a missed-session adjustment that could not be
+placed before that date, the API returned the intended insufficient-time outcome:
+the app preserved the selected entry and showed Korean recovery guidance instead
+of placing study after the exam. A saved adjusted plan was also re-opened after
+app relaunch.
+
+This confirms the P30 deadline boundary on the public integration path. It does
+not cover P29 calendar-provider reading, runtime permission handling, recurrence
+expansion, or physical-device compatibility. Supporting screenshots and exact APK
+provenance are in [Testing Documentation](TESTING_DOCUMENTATION.md#public-deployment-and-signed-apk-verification--2026-11-06).
