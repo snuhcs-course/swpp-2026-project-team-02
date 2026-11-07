@@ -620,12 +620,28 @@ the existing serialized Android request contract check against this backend.
 The instrumentation APK was compiled; its device tests were not executed in
 this integration run. APK v2 signature and the packaged public API URL were
 verified. The server health endpoint returned HTTP 200; this does not identify
-the deployed backend revision. Confirm the server runs the P30 backend before
-recording physical-device results.
+the deployed backend revision.
 
-On the device, import calendar events during plan creation and check permission
-denial/retry, an empty calendar, recurring occurrences and all-day events. Verify
-that generated study avoids imported events, then reopen and adjust the saved
-plan within its original availability and exam deadline. Adjustment uses the
-saved plan's external-event snapshot; refreshing calendar events for an existing
-plan is not implemented by this integration. Export remains a one-way copy.
+### Physical-device result (2026-11-07 KST)
+
+The signed device-test APK was installed on a Galaxy S24+ (SM-S926N, Android
+14) and connected to the public `.174` API. During plan creation, the app read
+two timed calendar events and one all-day event. The generated study rows did
+not overlap the timed events, and no study row was placed on the all-day-event
+date. This verifies the P29 → P30 initial-generation path: calendar events are
+sent as `busy_schedules` and the planner avoids them.
+
+The following recovery and boundary behaviors were also checked on that device:
+
+- Denying calendar-read permission shows Korean guidance with permission retry
+  and app-settings actions; a plan can still be generated without calendar data.
+- When no eligible study slot remains before the exam deadline, the app explains
+  the shortage and preserves the stored plan.
+- Calendar export was verified as a one-way copy to the device calendar.
+
+This is one device/API run, not broad compatibility or reliability coverage.
+Recurring-event and empty-calendar cases were not included in this run.
+Adjustment uses the saved plan's external-event snapshot; refreshing calendar
+events after a plan has been saved, detecting all newly conflicting study rows,
+and automatically rescheduling only those rows (US-C9 confirmation B) are not
+implemented by this integration. Export remains a one-way copy.
