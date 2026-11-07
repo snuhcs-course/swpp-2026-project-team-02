@@ -71,6 +71,33 @@ the job succeeds; both are kept 7 days. No minimum coverage is enforced.
 Gradle may report test tasks as `UP-TO-DATE` and skip them when nothing
 changed; CI starts from a fresh checkout, so its tests always run.
 
+### Live instrumentation test
+
+`app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` is the only
+instrumentation test. It sits in the live flavor's source set, so only
+`connectedLiveDebugAndroidTest` runs it; demo instrumentation has no tests and
+contacts no server. It loads the questions, generates a plan, adjusts one study
+session, checks that the whole moved session ends by the plan's exam date and
+that no other row changed, and reads the plan back by its exact identity. The
+backend is `backend/test_support/fixed_live_e2e_server.py`: the real API
+handler, scheduler, adjustment loop and plan store with fixed model replies and
+no OpenRouter access (see `backend/README.md`). Without that server the test
+fails rather than skipping. Use a disposable emulator:
+
+```bash
+# from backend/
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+# in another terminal
+adb -s <test-device> reverse tcp:8000 tcp:8000
+# from frontend/: live only, or the aggregate (demo has no instrumentation tests)
+bash ./gradlew --no-daemon connectedLiveDebugAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
+bash ./gradlew --no-daemon connectedAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
+```
+
+CI's `android-live-e2e` job runs the live command the same way on an API 35
+emulator. This is controlled integration evidence, not evidence about the
+model or the deployed server.
+
 ## Flavors
 
 | Flavor | Needs backend | Questions | Plans | Adjustment |
@@ -170,6 +197,7 @@ that recognizes only exact backend messages or tightly anchored patterns:
 | A weekday window with a bad time, reversed order, or overlap | The weekday in Korean (for example 수요일) and the problem |
 | `NOT_ENOUGH_TIME:` with a current backend capacity sentence | 시험일 전까지 공부할 시간이 부족해요, plus the usable minutes and topic count. A zero-minute early check gives no topic count. |
 | `NOT_ENOUGH_TIME:` with any other text | The same headline without numbers |
+| Exactly `This saved plan has no stored exam date. Create a new plan before adjusting study sessions.` | 이 계획에는 시험일 정보가 저장되어 있지 않아요. / 목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요. |
 | Assessment-results payload checks | 답안 정보를 서버에서 처리하지 못했어요, with a note that it does not mean a wrong answer |
 | Anything else, including blank, technical, or path/trace text | 요청 정보를 확인하지 못했어요 |
 
@@ -318,11 +346,11 @@ allows a new attempt, and 목록으로 and 새 계획 만들기 are offered. The
 own windows never change; a new plan can use different study times. Nothing is
 sent to a server; the moved rows are saved on the device like any other change.
 
-**Live contract.** The app always sends four fields to
+**Live contract.** The app always sends five fields to
 `POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from
 generation, the chosen `schedule_id`, every current row (external rows
-included), and the `weekly_availability` from that plan's original creation
-request (not the current form):
+included), and the `weekly_availability` and `exam_date` from that plan's
+original creation request (not the current form or another plan):
 
 ```json
 {
@@ -332,9 +360,26 @@ request (not the current form):
     {"schedule_id": "study-1", "start_date": "2026/10/19/18/00", "end_date": "2026/10/19/19/00", "topic": "함수와 데이터 관리"},
     {"schedule_id": "external-1", "start_date": "2026/10/22/18/00", "end_date": "2026/10/22/19/00", "topic": ""}
   ],
-  "weekly_availability": {"monday": [{"start": "18:00", "end": "20:00"}]}
+  "weekly_availability": {"monday": [{"start": "18:00", "end": "20:00"}]},
+  "exam_date": "2026/11/16/00/00"
 }
 ```
+
+The backend in this checkout stores each new plan's exam timestamp when it
+generates the plan and always uses that stored value for study adjustment. The
+`exam_date` the app sends must equal it; a different value returns 422. Other
+API clients may omit `exam_date` for such plans, so earlier app releases that
+send only the first four fields can still adjust newly generated plans. A plan
+saved before the server stored exam dates cannot have its study sessions
+moved, even though the app sends a date: the server answers 422 with the fixed
+message in [Validation errors](#validation-errors). The current app then shows
+이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새 계획을 만든 뒤
+다시 조정해 주세요. in the existing error panel. Every plan, its rows, the
+selection and the original inputs stay as they were, and nothing is sent
+automatically. 다시 시도 follows the usual rules and gets the same answer;
+목록으로 and then 새 계획 만들기 is the way forward. Old plans stay viewable.
+Earlier app releases do not know this message and show the general
+요청 정보를 확인하지 못했어요 instead; only an app update changes that.
 
 The app accepts a 200 response only if `action` is `rescheduled_study`,
 `target_schedule_id` matches, rows parse with end after start, IDs are
@@ -343,7 +388,8 @@ nonblank and unique, the target row is present, and any returned
 The app never sends the availability profile (`PUT /availability`).
 
 **Backend dependency** The backend in this checkout (merged from `main` at
-`11c822e`) updates the selected plan file before it returns success. It uses
+`11c822e`, plus the stored exam deadline described above) updates the selected
+plan file before it returns success and keeps the plan's stored exam date. It uses
 supplied valid availability instead of the saved profile; omission keeps the
 saved-profile fallback. Explicit null, invalid or all-empty windows return 422
 without changing the plan or profile. Android always sends the selected plan's
@@ -500,10 +546,24 @@ unit-test fixture), plan generation, adjustment and the plan list.
 Generation returns plan A first and plan B second (then A, B again). Both use
 generated-plan identities, B has the same study IDs as A, A has a long quoted
 topic and external rows, and a third stored plan C is never generated, so it
-must never appear in the app. Unscripted adjustments behave like the backend:
-404 `PLAN_NOT_FOUND` for an unknown file, 409 `PLAN_CONFLICT` when the sent
-rows differ from the stored ones, otherwise the chosen study row moves 7 days
-later and is saved.
+must never appear in the app. Generation records the `exam_date` the app sent
+for the returned plan. An unscripted adjustment answers 404 `PLAN_NOT_FOUND`
+for an unknown file, 422 unless the body has exactly the current app's five
+fields (`schedule_csv_file`, `schedule_id`, `schedules`, `weekly_availability`,
+`exam_date`), 409 `PLAN_CONFLICT` when the sent rows differ from the stored
+ones, and 422 when `exam_date` is missing, null, malformed, or differs from the
+recorded one. Otherwise the chosen study row moves 7 days later and is saved,
+unless the moved session would end after the recorded exam date: then it
+answers 422 `NOT_ENOUGH_TIME` and saves nothing. A plan this server process
+did not generate has no recorded exam date and gets the backend's fixed
+recreation message, so generate plans again after restarting the server.
+
+This is a simulation for app serialization and error handling. The fixed 7-day
+move is not the backend's scheduler, and the strict five-field check is
+stricter than the backend, which accepts an omitted `exam_date` for plans with
+a stored deadline. Neither its successes nor its rejections are evidence about
+production scheduling; the backend's deadline rules are tested against the
+real handler with `backend/test_support/fixed_live_e2e_server.py`.
 
 | `--scenario` | Scripted behavior |
 | --- | --- |
@@ -516,6 +576,7 @@ later and is saved.
 | `timeout-without-save` | First adjustment saves nothing, withholds for 125 s, then closes without a response |
 | `invalid-readback` | First adjustment 409; list reads 1–4 are malformed JSON, no `plans`, duplicate row IDs, A listed twice; then valid |
 | `readback-missing` | First adjustment 409 and A disappears; the list holds B, C and a similarly named plan |
+| `legacy-plan` | Generated plans count as saved before exam dates were stored: every study adjustment gets 422 with the fixed recreation message, and nothing is saved |
 
 ```bash
 # from frontend/: build a live APK for the server, start it, install
@@ -544,14 +605,23 @@ between actions (each tap within about 5 s of the previous result):
   POST 200, and the last POST carries the reloaded rows and A's original
   windows.
 - `normal`: generate a plan, adjust a session, then adjust another one right
-  away; both POSTs return 200.
+  away; both POSTs return 200. Choose an exam date at least a week after the
+  chosen session, or the simulated move is refused with `NOT_ENOUGH_TIME`.
+- `legacy-plan`: create A and B, open A and adjust a study session. The error
+  panel shows 이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새
+  계획을 만든 뒤 다시 조정해 주세요.; A and B keep their rows, the session stays
+  selected, and `requests.jsonl` shows a single POST with no automatic GET or
+  generation. 목록으로 and then 새 계획 만들기 continue from there.
 
 These checks show how the app handles the scripted responses. They are not
 evidence about the real backend or model.
 
-Passing CI (unit tests, contract check, coverage, build, and lint) is offline
-evidence only. It does not run the backend server, live model planning, an emulator,
-or the UI; those still need the manual live and emulator checks above.
+Passing CI's unit tests, contract check, coverage, build, and lint is offline
+evidence only. CI's separate live E2E job runs the
+[live instrumentation test](#live-instrumentation-test) on an emulator against
+the fixed-response backend fixture; it does not run live model planning, the
+deployed server, or the UI screens. Those still need the manual live and
+emulator checks above.
 
 ## Evaluation inputs
 

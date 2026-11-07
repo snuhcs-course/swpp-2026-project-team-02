@@ -62,8 +62,10 @@ def validate_backend(root: Path, errors: list[EvidenceError]) -> dict[str, objec
     classes = [node.get("filename", "") for node in report.iter("class")]
     if lines <= 0:
         errors.append(EvidenceError(xml_path, "coverage has no production-source line denominator"))
-    if not any(Path(filename).name == "api_server.py" for filename in classes):
-        errors.append(EvidenceError(xml_path, "coverage does not include api_server.py"))
+    # .coveragerc reports paths relative to backend/, so the production entry
+    # point is exactly "api_server.py"; a nested file with that name is not it.
+    if "api_server.py" not in classes:
+        errors.append(EvidenceError(xml_path, "coverage does not include the top-level api_server.py"))
     return {
         "classes": len(classes),
         "lines_valid": lines,

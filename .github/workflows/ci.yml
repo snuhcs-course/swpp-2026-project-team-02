@@ -63,6 +63,10 @@ jobs:
           python -m coverage xml
           python -m coverage html
 
+      - name: Evidence validator unit tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s ../scripts/tests -v
+
       - name: Validate coverage reports
         run: python ../scripts/verify_test_evidence.py --repo-root .. --scope backend
 
@@ -150,6 +154,8 @@ jobs:
 
   android-live-e2e:
     name: Android live E2E
+    # Boot the emulator only after the quicker backend and Android checks succeed.
+    needs: [backend, android]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -188,7 +194,7 @@ jobs:
           exit 1
 
       - name: Run Android live E2E on emulator
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           # API 35 is recognized as a compatible device by this project's
           # Android Gradle Plugin and live debug variant.

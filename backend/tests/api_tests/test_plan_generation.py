@@ -140,9 +140,12 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual(self.replies, [])
                 self.assertEqual(len(body["tool_calls"]), 6)
                 self.assertTrue(body["agent_summary"])
-                saved = self.saved_files()
-                self.assertEqual(saved, [Path(body["schedule_csv_file"]).name])
-                stored = (self.store / saved[0]).read_text(encoding="utf-8")
+                csv_name = Path(body["schedule_csv_file"]).name
+                metadata_name = Path(csv_name).stem + ".meta.json"
+                self.assertEqual(self.saved_files(), sorted([csv_name, metadata_name]))
+                self.assertEqual(json.loads((self.store / metadata_name).read_text(encoding="utf-8")),
+                                 {"exam_date": recorded["request"]["exam_date"]})
+                stored = (self.store / csv_name).read_text(encoding="utf-8")
                 self.assertEqual(stored, body["schedule_csv"])
                 self.assertEqual(list(csv.DictReader(io.StringIO(stored))), body["schedules"])
                 external = {f"external-{row['schedule_id']}" for row in recorded["request"]["busy_schedules"]}
@@ -209,6 +212,23 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "INVALID_INPUT")
         self.assertIn("NOT_ENOUGH_TIME", body["error"]["message"])
         self.assertEqual(self.model_requests, 0)
+        self.assertEqual(self.saved_files(), [])
+
+    def test_unsaved_exam_metadata_returns_storage_error_without_a_plan(self):
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        self.script(recorded)
+        real_replace = os.replace
+
+        def fail_metadata(source, target):
+            if str(target).endswith(".meta.json"):
+                raise PermissionError("locked")
+            return real_replace(source, target)
+
+        with patch("study_plan_store.os.replace", fail_metadata):
+            status, body = self.post(recorded["request"])
+
+        self.assertEqual((status, body["error"]["code"]), (500, "STORAGE_ERROR"))
+        self.assertFalse(SUCCESS_FIELDS & body.keys())
         self.assertEqual(self.saved_files(), [])
 
     def test_upstream_and_repeated_failures_are_not_reported_as_infeasible(self):

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from schedule_adjuster.csv_io import parse_schedule_csv, render_schedule_csv
 from schedule_adjuster.availability import parse_weekly_availability
 from schedule_adjuster.models import AdjustmentRequest
+from schedule_adjuster.schedule_logic import move_study_entry
 from schedule_adjuster.tools import ScheduleAdjustmentTools, tool_schemas
 
 
@@ -15,6 +16,71 @@ external-13,2026/10/10/10/00,2026/10/10/12/00,
 external-14,2026/10/05/20/00,2026/10/05/21/00,
 external-15,2026/10/08/20/00,2026/10/08/21/00,
 """
+
+
+class ExamDeadlineTests(unittest.TestCase):
+    """A moved study session must end by the exam date on both search paths."""
+
+    def setUp(self):
+        self.entries = parse_schedule_csv(SAMPLE_CSV)
+
+    def assert_only_target_moved(self, moved, target_id, start, end):
+        before = {entry.schedule_id: entry for entry in self.entries}
+        after = {entry.schedule_id: entry for entry in moved}
+        self.assertEqual(after.keys(), before.keys())
+        self.assertEqual((after[target_id].start_datetime, after[target_id].end_datetime), (start, end))
+        self.assertEqual(after[target_id].topic, before[target_id].topic)
+        self.assertEqual({k: v for k, v in after.items() if k != target_id},
+                         {k: v for k, v in before.items() if k != target_id})
+
+    def assert_not_enough_time(self, *args):
+        with self.assertRaisesRegex(ValueError, "^NOT_ENOUGH_TIME:"):
+            move_study_entry(*args)
+
+    def test_conflict_only_slot_may_end_exactly_at_exam(self):
+        moved = move_study_entry(self.entries, "study-11", None, datetime(2026, 10, 5, 22, 0))
+        self.assert_only_target_moved(moved, "study-11", datetime(2026, 10, 5, 21, 0), datetime(2026, 10, 5, 22, 0))
+
+    def test_conflict_only_overrun_is_rejected(self):
+        self.assert_not_enough_time(self.entries, "study-11", None, datetime(2026, 10, 5, 21, 59))
+
+    def test_conflict_chain_past_exam_terminates(self):
+        rows = ["schedule_id,start_date,end_date,topic", "study-1,2026/10/05/09/00,2026/10/05/10/00,Charts"]
+        rows += [f"external-{hour},2026/10/05/{hour:02d}/00,2026/10/05/{hour + 1:02d}/00,"
+                 for hour in range(10, 22)]
+        entries = parse_schedule_csv("\n".join(rows) + "\n")
+        self.assert_not_enough_time(entries, "study-1", None, datetime(2026, 10, 5, 15, 30))
+
+    def test_same_topic_order_applies_before_the_exam_bound(self):
+        entries = parse_schedule_csv("""schedule_id,start_date,end_date,topic
+study-30,2026/10/01/09/00,2026/10/01/10/00,Charts
+study-31,2026/10/01/12/00,2026/10/01/13/00,Charts
+study-32,2026/10/01/14/00,2026/10/01/15/00,Functions
+""")
+        moved = move_study_entry(entries, "study-30", None, datetime(2026, 10, 1, 14, 0))
+        self.assertEqual(next(e for e in moved if e.schedule_id == "study-30").start_datetime,
+                         datetime(2026, 10, 1, 13, 0))
+        self.assert_not_enough_time(entries, "study-30", None, datetime(2026, 10, 1, 13, 59))
+
+    def test_availability_slot_may_end_exactly_at_exam(self):
+        availability = parse_weekly_availability({"monday": [{"start": "18:00", "end": "23:00"}]})
+        moved = move_study_entry(self.entries, "study-11", availability, datetime(2026, 10, 5, 22, 0))
+        self.assert_only_target_moved(moved, "study-11", datetime(2026, 10, 5, 21, 0), datetime(2026, 10, 5, 22, 0))
+
+    def test_availability_window_crossing_exam_is_rejected(self):
+        availability = parse_weekly_availability({"monday": [{"start": "21:30", "end": "23:00"}]})
+        self.assert_not_enough_time(self.entries, "study-11", availability, datetime(2026, 10, 5, 22, 0))
+
+    def test_availability_exhausted_before_exam_on_a_later_day(self):
+        availability = parse_weekly_availability({"wednesday": [{"start": "09:00", "end": "10:00"}]})
+        self.assert_not_enough_time(self.entries, "study-11", availability, datetime(2026, 10, 7, 9, 30))
+        moved = move_study_entry(self.entries, "study-11", availability, datetime(2026, 10, 7, 10, 0))
+        self.assert_only_target_moved(moved, "study-11", datetime(2026, 10, 7, 9, 0), datetime(2026, 10, 7, 10, 0))
+
+    def test_too_short_windows_still_report_no_availability(self):
+        availability = parse_weekly_availability({"wednesday": [{"start": "10:00", "end": "11:00"}]})
+        with self.assertRaisesRegex(ValueError, "^NO_AVAILABILITY_WINDOW:"):
+            move_study_entry(self.entries, "study-12", availability, datetime(2026, 10, 8, 18, 0))
 
 
 class CsvAdjustmentTests(unittest.TestCase):

@@ -20,6 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDate
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
@@ -27,12 +28,15 @@ import java.util.concurrent.TimeUnit
 class LiveAdjustmentRepositoryTest {
     private lateinit var server: MockWebServer
 
-    private fun requestFor(availability: Map<Weekday, DayAvailability>): StudyPlanRequest =
-        (RequestMapper.map(TestFixtures.completeState(availability = availability)) as MappingResult.Ready).request
+    private fun requestFor(availability: Map<Weekday, DayAvailability>, exam: LocalDate = LocalDate.of(2026, 11, 16)): StudyPlanRequest =
+        (RequestMapper.map(TestFixtures.completeState(availability = availability, exam = exam)) as MappingResult.Ready).request
 
-    /** Plan A was created with Monday windows; the form later moved to B's Wednesday windows. */
+    /** Plan A was created with Monday windows; the form later moved to B's Wednesday windows and exam date. */
     private val originalA = requestFor(defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120)))
-    private val formB = requestFor(defaultAvailability() + (Weekday.WEDNESDAY to DayAvailability(true, LocalTime.of(9, 0), 60)))
+    private val formB = requestFor(
+        defaultAvailability() + (Weekday.WEDNESDAY to DayAvailability(true, LocalTime.of(9, 0), 60)),
+        LocalDate.of(2026, 12, 14),
+    )
 
     private val file = "license_planner/output/study_plan_20261016T180000000000+0900_abcdef12.csv"
     private val rows = listOf(
@@ -82,8 +86,10 @@ class LiveAdjustmentRepositoryTest {
              "exam_date":"${originalA.examDate}"}
         """).jsonObject
         assertEquals(expected, sent)
-        // A's windows, not the edited form's.
+        // A's windows and exam date, not the edited form's.
         assertTrue(formB.weeklyAvailability != originalA.weeklyAvailability)
+        assertEquals("2026/11/16/00/00", originalA.examDate)
+        assertTrue(formB.examDate != originalA.examDate)
         assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
     }
 

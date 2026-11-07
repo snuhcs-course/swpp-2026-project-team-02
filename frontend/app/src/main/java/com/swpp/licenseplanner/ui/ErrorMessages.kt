@@ -55,6 +55,7 @@ private enum class InputAdvice { EditForm, NewPlan }
  */
 private fun invalidInputMessage(message: String?, advice: InputAdvice): String {
     val text = message?.trim().orEmpty()
+    if (text == NO_STORED_EXAM_DATE) return NO_STORED_EXAM_DATE_MESSAGE
     if (text.startsWith(NOT_ENOUGH_TIME_CODE)) {
         return capacityMessage(text.removePrefix(NOT_ENOUGH_TIME_CODE).trim(), advice)
     }
@@ -111,6 +112,12 @@ private fun InputAdvice.fix(editForm: String, newPlan: String): String = when (t
 }
 
 private const val NOT_ENOUGH_TIME_CODE = "NOT_ENOUGH_TIME:"
+
+/** A saved plan created before the server stored exam dates can no longer move study sessions. */
+private const val NO_STORED_EXAM_DATE =
+    "This saved plan has no stored exam date. Create a new plan before adjusting study sessions."
+private const val NO_STORED_EXAM_DATE_MESSAGE =
+    "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요."
 private const val FALLBACK_MESSAGE = "요청 정보를 확인하지 못했어요."
 private const val PLAN_NOT_FOUND_MESSAGE =
     "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."
