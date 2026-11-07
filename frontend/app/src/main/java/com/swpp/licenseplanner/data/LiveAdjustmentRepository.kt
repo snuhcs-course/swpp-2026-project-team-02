@@ -14,7 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
 /**
- * `POST <base>/schedules/adjust` with a four-field body, and
+ * `POST <base>/schedules/adjust` with the stored creation windows and exam time, and
  * `GET <base>/study-plans?schedule_csv_file=<identity>` to read one plan back. Responses are validated before the caller touches its plan; failures are
  * returned as-is, with no retry and no demo fallback. Success does not prove the server saved the file.
  */
@@ -32,6 +32,7 @@ class LiveAdjustmentRepository(
             scheduleId = input.scheduleId,
             schedules = input.schedules,
             weeklyAvailability = input.original.weeklyAvailability,
+            examDate = input.original.examDate,
         )
         val body = OneShotBody(
             ApiJson.encodeToString(ScheduleAdjustmentRequest.serializer(), request)

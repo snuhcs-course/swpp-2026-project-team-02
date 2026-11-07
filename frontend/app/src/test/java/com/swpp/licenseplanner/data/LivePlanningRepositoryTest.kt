@@ -81,6 +81,19 @@ class LivePlanningRepositoryTest {
         assertEquals("/api/v1/study-plans", server.takeRequest().path)
     }
 
+    /** Generation has a replayable body, so OkHttp follows a same-origin temporary redirect. */
+    @Test
+    fun temporaryRedirectIsFollowedForGeneration() {
+        server.enqueue(MockResponse().setResponseCode(307)
+            .setHeader("Location", server.url("/api/v1/study-plans-redirected")))
+        server.enqueue(MockResponse().setBody(successBody))
+
+        assertTrue(generate() is PlanOutcome.Success)
+        assertEquals(2, server.requestCount)
+        assertEquals("/api/v1/study-plans", server.takeRequest().path)
+        assertEquals("/api/v1/study-plans-redirected", server.takeRequest().path)
+    }
+
     @Test
     fun status422KeepsServerDetailAndShowsKoreanExplanation() {
         server.enqueue(MockResponse().setResponseCode(422)

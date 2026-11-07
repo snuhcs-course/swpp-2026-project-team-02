@@ -48,7 +48,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability` |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 공부 이동에는 `exam_date` 필수, 선택적 `schedule_csv_file`, `weekly_availability` |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:
@@ -390,7 +390,7 @@ study-201,2026/10/05/19/00,2026/10/05/20/00,Charts
 study-202,2026/10/08/18/00,2026/10/08/20/00,Functions
 ```
 
-`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
+`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. HTTP로 공부 일정을 이동할 때는 원래 계획의 `exam_date`를 함께 보내며, 새 종료 시각이 시험 시각을 넘는 후보는 허용하지 않습니다. 시험 전 빈 구간이 없으면 `NOT_ENOUGH_TIME`으로 기존 계획을 보존합니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
 
 ### 입력·출력 및 오류 형식
 
