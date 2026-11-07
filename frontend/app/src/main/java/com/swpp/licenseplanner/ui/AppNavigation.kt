@@ -1,14 +1,28 @@
 package com.swpp.licenseplanner.ui
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.ui.components.CalendarExportDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
@@ -54,9 +68,36 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
+private val calendarPermissions = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+private val calendarReadPermission = Manifest.permission.READ_CALENDAR
+
+private fun hasCalendarAccess(context: Context) =
+    calendarPermissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+
+private fun hasCalendarReadAccess(context: Context) =
+    ContextCompat.checkSelfPermission(context, calendarReadPermission) == PackageManager.PERMISSION_GRANTED
+
+private fun openAppSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        // The dialog already says where to allow access.
+    }
+}
+
+/** Generation, adjustment, reload or another export is running; calendar export waits for it. */
+private fun operationBusy(generation: GenerationState, selection: AdjustmentSelection, export: CalendarExportState?) =
+    generation == GenerationState.Loading || selection.state == AdjustmentState.Loading ||
+        selection.state == AdjustmentState.Reloading || export != null
+
+/** Study sessions a plan's export would add. */
+private fun exportCount(plan: SessionPlan) = CalendarExport.studyRows(plan.current.schedules).size
+
 /**
  * The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation, and
- * its plans are restored from and saved on the device.
+ * its plans are restored from and saved on the device. The calendar export dialog sits above
+ * every screen; the permission prompt is shown only after an explicit export, once per request.
  */
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
@@ -64,6 +105,40 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
+    val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    // The answer arrives here also after rotation; access is read again rather than taken from the result.
+    val exportPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        viewModel.onCalendarPermission(hasCalendarAccess(context))
+    }
+    val readPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onCalendarReadPermission(hasCalendarReadAccess(context))
+    }
+    val requestingPermission = calendarExport?.phase == CalendarExportPhase.RequestingPermission
+    LaunchedEffect(requestingPermission) {
+        if (!requestingPermission) return@LaunchedEffect
+        if (hasCalendarAccess(context)) viewModel.onCalendarPermission(true)
+        else if (viewModel.calendarPermissionPrompted()) exportPermissionLauncher.launch(calendarPermissions)
+    }
+    val requestingReadPermission = calendarRead == CalendarReadState.RequestingPermission
+    LaunchedEffect(requestingReadPermission) {
+        if (!requestingReadPermission) return@LaunchedEffect
+        if (hasCalendarReadAccess(context)) viewModel.onCalendarReadPermission(true)
+        else if (viewModel.calendarReadPermissionPrompted()) readPermissionLauncher.launch(calendarReadPermission)
+    }
+    calendarExport?.let { state ->
+        CalendarExportDialog(
+            state = state,
+            onChoose = viewModel::chooseCalendar,
+            onReview = viewModel::reviewCalendarExport,
+            onChooseAnother = viewModel::chooseAnotherCalendar,
+            onConfirm = { viewModel.confirmCalendarExport() },
+            onOpenSettings = { openAppSettings(context) },
+            onClose = viewModel::closeCalendarExport,
+        )
+    }
 
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
@@ -96,6 +171,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         composable(Routes.ADJUST) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val selection by viewModel.adjustment.collectAsStateWithLifecycle()
+            val generation by viewModel.generation.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
             if (plan == null) {
                 LaunchedEffect(Unit) { nav.popBackStack() }
@@ -111,6 +187,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onBack = { nav.popBackStack() },
                     onCreate = { nav.fromHome(Routes.CERTIFICATION) },
                     onRetrySave = viewModel::retrySave,
+                    exportCount = exportCount(plan),
+                    exportBlock = exportBlock(plan, storage, operationBusy(generation, selection, calendarExport)),
+                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
                 )
             }
         }
@@ -149,11 +228,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 form = form,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
+                calendarRead = calendarRead,
                 onEnable = viewModel::setDayEnabled,
                 onStep = viewModel::stepDuration,
                 onStart = viewModel::setDayStart,
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
+                onReadCalendar = { viewModel.startCalendarRead() },
+                onOpenCalendarSettings = { openAppSettings(context) },
             )
         }
         // Each result destination collects the flow itself, so its first frame sees the
@@ -181,6 +263,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         composable(Routes.PLAN) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
+            val generation by viewModel.generation.collectAsStateWithLifecycle()
+            val selection by viewModel.adjustment.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == generatedPlan }
             if (plan == null) {
                 LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
@@ -188,6 +272,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 PlanScreen(
                     response = plan.current,
                     isDemo = plan.isDemo,
+                    exportCount = exportCount(plan),
+                    exportBlock = exportBlock(plan, storage, operationBusy(generation, selection, calendarExport)),
+                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
                     onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
                     onAdjust = { nav.fromHome(Routes.PLAN_LIST) },

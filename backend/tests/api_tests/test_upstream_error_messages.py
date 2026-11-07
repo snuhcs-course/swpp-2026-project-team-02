@@ -98,7 +98,8 @@ class UpstreamErrorMessageTests(unittest.TestCase):
         self.identifier = self.store.create(self.original)
         self.filename = self.identifier.rsplit("/", 1)[1]
         self.adjust_payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
-                               "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS}
+                               "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
+                               "exam_date": "2026/10/20/22/00"}
         patcher = patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.root)
         patcher.start()
         self.addCleanup(patcher.stop)

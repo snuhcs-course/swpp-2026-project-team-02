@@ -34,8 +34,13 @@ def _build_summary(result: dict) -> str:
     기능: 모델을 다시 호출하지 않고 수용된 일정 수치로 요약을 만듭니다.
     """
     topic_count = len({item["topic"] for item in result["daily_topic_minutes"]})
-    return (f"{topic_count}개 과목에 총 {result['total_planned_minutes']}분을 "
-            f"학습 일정 {result['study_block_count']}개로 배치했습니다.")
+    planned = result['total_planned_minutes']
+    usable = result['usable_minutes']
+    summary = (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다."
+               f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
+    if planned < usable:
+        summary += " 공부 가능 시간의 일부는 여유 시간으로 남겼습니다."
+    return summary
 
 
 class PlanningAgent:

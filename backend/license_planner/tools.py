@@ -181,6 +181,7 @@ class PlannerTools:
             return f"SCHEDULE_ERROR: {error}"
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": sum(minutes_by_topic.values()),
+                "usable_minutes": available_minutes(self.request),
                 "daily_topic_minutes": normalized_plan,
                 "uses_personal_availability": self.request.weekly_availability is not None,
                 "schedule": [

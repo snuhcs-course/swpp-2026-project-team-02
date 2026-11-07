@@ -56,6 +56,8 @@ class AdjustmentRequest:
     original_schedule: tuple[ScheduleEntry, ...]
     # 개인 주간 가능 시간이며, 없으면 기존 조정 규칙을 사용합니다.
     weekly_availability: WeeklyAvailability | None = None
+    # 원래 계획의 시험 시각입니다. 공부 일정은 이 시각보다 앞에서만 재배치합니다.
+    exam_date: datetime | None = None
 
 
 @dataclass

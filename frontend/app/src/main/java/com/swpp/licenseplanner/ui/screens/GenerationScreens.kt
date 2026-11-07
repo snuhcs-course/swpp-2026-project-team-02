@@ -75,9 +75,10 @@ fun GenerateScreen(
 }
 
 /**
- * Adapted from frame 2005:474: demo-only insufficient-time result with required and
- * available session counts and ways back to the exam-date editor (frame 2123:2) or
- * availability. No partial plan.
+ * Adapted from frame 2005:474 (frame 2123:2 shows it again after an exam-date change):
+ * demo-only insufficient-time result with required and available session counts and
+ * ways back to the exam-date editor (frames 2122:2/2122:58) or availability. No
+ * partial plan.
  */
 @Composable
 fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEditAvailability: () -> Unit) {

@@ -106,13 +106,18 @@ class ScheduleAdjustmentTools:
             old_entry = next(entry for entry in self.original_schedule if entry.schedule_id == schedule_id)
             if old_entry.topic and not self.inspected_topic:
                 return "PREREQUISITE: inspect_topic_schedule for the target topic before rescheduling this study session."
-            new_schedule = move_study_entry(self.original_schedule, schedule_id, self.weekly_availability)
+            new_schedule = move_study_entry(
+                self.original_schedule, schedule_id, self.weekly_availability, self.request.exam_date,
+            )
             new_entry = next(entry for entry in new_schedule if entry.schedule_id == schedule_id)
         except (ValueError, StopIteration) as error:
             return str(error) or f"NOT_FOUND: {schedule_id!r} is absent from the input schedule."
         self.schedule = new_schedule
         self.outcome = AdjustmentOutcome("rescheduled_study", schedule_id, new_schedule,
-                                         f"Moved {schedule_id} from {old_entry.start_datetime.strftime(DATETIME_FORMAT)}–{old_entry.end_datetime.strftime(DATETIME_FORMAT)} to {new_entry.start_datetime.strftime(DATETIME_FORMAT)}–{new_entry.end_datetime.strftime(DATETIME_FORMAT)}.")
+                                         f"공부 일정을 변경했습니다. "
+                                         f"변경 전: {old_entry.start_datetime:%Y-%m-%d %H:%M} ~ {old_entry.end_datetime:%Y-%m-%d %H:%M}. "
+                                         f"변경 후: {new_entry.start_datetime:%Y-%m-%d %H:%M} ~ {new_entry.end_datetime:%Y-%m-%d %H:%M}. "
+                                         "학습 내용과 공부 시간은 이전과 같습니다.")
         return {"action": self.outcome.action, "schedule_id": schedule_id,
                 "new_start_date": new_entry.start_datetime.strftime(DATETIME_FORMAT),
                 "new_end_date": new_entry.end_datetime.strftime(DATETIME_FORMAT),
@@ -138,7 +143,7 @@ class ScheduleAdjustmentTools:
             return str(error)
         self.schedule = new_schedule
         self.outcome = AdjustmentOutcome("cancelled_external", schedule_id, new_schedule,
-                                         f"Removed cancelled external event {schedule_id}; all other entries were retained.")
+                                         "취소된 외부 일정을 제외했습니다. 다른 일정은 이전과 같습니다.")
         return {"action": self.outcome.action, "schedule_id": schedule_id,
                 "remaining_schedule_count": len(new_schedule),
                 "preserved_external_count": sum(entry.schedule_type == "external" for entry in new_schedule)}

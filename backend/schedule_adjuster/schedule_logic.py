@@ -30,7 +30,8 @@ def intervals_overlap(start_a: datetime, end_a: datetime,
 
 def _find_available_start(candidate_start: datetime, duration: timedelta,
                           other_entries: tuple[ScheduleEntry, ...],
-                          availability: WeeklyAvailability) -> datetime:
+                          availability: WeeklyAvailability,
+                          exam_date: datetime | None = None) -> datetime:
     """입력 값: 가장 이른 시작 시각, 지속 시간, 기존 일정, 사용자 시간표
     출력 값: 시간표 안에서 충돌하지 않는 시작 시각
     기능: 개인 가능 요일과 하루 시간 구간을 순회해 첫 배치 가능 슬롯을 찾습니다.
@@ -45,10 +46,14 @@ def _find_available_start(candidate_start: datetime, duration: timedelta,
 
     current_date = candidate_start.date()
     while True:
+        if exam_date is not None and candidate_start >= exam_date:
+            raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
         weekday_windows = availability.for_weekday(current_date.weekday())
         for window in weekday_windows:
             window_start = datetime.combine(current_date, window.start_time)
             window_end = datetime.combine(current_date, window.end_time)
+            if exam_date is not None:
+                window_end = min(window_end, exam_date)
             slot_start = max(candidate_start, window_start)
             while slot_start + duration <= window_end:
                 conflict = next((entry for entry in other_entries
@@ -62,7 +67,8 @@ def _find_available_start(candidate_start: datetime, duration: timedelta,
 
 
 def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
-                     availability: WeeklyAvailability | None = None) -> tuple[ScheduleEntry, ...]:
+                     availability: WeeklyAvailability | None = None,
+                     exam_date: datetime | None = None) -> tuple[ScheduleEntry, ...]:
     """입력 값: 전체 일정 튜플, 실패한 공부 일정 ID, 선택적 주간 가능 시간
     출력 값: 해당 공부 일정이 이동된 새 일정 튜플
     기능: 주제 순서, 사용자 가능 시간, 다른 일정 충돌을 고려해 기존 기간 길이로 이동합니다.
@@ -82,10 +88,12 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
     candidate_start = max(target.end_datetime,
                           max((entry.end_datetime for entry in same_topic), default=target.end_datetime))
     if availability is not None:
-        candidate_start = _find_available_start(candidate_start, duration, other_entries, availability)
+        candidate_start = _find_available_start(candidate_start, duration, other_entries, availability, exam_date)
     else:
         while True:
             candidate_end = candidate_start + duration
+            if exam_date is not None and candidate_end > exam_date:
+                raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
             conflict = next((entry for entry in other_entries
                              if intervals_overlap(candidate_start, candidate_end,
                                                   entry.start_datetime, entry.end_datetime)), None)
@@ -94,6 +102,8 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
             candidate_start = conflict.end_datetime
 
     candidate_end = candidate_start + duration
+    if exam_date is not None and candidate_end > exam_date:
+        raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
     moved = ScheduleEntry(target.schedule_id, candidate_start, candidate_end, target.topic)
     return tuple(moved if entry.schedule_id == schedule_id else entry for entry in schedule)
 
