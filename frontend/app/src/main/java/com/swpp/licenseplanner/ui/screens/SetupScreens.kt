@@ -56,7 +56,7 @@ fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onBack:
 }
 
 /**
- * Adapted from frame 2004:479 for the written-only prototype: the written
+ * Adapted from frame 2004:479 for the written-exam-only scope: the written
  * exam card plus preparation start and written exam date fields. The preparation period is
  * shown once the dates are valid.
  */
@@ -75,7 +75,7 @@ fun DatesScreen(
         onNav = onBack,
         footer = { PrimaryButton("다음", onContinue, enabled = days != null) },
     ) {
-        Heading("필기 시험 준비", "이 프로토타입은 필기 시험 준비만 다뤄요. 실기 준비는 포함하지 않아요.")
+        Heading("필기 시험 준비", "이 앱은 필기 시험 준비만 다뤄요. 실기 준비는 포함하지 않아요.")
         OutlinedCard {
             Text("필기", style = MaterialTheme.typography.titleMedium, color = Ink)
             InfoRow("과목", "컴퓨터 일반, 스프레드시트 일반")

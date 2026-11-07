@@ -279,7 +279,9 @@ class TerminalBuildTests(unittest.TestCase):
 
         self.assertEqual(ask_model.call_count, 1)
         self.assertEqual(len(tools.schedule), 1)
-        self.assertEqual(summary, "1개 과목에 총 60분을 학습 일정 1개로 배치했습니다.")
+        self.assertTrue(summary.startswith("1개 학습 주제에 학습 일정 1개, 총 60분을 배치했습니다."))
+        self.assertIn("총 120분입니다.", summary)
+        self.assertIn("공부 가능 시간의 일부는 여유 시간으로 남겼습니다.", summary)
 
     def test_build_on_the_last_permitted_request_is_returned(self):
         rejected = [model_reply(("build_study_schedule", {"daily_topic_minutes": minutes(
@@ -485,7 +487,7 @@ class ProposalGuidanceTests(unittest.TestCase):
             self.assertEqual(build_item_schema(request)["date"]["enum"], list(self.USABLE))
         self.assertEqual(sum((b.end_datetime - b.start_datetime for b in tools.schedule), timedelta()),
                          timedelta(minutes=180))
-        self.assertEqual(summary, "3개 과목에 총 180분을 학습 일정 3개로 배치했습니다.")
+        self.assertTrue(summary.startswith("3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다."))
 
     def test_uncorrected_feasible_proposals_end_as_upstream_failures(self):
         varied = [minutes(("2026/10/19", CHARTS, 121 + extra)) for extra in range(5)]

@@ -1,5 +1,6 @@
 package com.swpp.licenseplanner.domain
 
+import com.swpp.licenseplanner.data.model.ScheduleRow
 import java.time.LocalDate
 
 const val CERTIFICATION_ID = "computer_specialist_level_2"
@@ -16,6 +17,8 @@ data class PlanFormState(
     /** Selected choice key by question ID. */
     val answers: Map<Int, String> = emptyMap(),
     val availability: Map<Weekday, DayAvailability> = defaultAvailability(),
+    /** Expanded device-calendar occurrences for the current preparation range. */
+    val busySchedules: List<ScheduleRow> = emptyList(),
 ) {
     val datesError: String? get() = Validation.datesError(preparationStart, examDate)
     val preparationDays: Long?
