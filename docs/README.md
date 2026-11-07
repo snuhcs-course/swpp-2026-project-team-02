@@ -32,7 +32,7 @@ GitHub PR metadata was checked on 2026-11-01. This is a dated snapshot.
 | [PR #5](https://github.com/snuhcs-course/swpp-2026-project-team-02/pull/5), `iteration-3` → `main` | Open at `26e1a9c6ba406fe592a999db48667bd92c857238`; description is still the unfilled template. It is a different source from the evaluator APK and this HE branch. |
 | [PR #6](https://github.com/snuhcs-course/swpp-2026-project-team-02/pull/6) | Merged into `iteration-3-pr4-base` at `7dca5bfb7c90603fcb51d9825640b02142a34eae`; adds deployment configuration and documentation. |
 | [PR #7](https://github.com/snuhcs-course/swpp-2026-project-team-02/pull/7), `docs/iter3-he-package` → `iteration-3-pr4-base` | Open at `24d9f9f`; includes four HE documents. Its description still lists three. |
-| [Wiki](https://github.com/snuhcs-course/swpp-2026-project-team-02/wiki) | Publication is separate from repository edits. The fetched Wiki snapshot still has older provider, test-command and persistence descriptions; local correction drafts have not been published. |
+| [Wiki](https://github.com/snuhcs-course/swpp-2026-project-team-02/wiki) | Published Iteration 3 requirements, design, testing, heuristic-evaluation summary and coordination records. Testing records build-specific evidence and remaining integration checks. |
 
 ## Verification status
 
@@ -55,3 +55,7 @@ Preserve dated counts, raw logs and archived reports. Gemini references in the
 performance package describe its original experiment; current backend setup uses
 `OPENROUTER_API_KEY`. Record a new source/build, model, inputs, date, commands and
 result when extending evidence. Documentation changes alone close no runtime gate.
+
+## Iteration 3 demo
+
+The [iteration-3-demo branch](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/iteration-3-demo) has an English root README with environment, run steps, the signed scheduler APK, feature progress and the video. The older Drive HE APK is a historical build; use the [current APK note](iter3-HE/04_submission_package.md) for the exam-date adjustment contract.

@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "started_at": "20261104T141642",
+    "base_url": "http://swpp26t02.147-46-242-174.sslip.io/api/v1",
+    "server_commit": "main-09d66ef(서버 미확인)",
+    "model": "unknown",
+    "cases_version": "iter3-ai-eval-v1",
+    "dry_run": false
+  },
+  "thresholds": {
+    "T1": {
+      "value": 0.97,
+      "pass": true
+    },
+    "T2": {
+      "value": 0,
+      "pass": true
+    },
+    "T3": {
+      "value": "det 3/3, D03 5xx/timeout 0",
+      "pass": true
+    },
+    "T4": {
+      "value": "timeouts 0, p95 22.17s",
+      "pass": true
+    },
+    "T5": {
+      "value": 0.484,
+      "pass": false
+    },
+    "T6": {
+      "value": 0.857,
+      "pass": true
+    },
+    "T7": {
+      "value": 1.0,
+      "pass": true
+    },
+    "T8": {
+      "value": "J1 14/15, J2-J5 14/14",
+      "pass": true
+    }
+  },
+  "verdict": "FAIL",
+  "report_metrics": {
+    "Q4_utilization_median": 0.526,
+    "Q5_short_share_mean": 0.208,
+    "Q6_share_range_max": 0.267,
+    "Q6_share_range_median": 0.107,
+    "latency_p50": 9.6,
+    "latency_p95": 22.17,
+    "latency_max": 30.26
+  },
+  "outcomes": {
+    "OK": 116,
+    "HTTP_5XX": 3
+  },
+  "counts": {
+    "generate_runs": 105,
+    "adjust_runs": 14
+  }
+}
