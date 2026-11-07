@@ -177,10 +177,29 @@ class PlanGenerationHttpTests(unittest.TestCase):
             ]}),
         ]
 
-        status, body = self.post(payload)
+        sent_inputs = []
+        scripted = PlanningAgent._ask_model
+
+        def recording_ask_model(agent, input_items, tools):
+            sent_inputs.append(json.dumps(input_items, ensure_ascii=False))
+            return scripted(agent, input_items, tools)
+
+        with patch.object(PlanningAgent, "_ask_model", recording_ask_model):
+            status, body = self.post(payload)
 
         self.assertEqual(status, 200, body)
         self.assertEqual(self.model_requests, 3)
+        busy = payload["busy_schedules"][0]
+        for sent in sent_inputs:
+            self.assertNotIn("busy_schedules", sent)
+            self.assertNotIn(busy["topic"], sent)
+            self.assertNotIn(busy["end_date"], sent)
+        external = {"schedule_id": "external-55", "start_date": busy["start_date"],
+                    "end_date": busy["end_date"], "topic": busy["topic"]}
+        self.assertIn(external, body["schedules"])
+        self.assertEqual(list(csv.DictReader(io.StringIO(body["schedule_csv"]))), body["schedules"])
+        self.assertEqual((self.store / Path(body["schedule_csv_file"]).name).read_text(encoding="utf-8"),
+                         body["schedule_csv"])
         busy_start = datetime.strptime(payload["busy_schedules"][0]["start_date"], WIRE_DATETIME_FORMAT)
         busy_end = datetime.strptime(payload["busy_schedules"][0]["end_date"], WIRE_DATETIME_FORMAT)
         study_rows = [row for row in body["schedules"] if row["schedule_id"].startswith("study-")]

@@ -7,6 +7,7 @@ import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.LocalTopics
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -36,19 +37,24 @@ object DemoPlanner {
     fun plan(request: StudyPlanRequest): DemoResult {
         val topics = topicTotals(request)
         val required = requiredSessions(request, topics)
-        val slots = slots(request)
+        val busy = busyRows(request)
+        val slots = slots(request, busy.map { it.second })
         if (slots.size < required) return DemoResult.Shortfall(required, slots.size)
 
         val ordered = topics.sortedWith(compareBy<TopicTotal> { it.percent }
             .thenBy { LocalTopics.catalogOrder.indexOf(it.topic) })
-        val rows = slots.take(required).mapIndexed { index, (start, end) ->
+        val study = slots.take(required).mapIndexed { index, (start, end) ->
             ScheduleRow(
                 scheduleId = "study-${index + 1}",
                 startDate = WireDateTime.format(start),
                 endDate = WireDateTime.format(end),
                 topic = ordered[index % ordered.size].topic,
-            )
+            ) to (start to end)
         }
+        // Chronological like the backend CSV: start, then end, then ID.
+        val rows = (busy + study)
+            .sortedWith(compareBy({ it.second.first }, { it.second.second }, { it.first.scheduleId }))
+            .map { it.first }
         val csv = buildString {
             append(CSV_HEADER).append('\n')
             rows.forEach { row ->
@@ -97,8 +103,23 @@ object DemoPlanner {
         return maxOf(ceil(base * multiplier).toInt(), topics.size)
     }
 
-    /** One session per enabled day at the window start, from preparation start up to (excluding) the exam date. */
-    private fun slots(request: StudyPlanRequest): List<Pair<LocalDateTime, LocalDateTime>> {
+    /** Imported busy rows as `external-<id>` rows with their parsed half-open intervals. */
+    private fun busyRows(request: StudyPlanRequest): List<Pair<ScheduleRow, Pair<LocalDateTime, LocalDateTime>>> =
+        request.busySchedules.mapNotNull { row ->
+            val id = row.scheduleId.toLongOrNull()?.takeIf { it > 0 } ?: return@mapNotNull null
+            val start = WireDateTime.parseOrNull(row.startDate) ?: return@mapNotNull null
+            val end = WireDateTime.parseOrNull(row.endDate)?.takeIf { it.isAfter(start) } ?: return@mapNotNull null
+            row.copy(scheduleId = "external-$id") to (start to end)
+        }
+
+    /**
+     * One session per enabled day in its first window, from preparation start up to (excluding) the
+     * exam date: the earliest start where the whole session fits outside every busy interval.
+     */
+    private fun slots(
+        request: StudyPlanRequest,
+        busy: List<Pair<LocalDateTime, LocalDateTime>>,
+    ): List<Pair<LocalDateTime, LocalDateTime>> {
         val first = WireDateTime.parseOrNull(request.preparationStart)?.toLocalDate() ?: return emptyList()
         val exam = WireDateTime.parseOrNull(request.examDate)?.toLocalDate() ?: return emptyList()
         val windows = Weekday.entries.associateWith { day ->
@@ -109,14 +130,31 @@ object DemoPlanner {
         while (date.isBefore(exam)) {
             val window = windows[Weekday.entries[date.dayOfWeek.value - 1]]
             if (window != null) {
-                val start = date.atTime(LocalTime.parse(window.start))
+                val windowStart = date.atTime(LocalTime.parse(window.start))
                 val windowEnd = date.atTime(LocalTime.parse(window.end))
-                val end = minOf(start.plusMinutes(SESSION_MINUTES), windowEnd)
-                if (end.isAfter(start)) result += start to end
+                val duration = Duration.between(windowStart, minOf(windowStart.plusMinutes(SESSION_MINUTES), windowEnd))
+                if (!duration.isNegative && !duration.isZero) {
+                    freeStart(windowStart, windowEnd, duration, busy)?.let { start -> result += start to start.plus(duration) }
+                }
             }
             date = date.plusDays(1)
         }
         return result
+    }
+
+    /** Earliest start in [windowStart, windowEnd) leaving [duration] free of busy intervals; touching ends do not overlap. */
+    private fun freeStart(
+        windowStart: LocalDateTime,
+        windowEnd: LocalDateTime,
+        duration: Duration,
+        busy: List<Pair<LocalDateTime, LocalDateTime>>,
+    ): LocalDateTime? {
+        var candidate = windowStart
+        for ((busyStart, busyEnd) in busy.filter { it.first < windowEnd && windowStart < it.second }.sortedBy { it.first }) {
+            if (!candidate.plus(duration).isAfter(busyStart)) break
+            if (busyEnd.isAfter(candidate)) candidate = busyEnd
+        }
+        return candidate.takeIf { !it.plus(duration).isAfter(windowEnd) }
     }
 }
 

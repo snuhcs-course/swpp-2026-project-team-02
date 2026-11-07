@@ -206,7 +206,7 @@ three additional fields:
 | --- | --- |
 | `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
 | `weekly_availability` | Optional request override; otherwise read the saved profile. An explicit null or empty profile is invalid |
-| `exam_date` | Saved plan (`schedule_csv_file` present): optional. The server uses the exam timestamp stored when the plan was generated; a supplied value must equal it exactly, and explicit null or a malformed value is rejected. Without `schedule_csv_file`: required when moving a `study-N` row. Never needed for `external-N` removal. |
+| `exam_date` | Saved plan (`schedule_csv_file` present): optional. The server uses the exam timestamp stored when the plan was generated; a supplied value must equal it exactly, and explicit null or a malformed value is rejected. Without `schedule_csv_file`: a valid `YYYY/MM/DD/HH/MM` value is required when moving a `study-N` row; missing, null or malformed returns `422 INVALID_INPUT` before any model call. Never needed for `external-N` removal. |
 
 Always send the complete schedule currently displayed, not only the failed row.
 The rows must match the stored plan (array order does not matter). Existing IDs,
@@ -240,6 +240,8 @@ that stored timestamp, also after a server restart:
 Stale rows (409) and a missing plan (404) are reported before any deadline
 check. Without `schedule_csv_file`, the non-persistent mode bounds the move by
 the supplied `exam_date` and saves nothing; no stored deadline is involved.
+There a study move must supply a valid `exam_date`: a missing, null or malformed
+value returns `422 INVALID_INPUT` before any model call, and nothing is written.
 
 Example request for a saved plan (replace the example identifier and rows with
 actual values; `exam_date` may be omitted, and if sent must be that plan's

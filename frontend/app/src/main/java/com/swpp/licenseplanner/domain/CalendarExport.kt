@@ -42,10 +42,32 @@ object CalendarExport {
             .map { (topic, start, end) -> CalendarEvent(topic, start, end, TIME_ZONE, description) }
     }
 
+    private const val DESCRIPTION_FIRST_LINE = "License Planner에서 내보낸 공부 일정이에요."
+    private const val DESCRIPTION_PLAN_PREFIX = "계획 "
+    private const val DESCRIPTION_PLAN_SUFFIX = " · $CERTIFICATION_NAME 필기"
+    private const val DESCRIPTION_COPY_WARNING = "앱에서 계획을 조정해도 이 일정은 바뀌지 않아요."
+    private const val DESCRIPTION_DEMO_LINE = "로컬 시연 계산: 데모 플래너가 기기 안에서 만든 일정이에요."
+    private val exportedPlanLine = Regex(
+        Regex.escape(DESCRIPTION_PLAN_PREFIX) + "[1-9][0-9]*" + Regex.escape(DESCRIPTION_PLAN_SUFFIX),
+    )
+
     fun description(planOrdinal: Int, isDemo: Boolean): String = buildString {
-        append("License Planner에서 내보낸 공부 일정이에요.\n")
-        append("계획 $planOrdinal · $CERTIFICATION_NAME 필기\n")
-        append("앱에서 계획을 조정해도 이 일정은 바뀌지 않아요.")
-        if (isDemo) append("\n로컬 시연 계산: 데모 플래너가 기기 안에서 만든 일정이에요.")
+        append(DESCRIPTION_FIRST_LINE).append('\n')
+        append(DESCRIPTION_PLAN_PREFIX).append(planOrdinal).append(DESCRIPTION_PLAN_SUFFIX).append('\n')
+        append(DESCRIPTION_COPY_WARNING)
+        if (isDemo) append('\n').append(DESCRIPTION_DEMO_LINE)
+    }
+
+    /**
+     * True only for the complete description this app writes on export (live or demo, any positive
+     * plan number). An edited, shortened or merely similar text is not recognized.
+     */
+    fun isExportedDescription(text: String?): Boolean {
+        val lines = text?.replace("\r\n", "\n")?.split('\n') ?: return false
+        if (lines.size !in 3..4) return false
+        return lines[0] == DESCRIPTION_FIRST_LINE &&
+            exportedPlanLine.matches(lines[1]) &&
+            lines[2] == DESCRIPTION_COPY_WARNING &&
+            (lines.size == 3 || lines[3] == DESCRIPTION_DEMO_LINE)
     }
 }

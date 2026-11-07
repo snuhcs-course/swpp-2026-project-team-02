@@ -11,8 +11,8 @@ import com.swpp.licenseplanner.domain.SessionPlan
 enum class ExportBlock { NoStudy, Recovery, Storage, Busy }
 
 /**
- * Null when [plan] may be exported now. [operationBusy] is any generation, adjustment, reload or
- * export in progress. A live plan without a server identity can still be exported.
+ * Null when [plan] may be exported now. [operationBusy] is any generation, adjustment, reload,
+ * calendar read or export in progress. A live plan without a server identity can still be exported.
  */
 fun exportBlock(plan: SessionPlan, storage: PlanStorage, operationBusy: Boolean): ExportBlock? = when {
     CalendarExport.studyRows(plan.current.schedules).isEmpty() -> ExportBlock.NoStudy
@@ -21,6 +21,9 @@ fun exportBlock(plan: SessionPlan, storage: PlanStorage, operationBusy: Boolean)
     operationBusy -> ExportBlock.Busy
     else -> null
 }
+
+/** [ordinal]'s entry in an observed availability map; a plan not observed yet is treated as busy. */
+fun Map<Int, ExportBlock?>.blockFor(ordinal: Int): ExportBlock? = if (containsKey(ordinal)) get(ordinal) else ExportBlock.Busy
 
 /** The plan copy one export works from, captured when it starts; later plan changes never alter it. */
 data class ExportSource(val planOrdinal: Int, val isDemo: Boolean, val events: List<CalendarEvent>)

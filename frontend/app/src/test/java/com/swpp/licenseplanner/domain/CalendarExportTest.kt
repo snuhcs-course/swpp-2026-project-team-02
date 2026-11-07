@@ -95,4 +95,37 @@ class CalendarExportTest {
     fun noStudyRowsGiveNoEvents() {
         assertEquals(emptyList<CalendarEvent>(), events(listOf(ScheduleRow("external-1", "2026/11/04/18/00", "2026/11/04/19/00", ""))))
     }
+
+    private val liveExport = "License Planner에서 내보낸 공부 일정이에요.\n" +
+        "계획 3 · 컴퓨터활용능력 2급 필기\n" +
+        "앱에서 계획을 조정해도 이 일정은 바뀌지 않아요."
+    private val demoExport = "$liveExport\n로컬 시연 계산: 데모 플래너가 기기 안에서 만든 일정이에요."
+
+    @Test
+    fun exportedDescriptionsAreRecognized() {
+        // Literal texts pin the format that already-exported events carry.
+        assertTrue(CalendarExport.isExportedDescription(liveExport))
+        assertTrue(CalendarExport.isExportedDescription(demoExport))
+        assertTrue(CalendarExport.isExportedDescription(demoExport.replace("\n", "\r\n")))
+        for (ordinal in listOf(1, 9, 12, 105)) {
+            for (isDemo in listOf(false, true)) {
+                assertTrue(CalendarExport.isExportedDescription(CalendarExport.description(ordinal, isDemo)))
+            }
+        }
+    }
+
+    @Test
+    fun otherDescriptionsAreNotRecognized() {
+        val others = listOf(
+            null, "", "공부", "셀 참조", "License Planner에서 내보낸 공부 일정이에요.",
+            liveExport.replace("계획 3", "계획 0"), liveExport.replace("계획 3", "계획 -1"),
+            liveExport.replace("계획 3", "계획 03"), liveExport.replace("계획 3", "계획 셋"),
+            liveExport.replace("2급 필기", "1급 필기"), liveExport.replace("바뀌지 않아요.", "바뀌지 않아요"),
+            liveExport.lines().dropLast(1).joinToString("\n"),
+            "$liveExport\n", "$liveExport\n메모: 친구와 같이 공부", "메모\n$liveExport",
+            "$demoExport\n추가 메모", demoExport.replace("로컬 시연 계산:", "로컬 시연 계산 -"),
+            "  $liveExport", liveExport.replace("\n", " "),
+        )
+        for (text in others) assertFalse(text.toString(), CalendarExport.isExportedDescription(text))
+    }
 }

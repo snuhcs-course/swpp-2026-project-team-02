@@ -369,7 +369,11 @@ The backend in this checkout stores each new plan's exam timestamp when it
 generates the plan and always uses that stored value for study adjustment. The
 `exam_date` the app sends must equal it; a different value returns 422. Other
 API clients may omit `exam_date` for such plans, so earlier app releases that
-send only the first four fields can still adjust newly generated plans. A plan
+send only the first four fields can still adjust newly generated plans. The
+backend's non-persistent mode (no `schedule_csv_file`, which the app never uses)
+requires a valid `exam_date` for a study move and answers 422 `INVALID_INPUT`
+when it is missing, null or malformed. Whether the deployed server and earlier
+released APKs behave this way has not been verified from this checkout. A plan
 saved before the server stored exam dates cannot have its study sessions
 moved, even though the app sends a date: the server answers 422 with the fixed
 message in [Validation errors](#validation-errors). The current app then shows
@@ -411,6 +415,45 @@ physical-device records cover real OpenRouter generation, viewing, adjustment,
 restart retention, and reload after a lost adjustment response. They do not
 attach the full two-plan same-file/CSV/original-window isolation procedure;
 that detailed gate remains unverified. See [Verification](#verification).
+
+## Calendar import
+
+On the study-time screen (공부 시간), 캘린더 일정 불러오기 reads the device
+calendar's occurrences between the preparation start and the exam date once,
+only after that tap. Each occurrence is sent as a `busy_schedules` row with a
+numeric ID, Korean wire times and the generic topic 외부 일정; titles and other
+event details never leave the device. Changing either date clears the imported
+rows. Planning without an import sends an empty array.
+
+**Permission.** Import asks only for `READ_CALENDAR`, and only after that tap;
+export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
+[Calendar export](#calendar-export)). With only read access granted, import
+works without a further prompt while export still asks for write access. The
+prompts and the provider checks share one definition of these permissions. If
+access is withdrawn after the prompt, the import reports the permission
+message and the plan can still be generated without calendar data.
+
+**Which events count.** Android returns occurrences of visible calendars only,
+with recurrences expanded. Of those, busy and tentative occurrences block time;
+canceled or deleted events, events marked free, and invitations you declined do
+not. A missing status value does not exclude an event. Study sessions this app
+exported earlier (live or demo) are also left out, recognized on the device by
+the exact description the export writes; the description is read only for that
+check and is never stored or sent. An exported event whose description was
+edited or removed can no longer be recognized and is imported like any other
+busy event; the app does not guess from titles or times and never changes or
+deletes calendar events.
+
+**Demo planner.** The demo planner keeps its usual workload and one session per
+enabled day in that day's first window, with the usual session length (60
+minutes, or the whole window if shorter). On each day it uses the earliest
+start where the whole session fits outside every imported interval (intervals
+are start-inclusive, end-exclusive, so an event ending at 18:00 does not block
+a session starting then). It never splits or shortens a session to fit between
+events; a day without such a gap gets no session, and too few usable days give
+the usual labeled demo shortfall. Imported rows appear in the plan as
+`external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
+are not counted or exported as study sessions.
 
 ## Calendar export
 
@@ -457,8 +500,11 @@ nothing. While events are being added, the dialog cannot be closed and every
 other plan action waits; rotation keeps the same export. The action is
 unavailable for a plan with no study sessions, a plan that needs 최신 계획
 불러오기 or can no longer be found on the server, while plans are being saved
-or could not be saved, and while generation, adjustment or reload runs. A live
-plan without a server file identity can still be exported.
+or could not be saved, and while generation, adjustment, reload or a calendar
+import (asking for permission, waiting for the answer or reading) runs. Both plan
+screens show the same availability the app checks when export starts, and it
+updates as soon as the blocking work ends. A live plan without a server file
+identity can still be exported.
 
 **Results.** Full success names the calendar and the number added. If adding
 stops part way, the result shows how many were confirmed and, when the last

@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -192,6 +194,130 @@ class PlanningProtocolTests(unittest.TestCase):
         self.assertEqual(len(provider.bodies), AGENT_MAX_STEPS)
         self.assertEqual(len(provider.replies), 1)
         self.assertTrue(all(body["max_output_tokens"] == 16384 for body in provider.bodies))
+
+
+TOPICS = ["스프레드시트 기본", "함수와 데이터 관리", CHARTS]
+BUSY_TOPIC = "합성 비공개 회의"
+
+
+def three_topic_payload(wednesday_end):
+    """Monday 18:00-20:00 plus Wednesday 18:00-<end> in one preparation week."""
+    results = [{"problem_id": index + 1, "question": f"합성 문항 {index + 1}", "choices": {"A": "가", "B": "나"},
+                "correct_answer": "A", "user_answer": "B", "is_correct": False, "possible_score": 1}
+               for index in range(3)]
+    return {**PAYLOAD, "preparation_start": "2026/10/05/00/00", "exam_date": "2026/10/08/00/00",
+            "weekly_availability": {"monday": [{"start": "18:00", "end": "20:00"}],
+                                    "wednesday": [{"start": "18:00", "end": wednesday_end}]},
+            "assessment_results": {"certification_id": "computer_specialist_level_2", "results": results}}
+
+
+THREE_TOPIC_ANALYSIS = ("analyze_exam_results", {"problem_topics": [
+    {"problem_id": index + 1, "topics": [{"topic": topic, "weight": 1}]} for index, topic in enumerate(TOPICS)]})
+FOUR_SESSION_BUILD = ("build_study_schedule", {"daily_topic_minutes": [
+    {"date": "2026/10/05", "topic": TOPICS[0], "minutes": 60},
+    {"date": "2026/10/05", "topic": TOPICS[1], "minutes": 30},
+    {"date": "2026/10/05", "topic": TOPICS[2], "minutes": 30},
+    {"date": "2026/10/07", "topic": TOPICS[1], "minutes": 60},
+]})
+
+
+def busy_calendar(rows_per_day):
+    """Daily 18:00-18:30 conflicts for 92 days, each day's union split into the given (start, end) minutes."""
+    rows, day = [], datetime(2026, 10, 5)
+    for offset in range(92):
+        date = day + timedelta(days=offset)
+        for start, end in rows_per_day:
+            rows.append({"schedule_id": str(870000 + len(rows)),
+                         "start_date": (date + timedelta(hours=18, minutes=start)).strftime("%Y/%m/%d/%H/%M"),
+                         "end_date": (date + timedelta(hours=18, minutes=end)).strftime("%Y/%m/%d/%H/%M"),
+                         "topic": BUSY_TOPIC})
+    return rows
+
+
+def dense_payload(busy):
+    return {**PAYLOAD, "preparation_start": "2026/10/05/00/00", "exam_date": "2027/01/05/00/00",
+            "weekly_availability": {"monday": [{"start": "18:00", "end": "21:00"}],
+                                    "wednesday": [{"start": "18:00", "end": "21:00"}]},
+            "busy_schedules": busy}
+
+
+class PlanningSummaryAndModelInputTests(unittest.TestCase):
+    setUp = PlanningProtocolTests.setUp
+    run_agent = PlanningProtocolTests.run_agent
+
+    def test_summary_sentences_are_separated_and_need_no_model_request(self):
+        expected = {
+            "20:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
+                     "공부 가능 시간의 일부는 여유 시간으로 남겼습니다.",
+            "19:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
+        }
+        for wednesday_end, text in expected.items():
+            with self.subTest(wednesday_end):
+                provider, agent, (tools, summary) = self.run_agent([
+                    reply(call("c1", *THREE_TOPIC_ANALYSIS)), reply(call("c2", *FOUR_SESSION_BUILD)),
+                    RuntimeError("provider failure after success"),
+                ], payload=three_topic_payload(wednesday_end))
+                self.assertEqual(summary, text)
+                self.assertEqual((len(provider.bodies), agent.api_request_count, len(provider.replies)), (2, 2, 1))
+                self.assertEqual(len(tools.schedule), 4)
+
+    def run_dense(self, busy):
+        build = ("build_study_schedule", {"daily_topic_minutes": [
+            {"date": "2026/10/05", "topic": CHARTS, "minutes": 60}]})
+        provider, _, (tools, _) = self.run_agent([
+            reply(call("c1", *PROFILE)), reply(call("c2", *ANALYSIS)), reply(call("c3", *build)),
+        ], payload=dense_payload(busy))
+        return provider, tools
+
+    def assert_no_busy_occurrences(self, bodies, busy):
+        self.assertTrue(bodies)
+        for step, body in enumerate(bodies):
+            sent = json.dumps(body["input"], ensure_ascii=False)
+            with self.subTest(step=step):
+                self.assertNotIn("busy_schedules", sent)
+                self.assertNotIn(BUSY_TOPIC, sent)
+                for row in busy:
+                    for value in (row["schedule_id"], row["start_date"], row["end_date"]):
+                        self.assertNotIn(value, sent)
+
+    def test_model_receives_date_capacities_instead_of_calendar_occurrences(self):
+        sparse = busy_calendar([(0, 30)])
+        dense = busy_calendar([(0, 20), (10, 30), (15, 25)])
+        self.assertGreaterEqual(len(sparse), 90)
+        sparse_provider, sparse_tools = self.run_dense(sparse)
+        dense_provider, dense_tools = self.run_dense(dense)
+
+        self.assertEqual(len(sparse_provider.bodies), 3)
+        self.assertEqual(sparse_provider.bodies, dense_provider.bodies)
+        self.assert_no_busy_occurrences(sparse_provider.bodies, sparse)
+        self.assert_no_busy_occurrences(dense_provider.bodies, dense)
+        metadata = json.loads(sparse_provider.bodies[0]["input"][0]["content"].split("Input metadata: ", 1)[1])
+        self.assertEqual(metadata["usable_minutes_by_date"]["2026/10/05"], 150)
+        self.assertEqual(metadata["usable_minutes_by_date"]["2026/10/07"], 150)
+        self.assertEqual(len(metadata["usable_minutes_by_date"]), 27)
+        guidance = json.loads(sparse_provider.bodies[2]["input"][-1]["output"])
+        self.assertEqual(guidance["build_requirements"]["usable_minutes_by_date"], metadata["usable_minutes_by_date"])
+
+        for busy, tools in ((sparse, sparse_tools), (dense, dense_tools)):
+            intervals = [(datetime.strptime(r["start_date"], "%Y/%m/%d/%H/%M"),
+                          datetime.strptime(r["end_date"], "%Y/%m/%d/%H/%M")) for r in busy]
+            [block] = tools.schedule
+            self.assertEqual((block.start_datetime, block.end_datetime),
+                             (datetime(2026, 10, 5, 18, 30), datetime(2026, 10, 5, 19, 30)))
+            self.assertFalse(any(block.start_datetime < end and start < block.end_datetime
+                                 for start, end in intervals))
+
+    def test_request_without_date_capacities_still_omits_calendar_occurrences(self):
+        busy = busy_calendar([(0, 30)])
+        request = replace(build_plan_request(dense_payload(busy), require_assessment=True), weekly_availability=None)
+        provider = ScriptedProvider([reply({"type": "message", "role": "assistant",
+                                            "content": [{"type": "output_text", "text": "stop"}]})])
+        with patch.object(openrouter_client.urllib.request, "urlopen", provider), \
+                self.assertRaises(RuntimeError):
+            PlanningAgent(api_key="synthetic-openrouter-key").run(request)
+        self.assertEqual(len(provider.bodies), 1)
+        self.assertNotIn("usable_minutes_by_date", json.dumps(provider.bodies[0]["input"], ensure_ascii=False))
+        self.assert_no_busy_occurrences(provider.bodies, busy)
 
 
 class PlanningModelLifecycleTests(unittest.TestCase):

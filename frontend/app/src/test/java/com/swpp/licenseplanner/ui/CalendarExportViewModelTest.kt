@@ -33,10 +33,12 @@ import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -79,8 +81,10 @@ class CalendarExportViewModelTest {
             gate?.await()
             return queue.removeFirst()
         }
+        var reloadGate: CompletableDeferred<Unit>? = null
         override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
             calls++
+            reloadGate?.await()
             return ReloadOutcome.Failure(ApiError.Connection)
         }
     }
@@ -348,6 +352,105 @@ class CalendarExportViewModelTest {
         calendar.listGate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(CalendarExportPhase.RequestingPermission, vm.phase)
+    }
+
+    // --- Observed availability ---
+
+    /** Collects the observed export availability like a screen; [latest] is the last value it received. */
+    private class Observed(private val scope: TestScope, vm: PlanFormViewModel) {
+        private val seen = mutableListOf<Map<Int, ExportBlock?>>()
+        init {
+            scope.backgroundScope.launch { vm.exportBlocks.collect { seen += it } }
+        }
+        /** Runs pending collection first, since idling the test does not wait for background work. */
+        val latest: Map<Int, ExportBlock?> get() = scope.runCurrent().let { seen.last() }
+    }
+
+    @Test fun observedAvailabilityFollowsOperationsStorageAndEachPlan() = runTest(dispatcher) {
+        val externalOnly = StudyPlanResponse(listOf(rowsA[1]), "", null, "license_planner/output/study_plan_c.csv")
+        val planD = planB.copy(scheduleCsvFile = "license_planner/output/study_plan_d.csv")
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false),
+            PlanOutcome.Success(externalOnly, false))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection))
+        val store = GatedStore()
+        val vm = open(planning, adjustment, store = store)
+        generate(vm, 3)
+        val seen = Observed(this, vm)
+        val busy = ExportBlock.Busy
+        assertEquals(mapOf(1 to null, 2 to null, 3 to ExportBlock.NoStudy), seen.latest)
+        assertFalse(vm.startCalendarExport(3))
+
+        // Generating, then saving the new plan.
+        planning.gate = CompletableDeferred()
+        planning.queue.addLast(PlanOutcome.Success(planD, false))
+        assertTrue(vm.generate())
+        assertEquals(mapOf(1 to busy, 2 to busy, 3 to ExportBlock.NoStudy), seen.latest)
+        assertFalse(vm.startCalendarExport(1))
+        store.saveGate = CompletableDeferred()
+        planning.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Saving, vm.storage.value)
+        val storage = ExportBlock.Storage
+        assertEquals(mapOf(1 to storage, 2 to storage, 3 to ExportBlock.NoStudy, 4 to storage), seen.latest)
+        assertFalse(vm.startCalendarExport(4))
+        store.saveGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(mapOf(1 to null, 2 to null, 3 to ExportBlock.NoStudy, 4 to null), seen.latest)
+
+        // Adjusting plan 2 holds every plan; its lost response leaves only plan 2 needing a reload.
+        adjustment.gate = CompletableDeferred()
+        assertTrue(vm.selectPlan(2))
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(busy, seen.latest[1])
+        assertEquals(busy, seen.latest[4])
+        assertFalse(vm.startCalendarExport(1))
+        adjustment.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(mapOf(1 to null, 2 to ExportBlock.Recovery, 3 to ExportBlock.NoStudy, 4 to null), seen.latest)
+        assertFalse(vm.startCalendarExport(2))
+
+        // Reloading plan 2.
+        adjustment.reloadGate = CompletableDeferred()
+        assertTrue(vm.reloadPlan())
+        assertEquals(mapOf(1 to busy, 2 to ExportBlock.Recovery, 3 to ExportBlock.NoStudy, 4 to busy), seen.latest)
+        assertFalse(vm.startCalendarExport(1))
+        adjustment.reloadGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(mapOf(1 to null, 2 to ExportBlock.Recovery, 3 to ExportBlock.NoStudy, 4 to null), seen.latest)
+
+        // An open export holds the others; a second immediate start opens nothing new.
+        assertTrue(vm.startCalendarExport(1))
+        val flow = vm.calendarExport.value
+        assertFalse(vm.startCalendarExport(1))
+        assertFalse(vm.startCalendarExport(4))
+        assertEquals(flow, vm.calendarExport.value)
+        assertEquals(mapOf(1 to busy, 2 to ExportBlock.Recovery, 3 to ExportBlock.NoStudy, 4 to busy), seen.latest)
+        vm.closeCalendarExport()
+        assertEquals(null, seen.latest[1])
+    }
+
+    @Test fun confirmationIsNotBlockedByItsOwnOpenFlow() = runTest(dispatcher) {
+        val calendar = FakeCalendar().apply { exportGate = CompletableDeferred() }
+        val vm = open(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), calendar = calendar)
+        generate(vm, 2)
+        val seen = Observed(this, vm)
+        reachConfirmation(vm, 1)
+        // Both screens show the action unavailable while the dialog is open...
+        assertEquals(mapOf(1 to ExportBlock.Busy, 2 to ExportBlock.Busy), seen.latest)
+        assertFalse(vm.startCalendarExport(2))
+        // ...yet its own confirmation is valid and writes once.
+        assertTrue(vm.confirmCalendarExport())
+        assertFalse(vm.confirmCalendarExport())
+        advanceUntilIdle()
+        assertEquals(mapOf(1 to ExportBlock.Busy, 2 to ExportBlock.Busy), seen.latest)
+        calendar.exportGate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(CalendarExportPhase.Finished(study, CalendarWriteOutcome.Complete(2)), vm.phase)
+        assertEquals(1, calendar.exports.size)
+        vm.closeCalendarExport()
+        assertEquals(mapOf(1 to null, 2 to null), seen.latest)
     }
 
     // --- Writing ---

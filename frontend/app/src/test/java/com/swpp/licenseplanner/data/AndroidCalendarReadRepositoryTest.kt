@@ -1,9 +1,13 @@
 package com.swpp.licenseplanner.data
 
+import android.provider.CalendarContract.Attendees
+import android.provider.CalendarContract.Events
+import com.swpp.licenseplanner.domain.CalendarExport
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -96,5 +100,85 @@ class AndroidCalendarReadRepositoryTest {
         access.error = null
         access.result = null
         assertEquals(CalendarReadOutcome.Unavailable, repo.read(window))
+    }
+
+    private val monday = ZonedDateTime.of(2026, 11, 2, 18, 0, 0, 0, CALENDAR_ZONE)
+
+    private fun row(
+        instance: ProviderCalendarInstance,
+        status: Int? = Events.STATUS_CONFIRMED,
+        deleted: Boolean = false,
+        availability: Int? = Events.AVAILABILITY_BUSY,
+        self: Int? = Attendees.ATTENDEE_STATUS_ACCEPTED,
+        description: String? = null,
+    ) = ProviderInstanceRow(instance, status, deleted, availability, self, description)
+
+    private fun hour(id: Long, offsetHours: Long = id) =
+        timed(id, monday.plusHours(offsetHours * 24), monday.plusHours(offsetHours * 24 + 1))
+
+    @Test fun busyAndTentativeOccurrencesBlockTime() {
+        val kept = eligibleInstances(sequenceOf(
+            row(hour(1), availability = Events.AVAILABILITY_BUSY),
+            row(hour(2), availability = Events.AVAILABILITY_TENTATIVE),
+            row(hour(3), status = Events.STATUS_TENTATIVE),
+            row(hour(4), self = Attendees.ATTENDEE_STATUS_TENTATIVE),
+        ))
+        assertEquals(listOf(1L, 2L, 3L, 4L), kept.map { it.eventId })
+        assertEquals(4, mapCalendarInstances(kept).schedules.size)
+    }
+
+    @Test fun canceledDeletedFreeAndDeclinedOccurrencesAreExcluded() {
+        val kept = eligibleInstances(sequenceOf(
+            row(hour(1), status = Events.STATUS_CANCELED),
+            row(hour(2), deleted = true),
+            row(hour(3), availability = Events.AVAILABILITY_FREE),
+            row(hour(4), self = Attendees.ATTENDEE_STATUS_DECLINED),
+            row(hour(5)),
+        ))
+        assertEquals(listOf("5"), mapCalendarInstances(kept).schedules.map { it.scheduleId })
+        val none = eligibleInstances(sequenceOf(row(hour(1), status = Events.STATUS_CANCELED), row(hour(2), deleted = true)))
+        assertEquals(CalendarBusySnapshot(emptyList(), 0, 0), mapCalendarInstances(none))
+    }
+
+    @Test fun absentOptionalMetadataIsNotAnExclusion() {
+        val kept = eligibleInstances(sequenceOf(row(hour(1), status = null, availability = null, self = null, description = null)))
+        assertEquals("2026/11/03/18/00", mapCalendarInstances(kept).schedules.single().startDate)
+    }
+
+    @Test fun eventsThisAppExportedAreExcludedButLookalikesRemain() {
+        val kept = eligibleInstances(sequenceOf(
+            row(hour(1), description = CalendarExport.description(1, isDemo = false)),
+            row(hour(2), description = CalendarExport.description(2, isDemo = true)),
+            row(hour(3), description = "License Planner에서 내보낸 공부 일정이에요.\n계획 4 · 컴퓨터활용능력 2급 필기\n" +
+                "앱에서 계획을 조정해도 이 일정은 바뀌지 않아요."),
+            // Same time as an export and a study-like text, but not this app's description.
+            row(hour(1).copy(eventId = 11), description = "셀 참조 공부"),
+            row(hour(5), description = CalendarExport.description(5, isDemo = false) + "\n메모"),
+        ))
+        assertEquals(listOf(11L, 5L), kept.map { it.eventId })
+    }
+
+    @Test fun countsAreTakenAfterFiltering() {
+        val kept = eligibleInstances(sequenceOf(
+            row(timed(42, monday, monday.plusHours(1), recurring = true)),
+            row(timed(42, monday.plusWeeks(1), monday.plusWeeks(1).plusHours(1), recurring = true), status = Events.STATUS_CANCELED),
+            row(timed(42, monday.plusWeeks(2), monday.plusWeeks(2).plusHours(1), recurring = true)),
+            row(allDay(8, LocalDate.of(2026, 11, 4), LocalDate.of(2026, 11, 5)), availability = Events.AVAILABILITY_FREE),
+            row(allDay(9, LocalDate.of(2026, 11, 6), LocalDate.of(2026, 11, 7))),
+        ))
+        val snapshot = mapCalendarInstances(kept)
+        assertEquals(2, snapshot.recurringOccurrences)
+        assertEquals(1, snapshot.allDayOccurrences)
+        assertEquals(listOf("42", "9", "43"), snapshot.schedules.map { it.scheduleId })
+        assertEquals("2026/11/06/00/00" to "2026/11/07/00/00", snapshot.schedules[1].let { it.startDate to it.endDate })
+    }
+
+    @Test fun descriptionsNeverReachTheSnapshot() {
+        val secret = "비공개 메모: 병원 예약 user@example.com"
+        val raw = row(hour(1), description = secret)
+        assertFalse(raw.toString().contains(secret))
+        val snapshot = mapCalendarInstances(eligibleInstances(sequenceOf(raw)))
+        assertFalse(snapshot.toString().contains(secret))
+        assertEquals(CALENDAR_BUSY_TOPIC, snapshot.schedules.single().topic)
     }
 }

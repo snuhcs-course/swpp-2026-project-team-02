@@ -46,8 +46,11 @@ import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -191,11 +194,7 @@ class PlanFormViewModel(
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
     private val exporting get() = _calendarExport.value != null
-    private val readingCalendar get() = _calendarRead.value in setOf(
-        CalendarReadState.RequestingPermission,
-        CalendarReadState.AwaitingPermission,
-        CalendarReadState.Loading,
-    )
+    private val readingCalendar get() = _calendarRead.value in activeCalendarReads
 
     /**
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
@@ -205,6 +204,17 @@ class PlanFormViewModel(
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
+
+    /**
+     * Each plan's calendar export availability by ordinal (null: it may start now). It applies the
+     * same rules as [startCalendarExport] and updates whenever plans, storage, generation,
+     * adjustment, reload, an export or a calendar read changes.
+     */
+    val exportBlocks: StateFlow<Map<Int, ExportBlock?>> = combine(
+        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, ::Pair),
+    ) { plans, storage, generation, adjustment, (export, read) ->
+        plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, _plans.value.associate { it.ordinal to currentExportBlock(it) })
 
     init {
         viewModelScope.launch { restore() }
@@ -454,7 +464,7 @@ class PlanFormViewModel(
      */
     fun startCalendarExport(ordinal: Int): Boolean {
         val plan = plan(ordinal) ?: return false
-        if (exportBlock(plan, _storage.value, generating || busy) != null) return false
+        if (currentExportBlock(plan) != null) return false
         val events = CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo)
         val phase = if (events == null) CalendarExportPhase.InvalidRows else CalendarExportPhase.RequestingPermission
         _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty()), phase)
@@ -515,7 +525,7 @@ class PlanFormViewModel(
         val destination = (state.phase as? CalendarExportPhase.Confirming)?.destination ?: return false
         val source = state.source
         val plan = plan(source.planOrdinal)
-        val eligible = plan != null && exportBlock(plan, _storage.value, generating || adjusting || reloading) == null &&
+        val eligible = plan != null && currentExportBlock(plan, ownExport = state.id) == null &&
             CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo) == source.events
         if (!eligible) {
             val outcome = CalendarWriteOutcome.NotStarted(ExportNotStarted.PlanUnavailable)
@@ -532,6 +542,10 @@ class PlanFormViewModel(
 
     /** Cancels or dismisses the flow and releases its plan; refused while writing. */
     fun closeCalendarExport() = _calendarExport.update { if (it?.phase is CalendarExportPhase.Writing) it else null }
+
+    /** [plan]'s export block from the current state; [ownExport] is a confirming flow, which does not block itself. */
+    private fun currentExportBlock(plan: SessionPlan, ownExport: Int? = null): ExportBlock? =
+        exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport)
 
     private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
 
@@ -678,4 +692,30 @@ class PlanFormViewModel(
             }
         }
     }
+}
+
+/** Calendar read phases that hold the device calendar; no export may start during them. */
+private val activeCalendarReads = setOf(
+    CalendarReadState.RequestingPermission,
+    CalendarReadState.AwaitingPermission,
+    CalendarReadState.Loading,
+)
+
+/**
+ * The one export rule for both plan screens, start and confirmation: generation, adjustment,
+ * reload, an active calendar read and any export flow other than [ownExport] keep [plan] busy.
+ */
+private fun exportBlockOf(
+    plan: SessionPlan,
+    storage: PlanStorage,
+    generation: GenerationState,
+    adjustment: AdjustmentSelection,
+    export: CalendarExportState?,
+    read: CalendarReadState,
+    ownExport: Int? = null,
+): ExportBlock? {
+    val operationBusy = generation == GenerationState.Loading ||
+        adjustment.state == AdjustmentState.Loading || adjustment.state == AdjustmentState.Reloading ||
+        read in activeCalendarReads || (export != null && export.id != ownExport)
+    return exportBlock(plan, storage, operationBusy)
 }

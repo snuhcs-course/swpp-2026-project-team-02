@@ -1,6 +1,8 @@
 package com.swpp.licenseplanner.data
 
+import android.provider.CalendarContract
 import com.swpp.licenseplanner.data.model.ScheduleRow
+import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.Instant
 import java.time.LocalDate
@@ -40,6 +42,35 @@ internal data class ProviderCalendarInstance(
     val allDay: Boolean,
     val recurring: Boolean,
 )
+
+/**
+ * One raw provider row while the cursor is read. The status fields and [description] only decide
+ * whether the occurrence blocks time; they are dropped before mapping, and this is deliberately not a
+ * data class so the description cannot end up in a log through toString.
+ */
+internal class ProviderInstanceRow(
+    val instance: ProviderCalendarInstance,
+    val status: Int?,
+    val deleted: Boolean,
+    val availability: Int?,
+    val selfAttendeeStatus: Int?,
+    val description: String?,
+) {
+    /**
+     * Busy and tentative occurrences block time. Canceled, deleted, free and self-declined ones do not,
+     * nor do events this app exported itself. An absent optional value is not a reason to drop a row.
+     */
+    fun blocksTime(): Boolean =
+        status != CalendarContract.Events.STATUS_CANCELED &&
+            !deleted &&
+            availability != CalendarContract.Events.AVAILABILITY_FREE &&
+            selfAttendeeStatus != CalendarContract.Attendees.ATTENDEE_STATUS_DECLINED &&
+            !CalendarExport.isExportedDescription(description)
+}
+
+/** The timing-only instances of the rows that block time. */
+internal fun eligibleInstances(rows: Sequence<ProviderInstanceRow>): List<ProviderCalendarInstance> =
+    rows.filter { it.blocksTime() }.map { it.instance }.toList()
 
 /**
  * Maps expanded instances to unique positive numeric IDs and Korean local wire times.

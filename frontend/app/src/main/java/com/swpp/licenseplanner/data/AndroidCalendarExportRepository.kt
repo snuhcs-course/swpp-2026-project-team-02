@@ -1,13 +1,10 @@
 package com.swpp.licenseplanner.data
 
-import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
-import android.content.pm.PackageManager
 import android.provider.CalendarContract
-import androidx.core.content.ContextCompat
 import com.swpp.licenseplanner.domain.CalendarEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -86,8 +83,7 @@ class AndroidCalendarExportRepository(
 private class ContentResolverCalendarAccess(private val context: Context) : CalendarProviderAccess {
     private val resolver: ContentResolver get() = context.contentResolver
 
-    override fun hasPermissions(): Boolean = listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-        .all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+    override fun hasPermissions(): Boolean = CalendarAccess.EXPORT.isGranted(context)
 
     override fun writableCalendars(): List<ProviderCalendar>? {
         val projection = arrayOf(

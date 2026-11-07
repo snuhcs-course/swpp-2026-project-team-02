@@ -1,11 +1,8 @@
 package com.swpp.licenseplanner.data
 
-import android.Manifest
 import android.content.ContentResolver
 import android.content.Context
-import android.content.pm.PackageManager
 import android.provider.CalendarContract
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,8 +41,7 @@ private class AndroidCalendarReadAccess(
     private val context: Context,
     private val resolver: ContentResolver,
 ) : CalendarReadAccess {
-    override fun hasPermission(): Boolean =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+    override fun hasPermission(): Boolean = CalendarAccess.READ.isGranted(context)
 
     override fun instances(start: LocalDate, endExclusive: LocalDate): List<ProviderCalendarInstance>? {
         val begin = start.atStartOfDay(CALENDAR_ZONE).toInstant().toEpochMilli()
@@ -56,22 +52,34 @@ private class AndroidCalendarReadAccess(
             CalendarContract.Instances.END,
             CalendarContract.Instances.ALL_DAY,
             CalendarContract.Instances.RRULE,
+            CalendarContract.Instances.STATUS,
+            CalendarContract.Events.DELETED,
+            CalendarContract.Instances.AVAILABILITY,
+            CalendarContract.Instances.SELF_ATTENDEE_STATUS,
+            CalendarContract.Instances.DESCRIPTION,
         )
+        // The provider expands recurrences and returns only visible calendars' instances.
         val cursor = CalendarContract.Instances.query(resolver, projection, begin, end) ?: return null
         return cursor.use {
-            buildList {
-                while (it.moveToNext()) {
-                    add(
-                        ProviderCalendarInstance(
+            fun optionalInt(index: Int): Int? = if (it.isNull(index)) null else it.getInt(index)
+            eligibleInstances(
+                generateSequence { if (it.moveToNext()) Unit else null }.map { _ ->
+                    ProviderInstanceRow(
+                        instance = ProviderCalendarInstance(
                             eventId = it.getLong(0),
                             beginMillis = it.getLong(1),
                             endMillis = it.getLong(2),
                             allDay = it.getInt(3) != 0,
                             recurring = !it.isNull(4) && it.getString(4).isNotBlank(),
                         ),
+                        status = optionalInt(5),
+                        deleted = (optionalInt(6) ?: 0) != 0,
+                        availability = optionalInt(7),
+                        selfAttendeeStatus = optionalInt(8),
+                        description = if (it.isNull(9)) null else it.getString(9),
                     )
-                }
-            }
+                },
+            )
         }
     }
 }
