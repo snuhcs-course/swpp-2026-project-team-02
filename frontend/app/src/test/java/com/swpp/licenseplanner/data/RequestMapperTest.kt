@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.data
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
@@ -41,6 +42,13 @@ class RequestMapperTest {
         assertEquals("""[{"start":"18:00","end":"19:00"}]""", windows["wednesday"].toString())
         assertEquals("""[{"start":"10:00","end":"13:00"}]""", windows["saturday"].toString())
         assertEquals(JsonArray(emptyList()), json["busy_schedules"])
+    }
+
+    @Test
+    fun importedCalendarRowsAreMappedWithoutChangingThem() {
+        val busy = listOf(ScheduleRow("77", "2026/10/12/18/00", "2026/10/12/19/00", "외부 일정"))
+        val request = ready(RequestMapper.map(TestFixtures.completeState().copy(busySchedules = busy)))
+        assertEquals(busy, request.busySchedules)
     }
 
     @Test

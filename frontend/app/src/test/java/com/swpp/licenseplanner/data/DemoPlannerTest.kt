@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.TestFixtures
+import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
@@ -10,6 +11,7 @@ import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.domain.defaultAvailability
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.DayOfWeek
@@ -127,5 +129,101 @@ class DemoPlannerTest {
             as MappingResult.Ready).request
         val rows = (DemoPlanner.plan(req) as DemoResult.Plan).response.schedules
         assertEquals("미분류 예시 문항", rows.first().topic)
+    }
+
+    private val mondayOnly = defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120))
+
+    private fun busy(id: Int, start: String, end: String, topic: String = CALENDAR_BUSY_TOPIC) =
+        ScheduleRow(id.toString(), start, end, topic)
+
+    /** Advanced, all correct: three study sessions on Mondays 18:00–20:00 from 2026-10-05. */
+    private fun mondayPlan(vararg rows: ScheduleRow, exam: LocalDate = longExam) =
+        DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, mondayOnly, exam).copy(busySchedules = rows.toList()))
+
+    private fun study(result: DemoResult) =
+        (result as DemoResult.Plan).response.schedules.filter { it.scheduleId.startsWith("study-") }
+
+    private fun times(rows: List<ScheduleRow>) = rows.map { it.startDate to it.endDate }
+
+    @Test
+    fun busyEventAtWindowStartMovesThatDaysSessionAfterIt() {
+        val result = mondayPlan(busy(7, "2026/10/05/18/00", "2026/10/05/19/00")) as DemoResult.Plan
+        assertEquals(
+            listOf("2026/10/05/19/00" to "2026/10/05/20/00", "2026/10/12/18/00" to "2026/10/12/19/00",
+                "2026/10/19/18/00" to "2026/10/19/19/00"),
+            times(study(result)),
+        )
+        val external = ScheduleRow("external-7", "2026/10/05/18/00", "2026/10/05/19/00", CALENDAR_BUSY_TOPIC)
+        assertEquals(listOf(external, study(result)[0]), result.response.schedules.take(2))
+        assertEquals(listOf("study-1", "study-2", "study-3"), study(result).map { it.scheduleId })
+    }
+
+    @Test
+    fun overlappingAndNestedEventsAreAvoidedAsOneUnion() {
+        val result = mondayPlan(
+            busy(1, "2026/10/05/18/00", "2026/10/05/18/40"),
+            busy(2, "2026/10/05/18/10", "2026/10/05/18/30"),
+            busy(3, "2026/10/05/18/30", "2026/10/05/19/00"),
+        )
+        assertEquals("2026/10/05/19/00" to "2026/10/05/20/00", times(study(result)).first())
+        assertEquals(6, (result as DemoResult.Plan).response.schedules.size)
+    }
+
+    @Test
+    fun eventsTouchingTheSessionAreNotConflicts() {
+        val result = mondayPlan(
+            busy(1, "2026/10/05/17/00", "2026/10/05/18/00"),
+            busy(2, "2026/10/05/19/00", "2026/10/05/20/00"),
+        )
+        assertEquals("2026/10/05/18/00" to "2026/10/05/19/00", times(study(result)).first())
+    }
+
+    @Test
+    fun allDayEventRemovesThatDaysSession() {
+        val result = mondayPlan(busy(9, "2026/10/05/00/00", "2026/10/06/00/00"))
+        assertEquals(listOf("2026/10/12/18/00", "2026/10/19/18/00", "2026/10/26/18/00"), study(result).map { it.startDate })
+    }
+
+    @Test
+    fun fragmentedWindowsAreNotSplitOrShortened() {
+        // Two Mondays before 2026-10-13; each 18:00–20:00 window leaves only 30-minute gaps.
+        val fragments = listOf("2026/10/05", "2026/10/12").flatMapIndexed { index, day ->
+            listOf(busy(index * 2 + 1, "$day/18/30", "$day/19/00"), busy(index * 2 + 2, "$day/19/30", "$day/20/00"))
+        }
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0),
+            mondayPlan(*fragments.toTypedArray(), exam = LocalDate.of(2026, 10, 13)))
+        // One fragmented Monday among enough free ones contributes nothing; the others keep their slots.
+        val result = mondayPlan(*fragments.take(2).toTypedArray())
+        assertEquals(listOf("2026/10/12/18/00", "2026/10/19/18/00", "2026/10/26/18/00"), study(result).map { it.startDate })
+    }
+
+    @Test
+    fun externalRowsAppearInJsonAndCsvInTheSameOrder() {
+        val response = (mondayPlan(
+            busy(12, "2026/10/06/09/00", "2026/10/06/10/00", "회의, \"중요\""),
+            busy(5, "2026/10/05/18/00", "2026/10/05/19/00"),
+        ) as DemoResult.Plan).response
+        assertEquals(
+            listOf("external-5", "study-1", "external-12", "study-2", "study-3"),
+            response.schedules.map { it.scheduleId },
+        )
+        val lines = response.scheduleCsv.trimEnd('\n').split('\n')
+        assertEquals(DemoPlanner.CSV_HEADER, lines.first())
+        assertEquals("external-5,2026/10/05/18/00,2026/10/05/19/00,$CALENDAR_BUSY_TOPIC", lines[1])
+        assertEquals("external-12,2026/10/06/09/00,2026/10/06/10/00,\"회의, \"\"중요\"\"\"", lines[3])
+        response.schedules.zip(lines.drop(1)).forEach { (row, line) ->
+            assertTrue(line, line.startsWith("${row.scheduleId},${row.startDate},${row.endDate},"))
+        }
+        assertEquals(response.schedules.size + 1, lines.size)
+    }
+
+    @Test
+    fun noImportedEventsKeepsTheExistingPlan() {
+        val plain = request(allUnknown, CurrentLevel.INTERMEDIATE)
+        val result = DemoPlanner.plan(plain) as DemoResult.Plan
+        assertEquals(DemoPlanner.plan(plain.copy(busySchedules = emptyList())), result)
+        assertFalse(result.response.schedules.any { it.scheduleId.startsWith("external-") })
+        assertEquals("2026/10/05/18/00", result.response.schedules.first().startDate)
+        assertEquals(sessions(plain), study(result).size)
     }
 }

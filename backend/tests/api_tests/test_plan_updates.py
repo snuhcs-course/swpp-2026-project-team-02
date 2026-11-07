@@ -302,6 +302,51 @@ class PlanUpdateTests(unittest.TestCase):
         self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
         self.assertEqual(self.store.download(other.rsplit("/", 1)[1])[0], self.original)
 
+    def test_each_saved_plan_uses_only_its_own_stored_deadline(self):
+        """Two plans with identical rows but different deadlines are adjusted independently."""
+        early = self.store.create(self.original, datetime(2026, 10, 19, 20, 30))
+        early_name = early.rsplit("/", 1)[1]
+        early_metadata = self.metadata_path(early).read_bytes()
+        omitted = {key: value for key, value in self.payload.items() if key != "exam_date"}
+
+        status, result = self.call("/schedules/adjust", {**omitted, "schedule_csv_file": early})
+        self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+        self.assertIn("NOT_ENOUGH_TIME", result["error"]["message"])
+
+        status, result = self.call("/schedules/adjust", omitted)
+        self.assertEqual(status, 200, result)
+        target = next(r for r in result["schedules"] if r["schedule_id"] == "study-1")
+        self.assertEqual((target["start_date"], target["end_date"]), ("2026/10/19/20/00", "2026/10/19/21/00"))
+
+        status, result = self.call("/schedules/adjust", {**omitted, "schedule_csv_file": early})
+        self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+        self.assertEqual(self.store.download(early_name)[0], self.original)
+        self.assertEqual(self.metadata_path(early).read_bytes(), early_metadata)
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
+
+    def test_saved_adjustment_avoids_and_keeps_imported_busy_rows(self):
+        """Imported calendar rows saved with a plan stay unchanged and keep blocking a moved session."""
+        rows = [
+            {"schedule_id": "study-1", "start_date": "2026/10/19/18/00",
+             "end_date": "2026/10/19/19/00", "topic": "Functions"},
+            {"schedule_id": "external-55", "start_date": "2026/10/19/19/00",
+             "end_date": "2026/10/19/20/00", "topic": "외부 일정"},
+            {"schedule_id": "external-56", "start_date": "2026/10/19/19/30",
+             "end_date": "2026/10/19/21/00", "topic": "외부 일정"},
+        ]
+        identifier = self.store.create(render_schedule_csv(parse_schedule_rows(rows)), EXAM)
+        metadata = self.metadata_path(identifier).read_bytes()
+        payload = {"schedule_csv_file": identifier, "schedule_id": "study-1",
+                   "schedules": copy.deepcopy(rows), "weekly_availability": WINDOWS}
+        status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        target = next(r for r in result["schedules"] if r["schedule_id"] == "study-1")
+        self.assertEqual((target["start_date"], target["end_date"]), ("2026/10/19/21/00", "2026/10/19/22/00"))
+        self.assertEqual([r for r in result["schedules"] if r["schedule_id"].startswith("external-")], rows[1:])
+        self.assertEqual(self.call("/study-plans/" + identifier.rsplit("/", 1)[1]), (200, result["schedule_csv"]))
+        self.assertEqual(self.metadata_path(identifier).read_bytes(), metadata)
+        self.assert_selected_plan_unchanged()
+
     def test_supplied_exam_date_must_match_stored_deadline(self):
         self.store.create(self.original, OTHER_EXAM)
         mismatched = {"earlier": "2026/10/19/23/00", "later": "2026/12/31/23/00",

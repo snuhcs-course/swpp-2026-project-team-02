@@ -81,7 +81,6 @@ submission details are in [`ITER3_SUBMISSION.md`](ITER3_SUBMISSION.md).
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
 - **Summary labeling:** generation summaries are composed by server code from
-  accepted schedule counts. The app still labels them “AI가 작성한 설명”; aligning
-  that label with the summary source remains a copy decision.
+  accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
 - **Deployment:** authentication and per-user storage remain open; the current
   Iteration 3 server and APK use the shared HTTP endpoint documented above.

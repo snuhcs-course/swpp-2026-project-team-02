@@ -378,7 +378,8 @@ def main():
                     target = pick_target(study, c["adjust"]["target"])
                     body = {"schedules": resp["json"]["schedules"], "schedule_id": target["schedule_id"],
                             "schedule_csv_file": resp["json"].get("schedule_csv_file"),
-                            "weekly_availability": c["request"]["weekly_availability"]}
+                            "weekly_availability": c["request"]["weekly_availability"],
+                            "exam_date": c["request"]["exam_date"]}
                     aresp = post(base + "/schedules/adjust", body)
                     aout = classify("200", aresp)
                     arun = {"case_id": c["case_id"], "rep": rep, "kind": "adjust", "status": aresp["status"],

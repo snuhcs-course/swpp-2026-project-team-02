@@ -1,14 +1,26 @@
 package com.swpp.licenseplanner.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.swpp.licenseplanner.data.CalendarAccess
+import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.ui.components.CalendarExportDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
@@ -54,9 +66,22 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
+private fun openAppSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        // The dialog already says where to allow access.
+    }
+}
+
+/** Study sessions a plan's export would add. */
+private fun exportCount(plan: SessionPlan) = CalendarExport.studyRows(plan.current.schedules).size
+
 /**
  * The whole app flow; [viewModel] is activity-scoped, so state survives back and rotation, and
- * its plans are restored from and saved on the device.
+ * its plans are restored from and saved on the device. The calendar export dialog sits above
+ * every screen; the permission prompt is shown only after an explicit export, once per request.
  */
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
@@ -64,6 +89,41 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
+    val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
+    val exportBlocks by viewModel.exportBlocks.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    // The answer arrives here also after rotation; access is read again rather than taken from the result.
+    val exportPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        viewModel.onCalendarPermission(CalendarAccess.EXPORT.isGranted(context))
+    }
+    val readPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onCalendarReadPermission(CalendarAccess.READ.isGranted(context))
+    }
+    val requestingPermission = calendarExport?.phase == CalendarExportPhase.RequestingPermission
+    LaunchedEffect(requestingPermission) {
+        if (!requestingPermission) return@LaunchedEffect
+        if (CalendarAccess.EXPORT.isGranted(context)) viewModel.onCalendarPermission(true)
+        else if (viewModel.calendarPermissionPrompted()) exportPermissionLauncher.launch(CalendarAccess.EXPORT.permissions.toTypedArray())
+    }
+    val requestingReadPermission = calendarRead == CalendarReadState.RequestingPermission
+    LaunchedEffect(requestingReadPermission) {
+        if (!requestingReadPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onCalendarReadPermission(true)
+        else if (viewModel.calendarReadPermissionPrompted()) readPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+    }
+    calendarExport?.let { state ->
+        CalendarExportDialog(
+            state = state,
+            onChoose = viewModel::chooseCalendar,
+            onReview = viewModel::reviewCalendarExport,
+            onChooseAnother = viewModel::chooseAnotherCalendar,
+            onConfirm = { viewModel.confirmCalendarExport() },
+            onOpenSettings = { openAppSettings(context) },
+            onClose = viewModel::closeCalendarExport,
+        )
+    }
 
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
@@ -111,6 +171,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onBack = { nav.popBackStack() },
                     onCreate = { nav.fromHome(Routes.CERTIFICATION) },
                     onRetrySave = viewModel::retrySave,
+                    exportCount = exportCount(plan),
+                    exportBlock = exportBlocks.blockFor(plan.ordinal),
+                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
                 )
             }
         }
@@ -149,11 +212,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 form = form,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
+                calendarRead = calendarRead,
                 onEnable = viewModel::setDayEnabled,
                 onStep = viewModel::stepDuration,
                 onStart = viewModel::setDayStart,
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
+                onReadCalendar = { viewModel.startCalendarRead() },
+                onOpenCalendarSettings = { openAppSettings(context) },
             )
         }
         // Each result destination collects the flow itself, so its first frame sees the
@@ -188,6 +254,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 PlanScreen(
                     response = plan.current,
                     isDemo = plan.isDemo,
+                    exportCount = exportCount(plan),
+                    exportBlock = exportBlocks.blockFor(plan.ordinal),
+                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
                     onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
                     onAdjust = { nav.fromHome(Routes.PLAN_LIST) },

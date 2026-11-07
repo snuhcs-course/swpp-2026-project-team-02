@@ -165,6 +165,9 @@ class AdjustmentToolTests(unittest.TestCase):
         self.assertEqual(moved.start_datetime, datetime(2026, 10, 8, 21, 0))
         self.assertEqual(moved.end_datetime - moved.start_datetime, timedelta(hours=2))
         self.assertEqual(moved.topic, "Functions")
+        self.assertIn("변경 전: 2026-10-08 18:00 ~ 2026-10-08 20:00", tools.outcome.message)
+        self.assertIn("변경 후: 2026-10-08 21:00 ~ 2026-10-08 23:00", tools.outcome.message)
+        self.assertIn("학습 내용과 공부 시간은 이전과 같습니다.", tools.outcome.message)
 
     def test_failed_session_moves_after_existing_session_for_same_topic(self):
         """

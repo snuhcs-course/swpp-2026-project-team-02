@@ -34,8 +34,13 @@ def _build_summary(result: dict) -> str:
     기능: 모델을 다시 호출하지 않고 수용된 일정 수치로 요약을 만듭니다.
     """
     topic_count = len({item["topic"] for item in result["daily_topic_minutes"]})
-    return (f"{topic_count}개 과목에 총 {result['total_planned_minutes']}분을 "
-            f"학습 일정 {result['study_block_count']}개로 배치했습니다.")
+    planned = result['total_planned_minutes']
+    usable = result['usable_minutes']
+    summary = (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
+               f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
+    if planned < usable:
+        summary += " 공부 가능 시간의 일부는 여유 시간으로 남겼습니다."
+    return summary
 
 
 class PlanningAgent:
@@ -85,11 +90,6 @@ class PlanningAgent:
                          for window in request.weekly_availability.for_weekday(index)]
                         for index, day in enumerate(weekday_names)}
                        if request.weekly_availability else None)
-        busy_schedules = [{"schedule_id": item.schedule_id,
-                           "start_date": item.start_datetime.strftime(DATETIME_FORMAT),
-                           "end_date": item.end_datetime.strftime(DATETIME_FORMAT),
-                           "topic": item.topic}
-                          for item in request.busy_periods]
         user = {"certification_id": request.certification_id,
                 "self_assessment": request.self_assessment,
                 "problem_result_count": len(request.assessment_items or request.problem_results),
@@ -102,7 +102,6 @@ class PlanningAgent:
                 ],
                 "preparation_start": request.preparation_start.strftime(DATETIME_FORMAT) if request.preparation_start else None,
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
-                "busy_schedules": busy_schedules,
                 "weekly_availability": availability}
         date_minutes = usable_date_minutes(request)  # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
         if date_minutes is not None:

@@ -369,7 +369,11 @@ The backend in this checkout stores each new plan's exam timestamp when it
 generates the plan and always uses that stored value for study adjustment. The
 `exam_date` the app sends must equal it; a different value returns 422. Other
 API clients may omit `exam_date` for such plans, so earlier app releases that
-send only the first four fields can still adjust newly generated plans. A plan
+send only the first four fields can still adjust newly generated plans. The
+backend's non-persistent mode (no `schedule_csv_file`, which the app never uses)
+requires a valid `exam_date` for a study move and answers 422 `INVALID_INPUT`
+when it is missing, null or malformed. Whether the deployed server and earlier
+released APKs behave this way has not been verified from this checkout. A plan
 saved before the server stored exam dates cannot have its study sessions
 moved, even though the app sends a date: the server answers 422 with the fixed
 message in [Validation errors](#validation-errors). The current app then shows
@@ -411,6 +415,128 @@ physical-device records cover real OpenRouter generation, viewing, adjustment,
 restart retention, and reload after a lost adjustment response. They do not
 attach the full two-plan same-file/CSV/original-window isolation procedure;
 that detailed gate remains unverified. See [Verification](#verification).
+
+## Calendar import
+
+On the study-time screen (공부 시간), 캘린더 일정 불러오기 reads the device
+calendar's occurrences between the preparation start and the exam date once,
+only after that tap. Each occurrence is sent as a `busy_schedules` row with a
+numeric ID, Korean wire times and the generic topic 외부 일정; titles and other
+event details never leave the device. Changing either date clears the imported
+rows. Planning without an import sends an empty array.
+
+**Permission.** Import asks only for `READ_CALENDAR`, and only after that tap;
+export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
+[Calendar export](#calendar-export)). With only read access granted, import
+works without a further prompt while export still asks for write access. The
+prompts and the provider checks share one definition of these permissions. If
+access is withdrawn after the prompt, the import reports the permission
+message and the plan can still be generated without calendar data.
+
+**Which events count.** Android returns occurrences of visible calendars only,
+with recurrences expanded. Of those, busy and tentative occurrences block time;
+canceled or deleted events, events marked free, and invitations you declined do
+not. A missing status value does not exclude an event. Study sessions this app
+exported earlier (live or demo) are also left out, recognized on the device by
+the exact description the export writes; the description is read only for that
+check and is never stored or sent. An exported event whose description was
+edited or removed can no longer be recognized and is imported like any other
+busy event; the app does not guess from titles or times and never changes or
+deletes calendar events.
+
+**Demo planner.** The demo planner keeps its usual workload and one session per
+enabled day in that day's first window, with the usual session length (60
+minutes, or the whole window if shorter). On each day it uses the earliest
+start where the whole session fits outside every imported interval (intervals
+are start-inclusive, end-exclusive, so an event ending at 18:00 does not block
+a session starting then). It never splits or shortens a session to fit between
+events; a day without such a gap gets no session, and too few usable days give
+the usual labeled demo shortfall. Imported rows appear in the plan as
+`external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
+are not counted or exported as study sessions.
+
+## Calendar export
+
+A plan's study sessions can be copied once into a calendar that already exists
+on the device, through Android's calendar provider. It is a one-way copy: the
+app never reads, updates or deletes calendar events afterwards, and it never
+creates a calendar or account.
+
+- **Permissions.** The app declares `READ_CALENDAR` and `WRITE_CALENDAR` and
+  asks for them only after 캘린더에 N개 일정 추가 is tapped, never at start or
+  while viewing a plan. Reading lists the calendars the app may write to
+  (contributor access or higher); writing adds the events. If access is denied,
+  nothing is written and the app explains how to allow it under 설정 › 앱 ›
+  권한; it does not ask again by itself.
+- **Device calendar setup.** At least one writable calendar must exist, for
+  example a Google account added in the device's Settings or a local calendar
+  created in a calendar app. Without one the app reports that no calendar can
+  receive events. An emulator image without a calendar app or account cannot
+  complete an export.
+- **What is copied.** Each `study-N` row of the selected plan, across all weeks
+  and including past dates, becomes one timed event with the exact topic as its
+  title. Existing schedules (`external-N`) are not copied, and no reminders,
+  repetition, exam milestones or attendees are added. If any study row has a bad
+  timestamp, an end not after its start, or a repeated ID, nothing is copied.
+- **Korean time.** The plan's timestamps have no time zone; export reads them
+  as Korean time (`Asia/Seoul`) and the confirmation says so. A calendar set to
+  another zone shows the same instant in its own zone (18:00 KST is 09:00 UTC).
+- **Demo builds write real events.** The demo planner is a local simulation,
+  but its export adds real events to the chosen calendar. The confirmation says
+  so, and every demo event's description carries “로컬 시연 계산”. Export never
+  contacts the backend or the model provider, in either flavor.
+- **Success means the device accepted the events.** The result counts only
+  events the calendar provider confirmed on this device. Whether and when they
+  appear on other devices or in Google Calendar on the web depends on that
+  calendar account's sync, which the app does not check.
+
+**Steps.** On a generated plan (내 계획) the action sits below the weeks; on a
+plan opened from 계획 조정 it sits beside the adjustment actions. It counts the
+plan's current study sessions across all weeks. Tap 캘린더에 N개 일정 추가 →
+allow calendar access if asked → choose a calendar (equal names show the
+account) → 다음 → check the plan number, calendar, count and 한국 시간
+(Asia/Seoul) → tap N개 일정 추가. Back or 취소 before that last tap adds
+nothing. While events are being added, the dialog cannot be closed and every
+other plan action waits; rotation keeps the same export. The action is
+unavailable for a plan with no study sessions, a plan that needs 최신 계획
+불러오기 or can no longer be found on the server, while plans are being saved
+or could not be saved, and while generation, adjustment, reload or a calendar
+import (asking for permission, waiting for the answer or reading) runs. Both plan
+screens show the same availability the app checks when export starts, and it
+updates as soon as the blocking work ends. A live plan without a server file
+identity can still be exported.
+
+**Results.** Full success names the calendar and the number added. If adding
+stops part way, the result shows how many were confirmed and, when the last
+attempt's outcome is unknown, that more may have been added; check the
+calendar before exporting again. There is no retry button and no automatic
+retry; nothing already added is deleted.
+
+**Limits.** Every export adds new copies: exporting the same plan again
+duplicates its events, also after a restart, and the confirmation warns about
+this each time. Adjusting a plan afterwards does not move or delete exported
+events; export again to copy the new times, then remove the old events in the
+calendar app. Export state is not saved, so closing the app never resumes or
+repeats an export, and the saved plans are unchanged by it.
+
+**Manual check (Android Studio).** JVM tests cover the mapping, the flow and
+the insert counting with fakes, not the real calendar provider. To check a
+device: open `frontend/` in Android Studio, run `demoDebug` on an emulator or
+device that has a disposable writable calendar (add one in the calendar app or
+device settings; an emulator without one shows only the no-calendar message).
+Do not clear app data. Generate a demo plan and note its study-session count;
+confirm no calendar prompt appeared before tapping export. Deny once and check
+the settings guidance and that nothing was added; export again, allow, cancel at
+choice and at confirmation (nothing added), then export once and compare the
+new events' topics, times and durations with the plan and the “로컬 시연 계산”
+description. Rotate during choice and confirmation. Export the same plan again
+to see the duplicate warning and N more copies. For a non-Korean display zone,
+check one event's instant against its plan time in Asia/Seoul. For live saved
+plans, use the [controlled adjustment server](#controlled-adjustment-server)
+with `--scenario normal` (and `conflict` / `plan-not-found` for the unavailable
+states); export sends no request, which `requests.jsonl` can show. Record the
+variant, device and API level, calendar type, expected and observed counts and
+times, without account names. These checks have not been run for this change.
 
 ## Verification
 
@@ -581,6 +707,57 @@ time. Live adjustment results mean nothing until the backend dependency in
   remains demo-only.
 - Validation wording depends on the backend's free-text `error.message`. If that
   text changes, the app shows the neutral fallback until the mapping is updated.
-- Generation summaries are composed by backend code from the accepted schedule.
-  The current “AI가 작성한 설명” label does not establish model authorship of that
-  text; its wording still needs reconciliation.
+- The app shows them under “계획 요약” in a plain gray box, without the AI tag, so the label does not claim model authorship.
+
+## P29/P30 integration device-test APK
+
+The integration branch is `feat/p29-p30-integration`. The device-test APK built on
+2026-11-07 uses application sources at `35be6ab6bfc08d09a5092d4c52bc1d0afcb71f62`.
+It is a signed `liveDebug` build (package `com.swpp.licenseplanner`, version
+`0.1.0`, minimum Android 8.0/API 26) pointing to the public CPU server:
+`http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
+
+Build from `frontend/` with the configured JDK/Android SDK:
+
+```bash
+./gradlew :app:assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://swpp26t02.147-46-242-174.sslip.io/api/v1 --no-daemon
+adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
+```
+
+The APK uses a local debug signing certificate, not the CI release certificate.
+An existing release installation may reject an update with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate test device/profile, or
+uninstall the old app only after accepting loss of its device-local plans.
+Do not use a default live build pointing at `10.0.2.2` on a physical device.
+
+Local integration checks passed: 151 backend tests, 232 Demo and 230 Live unit
+tests, both flavor lint tasks, the live instrumentation-test APK build, and
+the existing serialized Android request contract check against this backend.
+The instrumentation APK was compiled; its device tests were not executed in
+this integration run. APK v2 signature and the packaged public API URL were
+verified. The server health endpoint returned HTTP 200; this does not identify
+the deployed backend revision.
+
+### Physical-device result (2026-11-07 KST)
+
+The signed device-test APK was installed on a Galaxy S24+ (SM-S926N, Android
+14) and connected to the public `.174` API. During plan creation, the app read
+two timed calendar events and one all-day event. The generated study rows did
+not overlap the timed events, and no study row was placed on the all-day-event
+date. This verifies the P29 → P30 initial-generation path: calendar events are
+sent as `busy_schedules` and the planner avoids them.
+
+The following recovery and boundary behaviors were also checked on that device:
+
+- Denying calendar-read permission shows Korean guidance with permission retry
+  and app-settings actions; a plan can still be generated without calendar data.
+- When no eligible study slot remains before the exam deadline, the app explains
+  the shortage and preserves the stored plan.
+- Calendar export was verified as a one-way copy to the device calendar.
+
+This is one device/API run, not broad compatibility or reliability coverage.
+Recurring-event and empty-calendar cases were not included in this run.
+Adjustment uses the saved plan's external-event snapshot; refreshing calendar
+events after a plan has been saved, detecting all newly conflicting study rows,
+and automatically rescheduling only those rows (US-C9 confirmation B) are not
+implemented by this integration. Export remains a one-way copy.

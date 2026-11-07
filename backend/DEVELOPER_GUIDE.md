@@ -155,6 +155,8 @@ CLI 또는 앱 호출
 
 Agent에는 파일 접근이나 웹 검색 도구를 주지 않습니다. 모델은 사용자의 자기평가와 실제 점수 통계를 해석해 날짜별 공부 시간을 제안합니다. Python 도구는 입력 검증, 충돌 검사, 가용 시간 안에 일정 행 배치를 담당합니다.
 
+모델 입력에는 `busy_schedules` 행(ID·주제·시작·종료)을 넣지 않습니다. 첫 요청의 입력 메타데이터와 분석 결과의 `build_requirements`에는 바쁜 일정을 이미 뺀 날짜별 가용 시간 `usable_minutes_by_date`만 들어가므로, 같은 합집합을 표현하는 일정 행이 많아져도 모델 입력은 같습니다. 날짜별 가용 시간을 계산할 수 없는 내부 요청에서도 바쁜 일정 행은 모델에 보내지 않습니다. 바쁜 일정 전체는 서버의 용량 확인, 일정 배치와 응답 JSON·CSV의 `external-<ID>` 행에 그대로 쓰입니다. 이 변경은 입력 내용을 줄일 뿐이며, 토큰 비용이나 지연 시간 변화는 측정하지 않았습니다.
+
 Agent는 최대 6번 모델을 호출합니다(`AGENT_MAX_STEPS`). `build_study_schedule`이 검증된 일정을 만들면 같은 응답의 남은 도구 호출을 실행하지 않고 즉시 종료하며, `agent_summary`는 모델을 다시 호출하지 않고 수용된 일정의 과목 수·총 분·블록 수로 만듭니다. 마지막 허용 호출에서 성공한 일정도 그대로 반환됩니다. 텍스트로만 완료를 주장하거나 실패한 `build_study_schedule`은 성공으로 처리하지 않습니다.
 
 요청은 OpenRouter Responses API에 비스트리밍으로 보내며, 매 요청에 `reasoning.effort: low`, `max_output_tokens: 16384`(추론 토큰 포함), `store: false`, `parallel_tool_calls: false`, 현재 도구 선언과 지시문을 보냅니다. 이 값은 측정으로 정한 최적값이 아니라 시작 설정입니다. 서버가 대화를 저장하지 않으므로 Agent가 요청 안에서 대화 기록을 유지합니다. 직전 응답의 출력 항목(암호화된 추론 항목 포함)을 그대로 다음 요청에 붙이고, 각 도구 결과는 원래 호출의 `call_id`를 가진 `function_call_output`으로 돌려줍니다. 도구는 응답 안의 순서대로 실행하고, 실행 직전에 `call_id`가 비어 있지 않고 처음 나왔는지, 도구 이름이 제공한 목록에 있는지, `arguments`가 JSON 객체인지 확인합니다. 이 검사 실패, 모델 거절, 미완료(`incomplete`) 응답, 형식이 잘못된 응답은 입력 오류(422)가 아니라 upstream 실패(502)이며 계획을 저장하지 않습니다. 자동 재시도나 다른 모델·데모 데이터로의 전환은 없습니다.
@@ -390,7 +392,7 @@ study-201,2026/10/05/19/00,2026/10/05/20/00,Charts
 study-202,2026/10/08/18/00,2026/10/08/20/00,Functions
 ```
 
-`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. HTTP로 저장된 계획(`schedule_csv_file`)의 공부 일정을 이동하면 서버는 계획 생성 때 저장한 시험일을 사용합니다. `exam_date`는 생략할 수 있고, 보내면 저장값과 정확히 같아야 하며 다르면 `422 INVALID_INPUT`(`exam_date: must match the selected plan's stored exam date`)입니다. 시험일 메타데이터가 없는 이전 저장 계획은 날짜를 보내더라도 `422 INVALID_INPUT`(`This saved plan has no stored exam date. Create a new plan before adjusting study sessions.`)로 거절되며 새 계획을 만들어야 합니다. 이런 계획도 목록·다운로드·외부 일정 취소는 그대로 됩니다. 손상되었거나 읽을 수 없는 메타데이터는 `500 STORAGE_ERROR`입니다. `schedule_csv_file`이 없는 비저장 요청은 보낸 `exam_date`를 기준으로 하며 저장하지 않습니다. 어느 경우든 새 종료 시각이 시험 시각을 넘는 후보는 허용하지 않고, 시험 전 빈 구간이 없으면 `NOT_ENOUGH_TIME`으로 기존 계획을 보존합니다. CLI·도메인 호출의 `exam_date`는 여전히 선택 사항입니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
+`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. HTTP로 저장된 계획(`schedule_csv_file`)의 공부 일정을 이동하면 서버는 계획 생성 때 저장한 시험일을 사용합니다. `exam_date`는 생략할 수 있고, 보내면 저장값과 정확히 같아야 하며 다르면 `422 INVALID_INPUT`(`exam_date: must match the selected plan's stored exam date`)입니다. 시험일 메타데이터가 없는 이전 저장 계획은 날짜를 보내더라도 `422 INVALID_INPUT`(`This saved plan has no stored exam date. Create a new plan before adjusting study sessions.`)로 거절되며 새 계획을 만들어야 합니다. 이런 계획도 목록·다운로드·외부 일정 취소는 그대로 됩니다. 손상되었거나 읽을 수 없는 메타데이터는 `500 STORAGE_ERROR`입니다. 시험일 메타데이터가 있는 계획은 날짜를 보내지 않는 이전 Android 릴리스의 네 필드 요청도 저장된 시험일로 조정됩니다. `schedule_csv_file`이 없는 비저장 요청은 보낸 `exam_date`를 기준으로 하며 저장하지 않습니다. 이때 공부 일정 이동에는 유효한 `exam_date`가 필요하고, 없거나 `null`이거나 형식이 틀리면 모델 호출과 파일 변경 없이 `422 INVALID_INPUT`입니다. 어느 경우든 새 종료 시각이 시험 시각을 넘는 후보는 허용하지 않고, 시험 전 빈 구간이 없으면 `NOT_ENOUGH_TIME`으로 기존 계획을 보존합니다. CLI·도메인 호출의 `exam_date`는 여전히 선택 사항입니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
 
 ### 입력·출력 및 오류 형식
 
