@@ -592,3 +592,40 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Validation wording depends on the backend's free-text `error.message`. If that
   text changes, the app shows the neutral fallback until the mapping is updated.
 - The app shows them under “계획 요약” in a plain gray box, without the AI tag, so the label does not claim model authorship.
+
+## P29/P30 integration device-test APK
+
+The integration branch is `feat/p29-p30-integration`. The device-test APK built on
+2026-11-07 uses application sources at `35be6ab6bfc08d09a5092d4c52bc1d0afcb71f62`.
+It is a signed `liveDebug` build (package `com.swpp.licenseplanner`, version
+`0.1.0`, minimum Android 8.0/API 26) pointing to the public CPU server:
+`http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
+
+Build from `frontend/` with the configured JDK/Android SDK:
+
+```bash
+./gradlew :app:assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://swpp26t02.147-46-242-174.sslip.io/api/v1 --no-daemon
+adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
+```
+
+The APK uses a local debug signing certificate, not the CI release certificate.
+An existing release installation may reject an update with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate test device/profile, or
+uninstall the old app only after accepting loss of its device-local plans.
+Do not use a default live build pointing at `10.0.2.2` on a physical device.
+
+Local integration checks passed: 151 backend tests, 232 Demo and 230 Live unit
+tests, both flavor lint tasks, the live instrumentation-test APK build, and
+the existing serialized Android request contract check against this backend.
+The instrumentation APK was compiled; its device tests were not executed in
+this integration run. APK v2 signature and the packaged public API URL were
+verified. The server health endpoint returned HTTP 200; this does not identify
+the deployed backend revision. Confirm the server runs the P30 backend before
+recording physical-device results.
+
+On the device, import calendar events during plan creation and check permission
+denial/retry, an empty calendar, recurring occurrences and all-day events. Verify
+that generated study avoids imported events, then reopen and adjust the saved
+plan within its original availability and exam deadline. Adjustment uses the
+saved plan's external-event snapshot; refreshing calendar events for an existing
+plan is not implemented by this integration. Export remains a one-way copy.
