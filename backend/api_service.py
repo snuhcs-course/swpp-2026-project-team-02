@@ -25,16 +25,18 @@ from schedule_adjuster.availability import (
     parse_weekly_availability as parse_adjuster_availability,
 )
 from schedule_adjuster.schedule_logic import move_study_entry, remove_external_entry
-from study_plan_store import StudyPlanStore, PlanConflictError, plan_fields
+from study_plan_store import PlanSnapshot, StudyPlanStore, PlanConflictError, plan_fields
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
 STUDY_PLAN_OUTPUT_DIR = Path(os.getenv("APP_STUDY_PLAN_DIR",
                                        BACKEND_ROOT / "license_planner" / "output"))
+MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
+                            "Create a new plan before adjusting study sessions.")
 
 
-def _save_study_plan_csv(content: str) -> str:
-    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(content)
+def _save_study_plan_csv(content: str, exam_date: datetime) -> str:
+    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(content, exam_date)
 
 
 def read_study_plan_csv(filename: str) -> tuple[str, str]:
@@ -142,7 +144,7 @@ def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
     csv_text = render_schedule_csv(request.busy_periods, tools.schedule)
-    csv_file = _save_study_plan_csv(csv_text)
+    csv_file = _save_study_plan_csv(csv_text, request.exam_date)
     return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
             "schedule_csv_file": csv_file,
             "schedule_csv_url": f"/api/v1/study-plans/{Path(csv_file).name}",
@@ -155,6 +157,24 @@ def _csv_rows(content: str) -> list[dict[str, str]]:
     기능: 헤더 포함 CSV를 웹 응답용 객체 목록으로 바꿉니다.
     """
     return list(csv.DictReader(io.StringIO(content)))
+
+
+def _adjustment_deadline(payload: dict[str, Any], snapshot: PlanSnapshot | None) -> datetime:
+    """Return the exam deadline a study move must finish by.
+
+    A saved plan's stored deadline is authoritative: a client may omit
+    ``exam_date`` or repeat the stored value, but cannot replace it.  Saved
+    plans created before deadlines were stored must be recreated.
+    """
+    if snapshot is None:
+        if payload.get("exam_date") is None:
+            raise ValueError("exam_date is required when rescheduling a study entry")
+        return _datetime(payload["exam_date"], "exam_date")
+    if snapshot.exam_date is None:
+        raise ValueError(MISSING_STORED_EXAM_DATE)
+    if "exam_date" in payload and _datetime(payload["exam_date"], "exam_date") != snapshot.exam_date:
+        raise ValueError("exam_date: must match the selected plan's stored exam date")
+    return snapshot.exam_date
 
 
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
@@ -175,6 +195,7 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
         snapshot = store.snapshot(payload["schedule_csv_file"])
         if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
             raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
+    exam_date = _adjustment_deadline(payload, snapshot) if target.schedule_type == "study" else None
     if "weekly_availability" in payload:
         availability = parse_adjuster_availability(payload["weekly_availability"])
         if availability is None or not any(availability.for_weekday(day) for day in range(7)):
@@ -182,10 +203,10 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         availability = load_adjuster_availability()
     # Preflight constraints and guard agent output before any file mutation.
-    expected = (move_study_entry(entries, target_id, availability)
+    expected = (move_study_entry(entries, target_id, availability, exam_date)
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))
     expected_action = "rescheduled_study" if target.schedule_type == "study" else "cancelled_external"
-    request = AdjustmentRequest(target_id, entries, availability)
+    request = AdjustmentRequest(target_id, entries, availability, exam_date)
     tools, summary = AdjustmentAgent().adjust(request)
     if (tools.outcome is None or tools.outcome.schedule_id != target_id
             or tools.outcome.action != expected_action):

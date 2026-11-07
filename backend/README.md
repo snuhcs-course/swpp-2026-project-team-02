@@ -22,8 +22,11 @@ frontend's `live` flavor. The Android Emulator reaches the default backend at
 Gradle property `licensePlanner.apiBaseUrl`. Backend bind address, port, browser
 origins, and request-size limit are in `config/api_server.json` and can be
 overridden with `APP_API_HOST` and `APP_API_PORT`. Generated plan CSVs are
-stored in `license_planner/output/`; set `APP_STUDY_PLAN_DIR` to use another
-directory, for example a disposable one for tests. The OpenRouter key
+stored in `license_planner/output/`, each with a `.meta.json` sidecar holding
+the plan's original `exam_date`; set `APP_STUDY_PLAN_DIR` to use another
+directory, for example a disposable one for tests. Keep each `.csv`/`.meta.json`
+pair together: study adjustment of a saved plan uses only the stored deadline,
+and a plan without one must be recreated before its study sessions can move. The OpenRouter key
 (`OPENROUTER_API_KEY`) stays in the backend process environment or the backend
 root `.env`; never copy it into frontend configuration.
 
@@ -174,6 +177,30 @@ from measured baselines.
 These tests require no OpenRouter key or external network access. The API tests serve the request
 handler on temporary loopback ports with scripted OpenRouter Responses replies, so passing them
 does not verify live model planning or a running `python api_server.py`.
+
+### Fixed-response API fixture
+
+`test_support/fixed_live_e2e_server.py` serves the production HTTP handler for
+the Android live-flavor instrumentation test. Validation, the planner and
+adjustment agent loops, their tools, stored exam deadlines and
+`StudyPlanStore` are real; only the model replies are fixed. Planning replays
+the recorded trace in `tests/api_tests/fixtures/recorded_model_tool_calls.json`,
+and adjustment answers with inspect, topic inspection and the matching mutation
+tool. Plans live in a temporary directory removed on exit. Reading an
+OpenRouter key or model setting, or sending a provider request, raises an
+error. The recorded request's own exam date (`2026/11/02/18/00`) leaves no
+free window after the plan, so its study sessions cannot move; generating the
+same request with a later exam date gives a plan that can be adjusted.
+
+```bash
+# from backend/
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+python -m unittest discover -s tests/api_tests -p test_fixed_live_e2e_server.py -v
+```
+
+This is controlled integration evidence for the handler, deadline rules and
+storage. It is not evidence about OpenRouter, model quality, or a deployed
+server.
 
 ## Model configuration
 

@@ -382,6 +382,31 @@ class PlanAdjustmentViewModelTest {
         }
     }
 
+    /** A plan the server cannot adjust without a stored exam date stays as it was; nothing is sent again. */
+    @Test fun noStoredExamDateRejectionKeepsPlansAndSendsNothingMore() = runTest(dispatcher) {
+        val error = ApiError.InvalidInput(
+            "This saved plan has no stored exam date. Create a new plan before adjusting study sessions.",
+        )
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(error))
+        val vm = viewModel(planning, adjustment)
+        generateAB(vm)
+        val before = vm.plans.value
+        vm.select(1, "study-1")
+        vm.submitAdjustment()
+        advanceUntilIdle()
+
+        assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
+        assertEquals(
+            "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요.",
+            error.adjustmentMessage(),
+        )
+        assertEquals(before, vm.plans.value)
+        assertEquals(1, adjustment.inputs.size)
+        assertTrue(adjustment.reloadIdentities.isEmpty())
+        assertTrue(planning.queue.isEmpty())
+    }
+
     /** A real live repository against a mock server: a non-reschedule action never touches the plan. */
     @Test fun liveInvalidActionResponseKeepsPlan() = runTest(dispatcher) {
         val server = MockWebServer().apply { start() }
@@ -470,7 +495,13 @@ class PlanAdjustmentViewModelTest {
         for (isDemo in listOf(false, true)) {
             val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, isDemo), PlanOutcome.Success(planB, isDemo)), adjustment)
-            generateAB(vm) // A with Monday, then B with Wednesday
+            assertTrue(vm.generate()) // A with Monday and the 11/16 exam
+            advanceUntilIdle()
+            vm.switchToWednesday()
+            vm.setExamDate(LocalDate.of(2026, 12, 14))
+            assertTrue(vm.generate()) // B with Wednesday and a later exam
+            advanceUntilIdle()
+            assertEquals("2026/12/14/00/00", vm.plan(2).original.examDate)
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
@@ -933,11 +964,12 @@ class PlanAdjustmentViewModelTest {
             val reloadA = "/api/v1/study-plans?schedule_csv_file=license_planner%2Foutput%2Fstudy_plan_a.csv"
             assertEquals(listOf("/api/v1/schedules/adjust", reloadA, reloadA, "/api/v1/schedules/adjust"), requests.map { it.path })
             val sent = ApiJson.parseToJsonElement(requests[3].body.readUtf8()).jsonObject
-            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
+            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
             assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])
             assertEquals(ApiJson.parseToJsonElement("\"study-2\""), sent["schedule_id"])
             assertEquals(ApiJson.parseToJsonElement(rowsJson(savedA)), sent["schedules"])
             assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+            assertEquals(ApiJson.parseToJsonElement("\"2026/11/16/00/00\""), sent["exam_date"])
         } finally {
             server.shutdown()
         }

@@ -64,7 +64,10 @@ sudo systemctl reload nginx
 ```
 
 The deployed checkout currently follows `iteration-3-pr4-base`. Update it without deleting the
-directory because generated plans are stored inside the checkout.
+directory because generated plans are stored inside the checkout. Backends that store exam
+deadlines write a `.meta.json` file beside each newly generated plan CSV; back up and preserve
+every `.csv`/`.meta.json` pair in the configured plan directory, and never delete sidecars during
+an update or rollback. This repository has not established which backend revision is deployed.
 
 ```bash
 sudo -u swpp26-45 git -C /home/swpp26-45/apps/swpp-2026-project-team-02 fetch origin
@@ -138,7 +141,11 @@ host before packaging because the release network policy would block it on the d
 - The assigned public endpoint is HTTP, not HTTPS.
 - The API has no authentication or per-user server storage.
 - Generated plans are retained as CSV files under `backend/license_planner/output/`, up to the
-  backend's configured retention limit.
+  backend's configured retention limit. With a backend that stores exam deadlines, each new plan
+  also has a `.meta.json` sidecar. Plans without one stay viewable and downloadable, but their
+  study sessions cannot be adjusted (HTTP 422 asking for a new plan). This is an accepted
+  compatibility break; a rollback to an older backend keeps the files but restores its weaker
+  client-supplied deadline behavior.
 - The OpenRouter provider can fail because of availability, quota, or network conditions. The app
   keeps the current state and offers retry or reload according to the API outcome.
 - Server configuration changes, restarts, and reboot checks require the school-network SSH path.

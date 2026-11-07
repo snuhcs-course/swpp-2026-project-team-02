@@ -9,6 +9,7 @@ import os
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +25,7 @@ RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_to
 SUCCESS_FIELDS = {"schedules", "schedule_csv", "schedule_csv_file", "schedule_csv_url", "agent_summary"}
 CALL_IDS = itertools.count(1)
 REAL_ASK_MODEL = PlanningAgent._ask_model
+WIRE_DATETIME_FORMAT = "%Y/%m/%d/%H/%M"
 
 
 def model_reply(name, args):
@@ -138,14 +140,96 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual(self.replies, [])
                 self.assertEqual(len(body["tool_calls"]), 6)
                 self.assertTrue(body["agent_summary"])
-                saved = self.saved_files()
-                self.assertEqual(saved, [Path(body["schedule_csv_file"]).name])
-                stored = (self.store / saved[0]).read_text(encoding="utf-8")
+                csv_name = Path(body["schedule_csv_file"]).name
+                metadata_name = Path(csv_name).stem + ".meta.json"
+                self.assertEqual(self.saved_files(), sorted([csv_name, metadata_name]))
+                self.assertEqual(json.loads((self.store / metadata_name).read_text(encoding="utf-8")),
+                                 {"exam_date": recorded["request"]["exam_date"]})
+                stored = (self.store / csv_name).read_text(encoding="utf-8")
                 self.assertEqual(stored, body["schedule_csv"])
                 self.assertEqual(list(csv.DictReader(io.StringIO(stored))), body["schedules"])
                 external = {f"external-{row['schedule_id']}" for row in recorded["request"]["busy_schedules"]}
                 self.assertEqual({row["schedule_id"] for row in body["schedules"]
                                   if row["schedule_id"].startswith("external-")}, external)
+
+    def test_busy_schedule_is_excluded_from_study_blocks_over_http(self):
+        """The JSON busy_schedules contract reaches the scheduler, not just the model prompt."""
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        payload = copy.deepcopy(recorded["request"])
+        payload.update({
+            "preparation_start": "2026/10/19/18/00",
+            "exam_date": "2026/10/19/20/00",
+            "weekly_availability": {"monday": [{"start": "18:00", "end": "20:00"}]},
+            "busy_schedules": [{
+                "schedule_id": "55",
+                "start_date": "2026/10/19/18/00",
+                "end_date": "2026/10/19/19/00",
+                "topic": "고정 외부 일정",
+            }],
+        })
+        profile, analysis = recorded["model_tool_calls"][:2]
+        topics = ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
+        self.replies = [
+            model_reply(profile["name"], profile["args"]),
+            model_reply(analysis["name"], analysis["args"]),
+            model_reply("build_study_schedule", {"daily_topic_minutes": [
+                {"date": "2026/10/19", "topic": topic, "minutes": 20} for topic in topics
+            ]}),
+        ]
+
+        status, body = self.post(payload)
+
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.model_requests, 3)
+        busy_start = datetime.strptime(payload["busy_schedules"][0]["start_date"], WIRE_DATETIME_FORMAT)
+        busy_end = datetime.strptime(payload["busy_schedules"][0]["end_date"], WIRE_DATETIME_FORMAT)
+        study_rows = [row for row in body["schedules"] if row["schedule_id"].startswith("study-")]
+        self.assertEqual(len(study_rows), 3)
+        self.assertEqual(study_rows[0]["start_date"], "2026/10/19/19/00")
+        for row in study_rows:
+            start = datetime.strptime(row["start_date"], WIRE_DATETIME_FORMAT)
+            end = datetime.strptime(row["end_date"], WIRE_DATETIME_FORMAT)
+            self.assertFalse(start < busy_end and busy_start < end, row)
+
+    def test_fully_busy_window_stops_before_model_call_over_http(self):
+        """Calendar conflicts that remove all capacity retain the existing input-error recovery path."""
+        payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
+        payload.update({
+            "preparation_start": "2026/10/19/18/00",
+            "exam_date": "2026/10/19/19/00",
+            "weekly_availability": {"monday": [{"start": "18:00", "end": "19:00"}]},
+            "busy_schedules": [{
+                "schedule_id": "56",
+                "start_date": "2026/10/19/18/00",
+                "end_date": "2026/10/19/19/00",
+                "topic": "고정 외부 일정",
+            }],
+        })
+
+        status, body = self.post(payload)
+
+        self.assertEqual(status, 422, body)
+        self.assertEqual(body["error"]["code"], "INVALID_INPUT")
+        self.assertIn("NOT_ENOUGH_TIME", body["error"]["message"])
+        self.assertEqual(self.model_requests, 0)
+        self.assertEqual(self.saved_files(), [])
+
+    def test_unsaved_exam_metadata_returns_storage_error_without_a_plan(self):
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        self.script(recorded)
+        real_replace = os.replace
+
+        def fail_metadata(source, target):
+            if str(target).endswith(".meta.json"):
+                raise PermissionError("locked")
+            return real_replace(source, target)
+
+        with patch("study_plan_store.os.replace", fail_metadata):
+            status, body = self.post(recorded["request"])
+
+        self.assertEqual((status, body["error"]["code"]), (500, "STORAGE_ERROR"))
+        self.assertFalse(SUCCESS_FIELDS & body.keys())
+        self.assertEqual(self.saved_files(), [])
 
     def test_upstream_and_repeated_failures_are_not_reported_as_infeasible(self):
         request = RECORDED["topic_errors_then_build_on_last_request"]["request"]

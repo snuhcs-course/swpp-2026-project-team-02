@@ -20,6 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDate
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
@@ -27,12 +28,15 @@ import java.util.concurrent.TimeUnit
 class LiveAdjustmentRepositoryTest {
     private lateinit var server: MockWebServer
 
-    private fun requestFor(availability: Map<Weekday, DayAvailability>): StudyPlanRequest =
-        (RequestMapper.map(TestFixtures.completeState(availability = availability)) as MappingResult.Ready).request
+    private fun requestFor(availability: Map<Weekday, DayAvailability>, exam: LocalDate = LocalDate.of(2026, 11, 16)): StudyPlanRequest =
+        (RequestMapper.map(TestFixtures.completeState(availability = availability, exam = exam)) as MappingResult.Ready).request
 
-    /** Plan A was created with Monday windows; the form later moved to B's Wednesday windows. */
+    /** Plan A was created with Monday windows; the form later moved to B's Wednesday windows and exam date. */
     private val originalA = requestFor(defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120)))
-    private val formB = requestFor(defaultAvailability() + (Weekday.WEDNESDAY to DayAvailability(true, LocalTime.of(9, 0), 60)))
+    private val formB = requestFor(
+        defaultAvailability() + (Weekday.WEDNESDAY to DayAvailability(true, LocalTime.of(9, 0), 60)),
+        LocalDate.of(2026, 12, 14),
+    )
 
     private val file = "license_planner/output/study_plan_20261016T180000000000+0900_abcdef12.csv"
     private val rows = listOf(
@@ -64,7 +68,7 @@ class LiveAdjustmentRepositoryTest {
            "target_schedule_id":"$target","agent_summary":"study-1을 옮겼어요","tool_calls":[{"name":"t"}],"debug":1$extra}"""
 
     @Test
-    fun postsFourFieldBodyWithOriginalAvailability() {
+    fun postsCreationWindowsAndExamDate() {
         server.enqueue(MockResponse().setBody(body()))
         adjust()
         val recorded = server.takeRequest()
@@ -78,12 +82,15 @@ class LiveAdjustmentRepositoryTest {
               {"schedule_id":"study-1","start_date":"2026/10/05/18/00","end_date":"2026/10/05/19/00","topic":"함수와 데이터 관리"},
               {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
               {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]}}
+             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
+             "exam_date":"${originalA.examDate}"}
         """).jsonObject
         assertEquals(expected, sent)
-        // A's windows, not the edited form's.
+        // A's windows and exam date, not the edited form's.
         assertTrue(formB.weeklyAvailability != originalA.weeklyAvailability)
-        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability"), sent.keys)
+        assertEquals("2026/11/16/00/00", originalA.examDate)
+        assertTrue(formB.examDate != originalA.examDate)
+        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
     }
 
     @Test
@@ -195,6 +202,17 @@ class LiveAdjustmentRepositoryTest {
         MockResponse().setResponseCode(503).setHeader("Retry-After", "0")
             .setBody("""{"error":{"code":"SERVICE_UNAVAILABLE","message":"busy"}}"""),
         ApiError.ServerUnavailable("busy"),
+    )
+
+    /**
+     * A redirect could have reached the deployed proxy. Adjustment deliberately exposes it instead
+     * of replaying a state-changing POST, so the user can explicitly retry the unchanged snapshot.
+     */
+    @Test
+    fun redirectIsNotFollowedOrReplayed() = assertNotReplayed(
+        MockResponse().setResponseCode(307)
+            .setHeader("Location", server.url("/api/v1/schedules/adjust-redirected")),
+        ApiError.ServerFailure(307),
     )
 
     @Test

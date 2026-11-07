@@ -27,7 +27,7 @@ live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니
 | Android live API 주소 | Gradle `licensePlanner.apiBaseUrl` 속성 | live 앱이 요청할 공개 API 주소 |
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
-| 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 생성·조정된 계획 CSV 디렉터리 변경. 테스트용 임시 디렉터리 지정에 사용 |
+| 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 생성·조정된 계획 CSV와 시험일 메타데이터(`.meta.json`) 디렉터리 변경. 테스트용 임시 디렉터리 지정에 사용 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
 | API 비밀 키 | OS 환경 변수 또는 `backend/.env`의 `OPENROUTER_API_KEY` | 서버 전용 OpenRouter 인증 정보. 환경 변수가 우선하며 프론트엔드에 넣지 않음 |
 
@@ -48,7 +48,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability` |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수) |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:
@@ -236,7 +236,7 @@ study-102,2026/10/05/18/00,2026/10/05/19/00,Charts
 external-101,2026/10/12/18/00,2026/10/12/20/00,
 ```
 
-CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장됩니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
+CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장되고, 같은 이름의 `.meta.json` 파일에 검증된 `exam_date`가 함께 저장됩니다. 응답 필드와 CSV 형식은 바뀌지 않습니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
 
 ### 오류 데이터
 
@@ -390,7 +390,7 @@ study-201,2026/10/05/19/00,2026/10/05/20/00,Charts
 study-202,2026/10/08/18/00,2026/10/08/20/00,Functions
 ```
 
-`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
+`study-201`을 이동하면 ID·주제·기간 길이는 유지됩니다. 주제가 있는 경우 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 빈 구간을 찾고, 개인 시간표가 있으면 해당 시간표 안으로 제한합니다. HTTP로 저장된 계획(`schedule_csv_file`)의 공부 일정을 이동하면 서버는 계획 생성 때 저장한 시험일을 사용합니다. `exam_date`는 생략할 수 있고, 보내면 저장값과 정확히 같아야 하며 다르면 `422 INVALID_INPUT`(`exam_date: must match the selected plan's stored exam date`)입니다. 시험일 메타데이터가 없는 이전 저장 계획은 날짜를 보내더라도 `422 INVALID_INPUT`(`This saved plan has no stored exam date. Create a new plan before adjusting study sessions.`)로 거절되며 새 계획을 만들어야 합니다. 이런 계획도 목록·다운로드·외부 일정 취소는 그대로 됩니다. 손상되었거나 읽을 수 없는 메타데이터는 `500 STORAGE_ERROR`입니다. `schedule_csv_file`이 없는 비저장 요청은 보낸 `exam_date`를 기준으로 하며 저장하지 않습니다. 어느 경우든 새 종료 시각이 시험 시각을 넘는 후보는 허용하지 않고, 시험 전 빈 구간이 없으면 `NOT_ENOUGH_TIME`으로 기존 계획을 보존합니다. CLI·도메인 호출의 `exam_date`는 여전히 선택 사항입니다. `external-101`이 취소되면 해당 행만 제거되고 나머지는 보존됩니다. CLI는 결과 CSV를 stdout에, 작업 요약과 도구 호출명을 stderr에 씁니다.
 
 ### 입력·출력 및 오류 형식
 

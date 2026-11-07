@@ -106,7 +106,9 @@ class ScheduleAdjustmentTools:
             old_entry = next(entry for entry in self.original_schedule if entry.schedule_id == schedule_id)
             if old_entry.topic and not self.inspected_topic:
                 return "PREREQUISITE: inspect_topic_schedule for the target topic before rescheduling this study session."
-            new_schedule = move_study_entry(self.original_schedule, schedule_id, self.weekly_availability)
+            new_schedule = move_study_entry(
+                self.original_schedule, schedule_id, self.weekly_availability, self.request.exam_date,
+            )
             new_entry = next(entry for entry in new_schedule if entry.schedule_id == schedule_id)
         except (ValueError, StopIteration) as error:
             return str(error) or f"NOT_FOUND: {schedule_id!r} is absent from the input schedule."

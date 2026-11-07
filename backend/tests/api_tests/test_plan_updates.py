@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -29,6 +30,11 @@ ROWS = [
      "end_date": "2026/10/19/20/00", "topic": "Meeting"},
 ]
 WINDOWS = {"monday": [{"start": "18:00", "end": "22:00"}]}
+EXAM_DATE = "2026/10/20/22/00"
+EXAM = datetime(2026, 10, 20, 22, 0)
+OTHER_EXAM = datetime(2026, 11, 30, 9, 0)
+MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
+                            "Create a new plan before adjusting study sessions.")
 
 
 class ToolAgent:
@@ -83,10 +89,13 @@ class PlanUpdateTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.store = StudyPlanStore(self.root)
         self.original = render_schedule_csv(parse_schedule_rows(ROWS))
-        self.identifier = self.store.create(self.original)
+        self.identifier = self.store.create(self.original, EXAM)
         self.filename = self.identifier.rsplit("/", 1)[1]
+        self.metadata = self.metadata_path(self.identifier)
+        self.metadata_bytes = self.metadata.read_bytes()
         self.payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
-                        "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS}
+                        "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
+                        "exam_date": EXAM_DATE}
         for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root),
                             ("AdjustmentAgent", ToolAgent)]:
             p = patch.object(api_service, name, value)
@@ -98,6 +107,13 @@ class PlanUpdateTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self.stop_server)
+
+    def metadata_path(self, identifier):
+        return self.root / (Path(identifier.rsplit("/", 1)[1]).stem + ".meta.json")
+
+    def assert_selected_plan_unchanged(self):
+        self.assertEqual(self.store.download(self.filename)[0], self.original)
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
 
     def stop_server(self):
         self.server.shutdown()
@@ -117,7 +133,8 @@ class PlanUpdateTests(unittest.TestCase):
             return response.status, (json.loads(raw) if "json" in response.headers.get("Content-Type", "") else raw)
 
     def test_update_list_download_agree_and_other_plan_unchanged(self):
-        other = self.store.create(self.original)
+        other = self.store.create(self.original, OTHER_EXAM)
+        other_metadata = self.metadata_path(other).read_bytes()
         status, result = self.call("/schedules/adjust", self.payload)
         self.assertEqual(status, 200, result)
         self.assertEqual(result["schedule_csv_file"], self.identifier)
@@ -131,6 +148,8 @@ class PlanUpdateTests(unittest.TestCase):
         selected = next(p for p in listing["plans"] if p["schedule_csv_file"] == self.identifier)
         self.assertEqual(selected["schedules"], result["schedules"])
         self.assertEqual(self.store.download(other.rsplit("/", 1)[1])[0], self.original)
+        self.assertEqual(self.metadata_path(other).read_bytes(), other_metadata)
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
 
     def test_reordered_snapshot_accepted(self):
         self.payload["schedules"].reverse()
@@ -177,14 +196,205 @@ class PlanUpdateTests(unittest.TestCase):
         status, result = self.call("/schedules/adjust", self.payload)
         self.assertEqual(status, 200)
         self.assertNotIn("schedule_csv_file", result)
-        self.assertEqual(self.store.download(self.filename)[0], self.original)
+        self.assert_selected_plan_unchanged()
+        self.assertEqual(len(list(self.root.iterdir())), 2)
 
     def test_external_removal(self):
         self.payload["schedule_id"] = "external-2"
+        del self.payload["exam_date"]
         status, result = self.call("/schedules/adjust", self.payload)
         self.assertEqual(status, 200)
         self.assertEqual(result["action"], "cancelled_external")
         self.assertEqual(result["schedules"], [ROWS[0]])
+        self.assertEqual(self.store.download(self.filename)[0], result["schedule_csv"])
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
+
+    def test_damaged_stored_exam_date_blocks_external_cancellation(self):
+        """External removal needs no deadline but must not bypass a damaged plan snapshot."""
+        self.payload["schedule_id"] = "external-2"
+        del self.payload["exam_date"]
+        valid_metadata = self.metadata_bytes
+        outside_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(outside_dir.cleanup)
+        outside = Path(outside_dir.name) / "outside.meta.json"
+        outside.write_text('{"exam_date":"2026/12/31/23/00"}', encoding="utf-8")
+        outside_bytes = outside.read_bytes()
+
+        def malformed(content):
+            def damage():
+                self.metadata.write_bytes(content)
+                return lambda: self.assertEqual(self.metadata.read_bytes(), content)
+            return damage
+
+        def unreadable():
+            self.metadata.chmod(0)
+            try:
+                self.metadata.read_bytes()
+            except PermissionError:
+                pass
+            else:
+                self.skipTest("metadata stays readable after chmod 0 here")
+            def unchanged():
+                self.metadata.chmod(0o644)
+                self.assertEqual(self.metadata.read_bytes(), valid_metadata)
+            return unchanged
+
+        def symlinked():
+            self.metadata.unlink()
+            self.symlink(self.metadata, outside)
+            def unchanged():
+                self.assertTrue(self.metadata.is_symlink())
+                self.assertEqual(outside.read_bytes(), outside_bytes)
+            return unchanged
+
+        def restore():
+            if not self.metadata.is_symlink():
+                self.metadata.chmod(0o644)
+            self.metadata.unlink()
+            self.metadata.write_bytes(valid_metadata)
+
+        damages = {"invalid timestamp": malformed(b'{"exam_date": "soon"}'),
+                   "invalid JSON": malformed(b"{broken"),
+                   "wrong type": malformed(b'{"exam_date": 202610202200}'),
+                   "unreadable": unreadable,
+                   "symlinked": symlinked}
+        for label, damage in damages.items():
+            with self.subTest(label):
+                try:
+                    assert_metadata_unchanged = damage()
+                    with patch.object(api_service, "AdjustmentAgent") as agent:
+                        status, result = self.call("/schedules/adjust", self.payload)
+                    self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+                    agent.assert_not_called()
+                    self.assertEqual(self.store.download(self.filename)[0], self.original)
+                    self.assertEqual(self.call("/study-plans/" + self.filename), (200, self.original))
+                    status, listing = self.call(self.filter_query(self.identifier))
+                    self.assertEqual((status, listing["plans"][0]["schedules"]), (200, ROWS))
+                    assert_metadata_unchanged()
+                finally:
+                    restore()
+        status, result = self.call("/schedules/adjust", self.payload)
+        self.assertEqual((status, result["schedules"]), (200, [ROWS[0]]))
+        self.assertEqual(self.metadata.read_bytes(), valid_metadata)
+
+    def test_reschedule_stops_before_stored_exam_and_keeps_stored_plan(self):
+        """A failed session is not moved past its plan's original exam time."""
+        identifier = self.store.create(self.original, datetime(2026, 10, 19, 20, 30))
+        metadata = self.metadata_path(identifier).read_bytes()
+        payload = {**self.payload, "schedule_csv_file": identifier}
+        del payload["exam_date"]
+        with patch.object(api_service, "AdjustmentAgent") as agent:
+            status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+        self.assertIn("NOT_ENOUGH_TIME", result["error"]["message"])
+        agent.assert_not_called()
+        self.assertEqual(self.store.download(identifier.rsplit("/", 1)[1])[0], self.original)
+        self.assertEqual(self.metadata_path(identifier).read_bytes(), metadata)
+
+    def test_request_without_exam_date_uses_stored_deadline(self):
+        other = self.store.create(self.original, datetime(2026, 10, 19, 20, 30))
+        del self.payload["exam_date"]
+        status, result = self.call("/schedules/adjust", self.payload)
+        self.assertEqual(status, 200, result)
+        target = next(r for r in result["schedules"] if r["schedule_id"] == "study-1")
+        self.assertEqual((target["start_date"], target["end_date"]), ("2026/10/19/20/00", "2026/10/19/21/00"))
+        self.assertEqual(self.call("/study-plans/" + self.filename), (200, result["schedule_csv"]))
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
+        self.assertEqual(self.store.download(other.rsplit("/", 1)[1])[0], self.original)
+
+    def test_supplied_exam_date_must_match_stored_deadline(self):
+        self.store.create(self.original, OTHER_EXAM)
+        mismatched = {"earlier": "2026/10/19/23/00", "later": "2026/12/31/23/00",
+                      "other plan": OTHER_EXAM.strftime("%Y/%m/%d/%H/%M")}
+        invalid = {"null": None, "malformed": "2026-10-20 22:00", "number": 202610202200}
+        for label, value in {**mismatched, **invalid}.items():
+            with self.subTest(label), patch.object(api_service, "AdjustmentAgent") as agent:
+                status, result = self.call("/schedules/adjust", {**self.payload, "exam_date": value})
+                self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+                if label in mismatched:
+                    self.assertEqual(result["error"]["message"],
+                                     "exam_date: must match the selected plan's stored exam date")
+                else:
+                    self.assertRegex(result["error"]["message"], "^exam_date")
+                agent.assert_not_called()
+                self.assert_selected_plan_unchanged()
+
+    def test_saved_plan_without_stored_exam_date_requires_recreation(self):
+        legacy = self.store.create(self.original)
+        legacy_name = legacy.rsplit("/", 1)[1]
+        files = sorted(path.name for path in self.root.iterdir())
+        for label, exam_date in (("client deadline", EXAM_DATE), ("omitted", None)):
+            payload = {**self.payload, "schedule_csv_file": legacy}
+            if exam_date is None:
+                del payload["exam_date"]
+            with self.subTest(label), patch.object(api_service, "AdjustmentAgent") as agent:
+                status, result = self.call("/schedules/adjust", payload)
+                self.assertEqual((status, result), (422, {"error": {
+                    "code": "INVALID_INPUT", "message": MISSING_STORED_EXAM_DATE}}))
+                agent.assert_not_called()
+                self.assertEqual(sorted(path.name for path in self.root.iterdir()), files)
+        self.assertEqual(self.call("/study-plans/" + legacy_name), (200, self.original))
+        status, listing = self.call("/study-plans?schedule_csv_file=" + quote(legacy, safe=""))
+        self.assertEqual((status, listing["plans"][0]["schedules"]), (200, ROWS))
+        self.assert_selected_plan_unchanged()
+
+    def test_saved_plan_row_errors_precede_deadline_checks(self):
+        legacy = self.store.create(self.original)
+        payload = {**self.payload, "schedule_csv_file": legacy}
+        payload["schedules"][0]["topic"] = "Changed"
+        self.assertEqual(self.call("/schedules/adjust", payload)[1]["error"]["code"], "PLAN_CONFLICT")
+        (self.root / legacy.rsplit("/", 1)[1]).unlink()
+        del payload["exam_date"]
+        self.assertEqual(self.call("/schedules/adjust", payload)[1]["error"]["code"], "PLAN_NOT_FOUND")
+
+    def test_saved_plan_without_stored_exam_date_can_cancel_external_entry(self):
+        legacy = self.store.create(self.original)
+        payload = {**self.payload, "schedule_csv_file": legacy, "schedule_id": "external-2"}
+        del payload["exam_date"]
+        status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["schedules"], [ROWS[0]])
+        self.assertEqual(self.store.download(legacy.rsplit("/", 1)[1])[0], result["schedule_csv"])
+        self.assertFalse(self.metadata_path(legacy).exists())
+
+    def test_damaged_stored_exam_date_is_a_storage_error(self):
+        self.metadata.write_text('{"exam_date": "soon"}', encoding="utf-8")
+        self.metadata_bytes = self.metadata.read_bytes()
+        for label in ("supplied", "omitted"):
+            payload = copy.deepcopy(self.payload)
+            if label == "omitted":
+                del payload["exam_date"]
+            with self.subTest(label), patch.object(api_service, "AdjustmentAgent") as agent:
+                status, result = self.call("/schedules/adjust", payload)
+                self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+                agent.assert_not_called()
+                self.assert_selected_plan_unchanged()
+
+    def test_stored_exam_date_changed_during_agent_is_a_conflict(self):
+        original_adjust = ToolAgent.adjust
+        def changed(agent, request):
+            result = original_adjust(agent, request)
+            self.metadata.write_text('{"exam_date":"2026/12/31/23/00"}', encoding="utf-8")
+            return result
+        with patch.object(ToolAgent, "adjust", changed):
+            status, result = self.call("/schedules/adjust", self.payload)
+        self.assertEqual((status, result["error"]["code"]), (409, "PLAN_CONFLICT"))
+        self.assertEqual(self.store.download(self.filename)[0], self.original)
+
+    def test_nonpersistent_mode_requires_a_supplied_exam_date(self):
+        del self.payload["schedule_csv_file"]
+        files = sorted(path.name for path in self.root.iterdir())
+        for value in (None, "missing"):
+            payload = copy.deepcopy(self.payload)
+            if value == "missing":
+                del payload["exam_date"]
+            else:
+                payload["exam_date"] = value
+            with self.subTest(value), patch.object(api_service, "AdjustmentAgent") as agent:
+                status, result = self.call("/schedules/adjust", payload)
+                self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+                agent.assert_not_called()
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), files)
 
     def test_agent_failure_leaves_file_unchanged(self):
         with patch.object(ToolAgent, "adjust", side_effect=RuntimeError("upstream failed")):
@@ -275,21 +485,82 @@ class PlanUpdateTests(unittest.TestCase):
         self.assertFalse(path.exists())
 
     def test_filtered_list_rejects_invalid_identifiers_without_reading_files(self):
-        link = self.root / "study_plan_20261017T120000000000+0900_abcdef12.csv"
-        link.symlink_to(self.root / self.filename)
         encoded = quote(self.identifier, safe="")
         queries = ["schedule_csv_file=", "schedule_csv_file",
                    f"schedule_csv_file={encoded}&schedule_csv_file={encoded}",
                    # An unencoded '+' decodes to a space and no longer names the plan.
                    "schedule_csv_file=" + self.identifier]
         for identifier in ("../outside.csv", "/etc/passwd", "license_planner/output/../x.csv",
-                           self.filename, "license_planner/output/" + link.name):
+                           self.filename):
             queries.append("schedule_csv_file=" + quote(identifier, safe=""))
         for query in queries:
             with self.subTest(query=query):
                 (status, result), read, listed = self.call_with_file_spies("/study-plans?" + query)
                 self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
                 self.assertEqual((read, listed), ([], []))
+
+    def symlink(self, link, target):
+        """Create a real symlink, skipping only where the platform refuses to."""
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"cannot create a file symlink here: {error}")
+        self.addCleanup(link.unlink, missing_ok=True)
+
+    def test_selected_plan_symlinks_are_rejected_without_reading_targets(self):
+        outside_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(outside_dir.cleanup)
+        outside = Path(outside_dir.name) / "outside.csv"
+        outside.write_text(self.original, encoding="utf-8")
+        inside = self.root / self.filename
+        targets = {"outside the store": outside, "a valid plan in the store": inside}
+        before = {path: path.read_bytes() for path in targets.values()}
+        for index, (label, target) in enumerate(targets.items()):
+            link_name = f"study_plan_20261017T12000000000{index}+0900_abcdef1{index}.csv"
+            self.symlink(self.root / link_name, target)
+            identifier = "license_planner/output/" + link_name
+            with self.subTest(label):
+                query = "schedule_csv_file=" + quote(identifier, safe="")
+                (status, result), read, listed = self.call_with_file_spies("/study-plans?" + query)
+                self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+                self.assertEqual((read, listed), ([], []))
+                with patch.object(api_service, "AdjustmentAgent") as agent:
+                    status, result = self.call("/schedules/adjust", {**self.payload, "schedule_csv_file": identifier})
+                self.assertEqual((status, result["error"]["code"]), (422, "INVALID_INPUT"))
+                agent.assert_not_called()
+                (status, _), read, _ = self.call_with_file_spies("/study-plans/" + link_name)
+                self.assertEqual((status, read), (404, []))
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+
+    def test_symlinked_exam_metadata_is_a_storage_error_without_reading_it(self):
+        outside_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(outside_dir.cleanup)
+        outside = Path(outside_dir.name) / "outside.meta.json"
+        outside.write_text('{"exam_date":"2026/12/31/23/00"}', encoding="utf-8")
+        in_store = self.metadata_path(self.store.create(self.original, OTHER_EXAM))
+        targets = {"outside the store": outside, "another plan's metadata": in_store}
+        before = {path: path.read_bytes() for path in targets.values()}
+        original_read = Path.read_bytes
+        self.metadata.unlink()
+        for label, target in targets.items():
+            with self.subTest(label):
+                self.metadata.unlink(missing_ok=True)
+                self.symlink(self.metadata, target)
+                read = []
+                def spy_read(file):
+                    read.append(file.name)
+                    return original_read(file)
+                with patch.object(api_service, "AdjustmentAgent") as agent, \
+                        patch.object(Path, "read_bytes", spy_read):
+                    status, result = self.call("/schedules/adjust", self.payload)
+                self.assertEqual((status, result["error"]["code"]), (500, "STORAGE_ERROR"))
+                agent.assert_not_called()
+                self.assertEqual(read, [self.filename])
+                self.assertTrue(self.metadata.is_symlink())
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(self.store.download(self.filename)[0], self.original)
 
     def test_unfiltered_list_ignores_unrelated_query_parameters(self):
         other = self.store.create(self.original)
@@ -333,11 +604,12 @@ class PlanUpdateTests(unittest.TestCase):
         self.assertFalse((self.root / self.filename).exists())
 
     def test_agent_loop_study_move_persists_without_post_success_model_request(self):
-        other = self.store.create(self.original)
+        other = self.store.create(self.original, OTHER_EXAM)
         profile = self.root / "profile.json"
         profile.write_text(json.dumps({"tuesday": [{"start": "09:00", "end": "11:00"}]}), encoding="utf-8")
         profile_bytes = profile.read_bytes()
         del self.payload["weekly_availability"]
+        del self.payload["exam_date"]
         agent = scripted_agent(model_call("inspect_schedule", schedule_id="study-1"),
                                model_call("inspect_topic_schedule", topic="Functions"),
                                model_call("reschedule_failed_study", schedule_id="study-1"),
@@ -354,10 +626,11 @@ class PlanUpdateTests(unittest.TestCase):
         self.assertEqual(self.call("/study-plans/" + self.filename), (200, result["schedule_csv"]))
         self.assertEqual(self.store.download(other.rsplit("/", 1)[1])[0], self.original)
         self.assertEqual(profile.read_bytes(), profile_bytes)
+        self.assertEqual(self.metadata.read_bytes(), self.metadata_bytes)
 
     def test_agent_loop_cancelling_the_only_row_persists_a_header_only_plan(self):
         rows = [copy.deepcopy(ROWS[1])]
-        identifier = self.store.create(render_schedule_csv(parse_schedule_rows(rows)))
+        identifier = self.store.create(render_schedule_csv(parse_schedule_rows(rows)), EXAM)
         agent = scripted_agent(model_call("inspect_schedule", schedule_id="external-2"),
                                model_call("remove_cancelled_external_schedule", schedule_id="external-2"),
                                RuntimeError("provider failure after success"))
