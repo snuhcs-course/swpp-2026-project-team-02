@@ -191,6 +191,33 @@ class ErrorMessagesTest {
         for (error in listOf(windows, invalid("x"))) assertFalse(error.requiresReload())
     }
 
+    @Test
+    fun savedPlanWithoutStoredExamDateAsksForANewPlan() {
+        val known = "This saved plan has no stored exam date. Create a new plan before adjusting study sessions."
+        val guidance = "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요."
+        val error = invalid(known)
+        assertEquals(guidance, error.adjustmentMessage())
+        assertEquals("화면에는 이전 계획이 남아 있어요. $guidance", error.reloadMessage())
+        assertFalse(error.requiresReload())
+        for (raw in listOf(
+            "$known license_planner/output/study_plan_x.csv",
+            "$known\nTraceback (most recent call last)",
+            "This saved plan has no stored exam date.",
+            "this saved plan has no stored exam date. create a new plan before adjusting study sessions.",
+            "This saved plan has no stored exam date. Create a new plan before adjusting study session.",
+        )) {
+            assertEquals(raw, fallback, invalid(raw).adjustmentMessage())
+        }
+    }
+
+    @Test
+    fun storedExamDateMismatchUsesTheDateExplanation() {
+        assertEquals(
+            "시험일을 확인할 수 없어요.\n이 계획에 저장된 입력은 바꿀 수 없어요. 목록으로 돌아가 시험일을 확인해 새 계획을 만들어 주세요.",
+            invalid("exam_date: must match the selected plan's stored exam date").adjustmentMessage(),
+        )
+    }
+
     /** Generation and question loading keep their earlier wording. */
     @Test
     fun generalMessagesAreUnchanged() {

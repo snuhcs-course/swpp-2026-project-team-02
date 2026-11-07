@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Serve the production HTTP API with recorded PlanningAgent tool calls.
+"""Serve the production HTTP API with fixed model replies instead of OpenRouter.
 
 This is an E2E fixture for the Android live flavor.  It uses the real API
-handler, request validation, scheduler, and StudyPlanStore, but replaces only
-the outbound OpenRouter exchange with a checked-in recorded tool-call trace.
+handler, request validation, scheduler, adjustment agent loop and tools,
+stored exam deadlines, and StudyPlanStore, but replaces only the outbound
+OpenRouter exchange: planning replays a checked-in recorded tool-call trace,
+and adjustment replies are chosen deterministically from the conversation the
+agent sends.  Any attempt to read an API key or send a provider request fails.
 It must never be deployed or configured with a production API key.
 """
 
@@ -14,6 +17,7 @@ import contextlib
 import copy
 import itertools
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -29,8 +33,11 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import api_service
+import license_planner.agent
+import schedule_adjuster.agent
 from api_server import API_PREFIX, DEFAULT_API_CONFIG, make_handler
 from license_planner.agent import PlanningAgent
+from schedule_adjuster.agent import AdjustmentAgent
 
 
 FIXTURE_PATH = BACKEND_ROOT / "tests" / "api_tests" / "fixtures" / "recorded_model_tool_calls.json"
@@ -80,6 +87,55 @@ def recorded_agent(case: dict) -> type[PlanningAgent]:
     return RecordedPlanningAgent
 
 
+def _function_call(call_id: str, name: str, arguments: dict) -> dict:
+    return {"status": "completed", "output": [{
+        "type": "function_call", "call_id": call_id, "name": name,
+        "arguments": json.dumps(arguments, ensure_ascii=False)}]}
+
+
+class ScriptedAdjustmentAgent(AdjustmentAgent):
+    """Run the real adjustment loop; only the model's next tool call is fixed.
+
+    Like a well-behaved model, it inspects the target named in the user
+    message, inspects that study session's topic, then asks for the matching
+    mutation tool.  A tool error ends the turn with a plain text reply.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._call_ids = itertools.count(1)
+
+    def _ask_model(self, input_items):
+        self.model = "fixed-e2e-fixture"
+        self.api_request_count += 1
+        call_id = f"fixed-adjust-{next(self._call_ids)}"
+        outputs = [item for item in input_items if item.get("type") == "function_call_output"]
+        if not outputs:
+            match = re.search(r'"schedule_id": "([^"]+)"', str(input_items[0].get("content", "")))
+            if match is None:
+                raise RuntimeError("fixed E2E fixture could not find the adjustment target")
+            return _function_call(call_id, "inspect_schedule", {"schedule_id": match.group(1)})
+        last = outputs[-1]
+        name = next(item["name"] for item in input_items
+                    if item.get("type") == "function_call" and item.get("call_id") == last["call_id"])
+        result = json.loads(last["output"])["result"]
+        if not isinstance(result, dict):
+            return {"status": "completed", "output": [{
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "The adjustment could not be applied."}]}]}
+        if name == "inspect_schedule" and result["schedule_type"] == "external":
+            return _function_call(call_id, "remove_cancelled_external_schedule",
+                                  {"schedule_id": result["schedule_id"]})
+        if name == "inspect_schedule" and result["topic"]:
+            return _function_call(call_id, "inspect_topic_schedule", {"topic": result["topic"]})
+        target = result["schedule_id"] if name == "inspect_schedule" else result["failed_session_id"]
+        return _function_call(call_id, "reschedule_failed_study", {"schedule_id": target})
+
+
+def _forbidden_provider_access(*args, **kwargs):
+    raise RuntimeError("the fixed E2E fixture must not read provider credentials or call OpenRouter")
+
+
 @dataclass(frozen=True)
 class FixedLiveE2EServer:
     """The running production handler and its isolated plan-store directory."""
@@ -102,7 +158,12 @@ def running_server(host: str = "127.0.0.1", port: int = 0,
         output_dir = Path(directory)
         config = {**DEFAULT_API_CONFIG, "host": host, "port": port}
         with patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", output_dir), \
-                patch.object(api_service, "PlanningAgent", recorded_agent(case)):
+                patch.object(api_service, "PlanningAgent", recorded_agent(case)), \
+                patch.object(api_service, "AdjustmentAgent", ScriptedAdjustmentAgent), \
+                patch.multiple(license_planner.agent, create_response=_forbidden_provider_access,
+                               load_api_key=_forbidden_provider_access, load_model=_forbidden_provider_access), \
+                patch.multiple(schedule_adjuster.agent, create_response=_forbidden_provider_access,
+                               load_api_key=_forbidden_provider_access, load_model=_forbidden_provider_access):
             server = ThreadingHTTPServer((host, port), make_handler(config))
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
@@ -128,6 +189,7 @@ def main() -> int:
     try:
         with running_server(args.host, args.port, args.case_id) as fixture:
             print(f"Fixed live E2E API listening at {fixture.api_base_url}", flush=True)
+            print(f"Plans are stored only in {fixture.output_dir}", flush=True)
             print("OpenRouter is disabled; press Ctrl+C to stop.", flush=True)
             threading.Event().wait()
     except KeyboardInterrupt:

@@ -8,6 +8,7 @@ import os
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -95,7 +96,7 @@ class UpstreamErrorMessageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.store = StudyPlanStore(self.root)
         self.original = render_schedule_csv(parse_schedule_rows(ROWS))
-        self.identifier = self.store.create(self.original)
+        self.identifier = self.store.create(self.original, datetime(2026, 10, 20, 22, 0))
         self.filename = self.identifier.rsplit("/", 1)[1]
         self.adjust_payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
                                "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
@@ -120,7 +121,8 @@ class UpstreamErrorMessageTests(unittest.TestCase):
                 return error.code, json.loads(error.read())
 
     def assert_store_unchanged(self):
-        self.assertEqual([path.name for path in self.root.iterdir()], [self.filename])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()),
+                         sorted([self.filename, Path(self.filename).stem + ".meta.json"]))
         self.assertEqual(self.store.download(self.filename)[0], self.original)
 
     def assert_public_error(self, response, status, message):

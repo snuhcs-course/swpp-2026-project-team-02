@@ -1,7 +1,6 @@
 {
   "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
   "schedule_id": "study-1",
-  "exam_date": "2026/11/30/09/00",
   "schedules": [
     {
       "schedule_id": "study-1",

@@ -51,11 +51,16 @@ Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
 pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the three
 offline backend unit suites in `backend/tests/` with coverage (not the scenario
-runners in `backend/scenarios/`), and the Android unit tests, request contract check,
-coverage, debug APK builds, and lint. Commands and report locations are in
+runners in `backend/scenarios/`) plus unit tests for the evidence validator in
+`scripts/tests/`, and the Android unit tests, request contract check, coverage,
+debug APK builds, and lint. Only after both of those jobs succeed, a third job
+starts the fixed-response backend fixture and runs the live-flavor
+instrumentation test on an API 35 emulator, using an emulator action pinned to a
+full commit SHA. Commands and report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
-[`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key, running
-backend, or emulator, so it does not verify live model planning or the Android UI.
+[`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key or
+deployed server, so it does not verify live model planning or the Android UI
+screens.
 
 ## Iteration 3 deployment
 

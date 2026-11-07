@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from .models import ScheduleEntry, WeeklyAvailability
 from .settings import EXTERNAL_ID_PREFIX, FIRST_STUDY_ID, STUDY_ID_PREFIX
 
+NOT_ENOUGH_TIME_MESSAGE = "NOT_ENOUGH_TIME: no available study slot remains before the exam date."
+
 
 def classify_schedule_id(schedule_id: str) -> str | None:
     """입력 값: 일정 ID 문자열
@@ -47,7 +49,7 @@ def _find_available_start(candidate_start: datetime, duration: timedelta,
     current_date = candidate_start.date()
     while True:
         if exam_date is not None and candidate_start >= exam_date:
-            raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
+            raise ValueError(NOT_ENOUGH_TIME_MESSAGE)
         weekday_windows = availability.for_weekday(current_date.weekday())
         for window in weekday_windows:
             window_start = datetime.combine(current_date, window.start_time)
@@ -93,7 +95,7 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
         while True:
             candidate_end = candidate_start + duration
             if exam_date is not None and candidate_end > exam_date:
-                raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
+                raise ValueError(NOT_ENOUGH_TIME_MESSAGE)
             conflict = next((entry for entry in other_entries
                              if intervals_overlap(candidate_start, candidate_end,
                                                   entry.start_datetime, entry.end_datetime)), None)
@@ -101,10 +103,8 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
                 break
             candidate_start = conflict.end_datetime
 
-    candidate_end = candidate_start + duration
-    if exam_date is not None and candidate_end > exam_date:
-        raise ValueError("NOT_ENOUGH_TIME: no available study slot remains before the exam date.")
-    moved = ScheduleEntry(target.schedule_id, candidate_start, candidate_end, target.topic)
+    # Both searches only return a slot whose full duration ends by the exam date.
+    moved = ScheduleEntry(target.schedule_id, candidate_start, candidate_start + duration, target.topic)
     return tuple(moved if entry.schedule_id == schedule_id else entry for entry in schedule)
 
 
