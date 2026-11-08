@@ -98,6 +98,37 @@ correct and user choice keys, boolean `is_correct`, and positive numeric
 `possible_score`. The server validates the result structure; the Android app is
 responsible for comparing the selected answer with the answer key.
 
+### Busy schedules
+
+`busy_schedules` lists existing commitments the plan must avoid. It may be
+omitted, `null` or empty. Each item is an object:
+
+```json
+{
+  "schedule_id": "12345",
+  "start_date": "2026/11/04/19/00",
+  "end_date": "2026/11/04/20/00",
+  "topic": "외부 일정"
+}
+```
+
+`schedule_id` must be a positive base-10 integer string, unique within the
+request; a prefix such as `calendar:` or a repeated ID returns `422
+INVALID_INPUT`. Leading zeros are normalized away. Intervals are half-open
+`[start_date, end_date)`: a study block may end exactly when a busy item starts,
+but no study block overlaps one by a positive duration, and overlapping busy items
+are subtracted once. Busy items that leave no usable time return the
+`NOT_ENOUGH_TIME` error described below before any model call. Every item is
+returned as an `external-<ID>` row in `schedules` and `schedule_csv`.
+
+The Android calendar import sends one item per calendar occurrence with the
+generic topic `외부 일정`. Recurring occurrences share a provider event ID, so the
+app keeps that ID for the first occurrence and assigns later occurrences unused
+numeric IDs above the largest provider ID. Timed events are widened to whole
+minutes in Korean local time; all-day events block their whole dates. Titles and
+other event details are not sent. See `../frontend/README.md#calendar-import` for
+which events the app includes.
+
 The response includes `schedules`, with `schedule_id`, `start_date`, `end_date`,
 and `topic` on each row, plus `schedule_csv` and `agent_summary`. The server may
 also return CSV location and diagnostic fields. The app ignores unknown fields
@@ -143,21 +174,15 @@ endpoint as described below; it does not import the server's plans into its list
 
 ## Task 2: select, adjust, and update a saved plan
 
-Later deployed OpenRouter and physical-device results are linked in the
-[verification index](../docs/README.md#verification-status). The 2026-10-30 to 31
-device report includes successful adjustment and explicit reload after a lost
-response, but records an unresolved intermittent HTTP 307. It does not attach
-the full two-plan same-file/CSV/original-window isolation matrix. These recorded
-results are distinct from the historical backend-only check below.
-
-Historical backend verification (2026-10-17): Fifteen isolated HTTP/storage tests
-passed using a replacement agent that executes the real domain tools. Fifteen
-existing adjustment tests passed; the planner suite passed 12/13 with an existing
-weekday-normalization expectation mismatch. Live Gemini calls were not run
-because no key was configured. Android tests could not run because the SDK
-location was unavailable. That backend task did not change the Android UI.
-Later frontend adjustment and recovery implementation is described here and in `../frontend/README.md`; the
-old suite/SDK observations above are dated evidence, not current blockers.
+The behavior below is covered by the offline API suite (`tests/api_tests/`,
+including the real-handler fixture in `test_support/fixed_live_e2e_server.py`)
+and by the Android client's controlled tests described in
+`../frontend/README.md#verification`. Neither exercises OpenRouter or the
+deployed server. Earlier deployed and physical-device runs, including an
+unresolved intermittent HTTP 307 on adjustment, are kept in the
+[historical records](../README.md#historical-records); they did not include
+the full two-plan same-file/CSV/original-window isolation procedure, which
+remains unverified against a real server.
 
 ### Select a plan
 

@@ -163,6 +163,8 @@ python -m coverage run --append -m unittest discover -s tests/api_tests -v
 python -m coverage report -m
 python -m coverage xml
 python -m coverage html
+python -m unittest discover -s ../scripts/tests -v
+python ../scripts/verify_test_evidence.py --repo-root .. --scope backend
 ```
 
 The application has no third-party dependencies; to reproduce this locally,
@@ -174,9 +176,25 @@ production modules listed in its `include` setting (the shared `openrouter_clien
 artifact, kept 7 days. No minimum percentage is enforced; agree on any threshold
 from measured baselines.
 
+`../scripts/verify_test_evidence.py` checks reports that already exist; it runs no
+tests and repeats no scenario assertions. With `--scope backend` it fails when
+`coverage-results/coverage.xml` or `coverage-results/html/index.html` is missing,
+when the XML has no positive line denominator, or when the top-level
+`api_server.py` is absent from it. `--scope android` checks the Android JUnit and
+JaCoCo reports (see `../frontend/README.md#checks`), and the default `--scope all`
+checks both. It prints a JSON summary. It does not record which revision,
+commands or CI run produced the reports; whoever cites a result records those.
+
 These tests require no OpenRouter key or external network access. The API tests serve the request
 handler on temporary loopback ports with scripted OpenRouter Responses replies, so passing them
 does not verify live model planning or a running `python api_server.py`.
+
+CI does not cover the scenario runners in `scenarios/` (including the live
+OpenRouter runners), OpenRouter credentials, credit, latency or model quality,
+the CPU server's systemd/Nginx setup or public reachability, physical devices or
+calendar providers, or the signed release APK (built by
+`../.github/workflows/prod-apk.yml`). Record those checks separately and do not
+describe them as CI coverage.
 
 ### Fixed-response API fixture
 
@@ -200,7 +218,29 @@ python -m unittest discover -s tests/api_tests -p test_fixed_live_e2e_server.py 
 
 This is controlled integration evidence for the handler, deadline rules and
 storage. It is not evidence about OpenRouter, model quality, or a deployed
-server.
+server. Never run the fixture as the public server.
+
+### Live model checks
+
+The live scenario runners above, and any manual check against a running server,
+make real OpenRouter requests. Record their results separately from the offline
+suites, with enough identity to interpret them later: the date and time, the API
+base URL actually targeted, the backend revision (and whether the working tree
+was clean), the requested model (`OPENROUTER_MODEL` or the default) and any
+provider-returned model, the exact inputs or case IDs, the APK identity when an
+app was involved, and every failure, timeout and retry as it happened. Do not
+substitute current source defaults for settings that were not recorded.
+
+Use isolated storage: the runners start temporary local servers, and a manual
+server can point `APP_STUDY_PLAN_DIR` at a disposable directory. The shared
+public server keeps only about 100 generated plans, so a batch of generated
+plans there can prune other people's plans; agree with the server owner before
+writing to it. Keep API keys, raw provider error bodies and `.env` contents out
+of recorded results. A passing live run describes that
+run only; it does not establish provider reliability, latency or the quality of
+a plan. The repository has no maintained model-evaluation runner; the earlier
+frozen evaluation and its failed result are preserved in the
+[historical archive](../README.md#historical-records).
 
 ## Model configuration
 

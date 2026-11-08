@@ -11,9 +11,17 @@ project/
 
 ## Documentation
 
-Start with the [documentation and verification index](docs/README.md) for setup,
-API contracts, deployment, evaluator installation, HE results, and historical
-performance evidence. It identifies the branches and dates behind each result.
+| Guide | Covers |
+| --- | --- |
+| This README | Product scope, quick start, guide index and open decisions |
+| [`backend/README.md`](backend/README.md) | Backend setup and configuration, offline checks and coverage, scenario runners, the fixed-response fixture and live model checks |
+| [`backend/DEVELOPER_GUIDE.md`](backend/DEVELOPER_GUIDE.md) | Internal architecture, validation, scheduling and storage rules, question-bank maintenance |
+| [`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md) | HTTP contract used by the Android app: payloads, errors, deadlines and reload recovery |
+| [`frontend/README.md`](frontend/README.md) | Android build, flavors and signing, app behavior, calendar permissions and verification procedures |
+| [`deploy/README.md`](deploy/README.md) | Server topology, installed-state inspection, updates and backups, release APK and operational checks |
+
+Package READMEs (for example `backend/schedule_adjuster/README.md`) describe
+their own command-line tools.
 
 ## Backend
 
@@ -62,25 +70,59 @@ full commit SHA. Commands and report locations are in
 deployed server, so it does not verify live model planning or the Android UI
 screens.
 
-## Iteration 3 deployment
+## Deployment
 
-The deployed CPU-server topology, systemd and Nginx templates, public API check,
-and fixed device evaluation flow are documented in [`deploy/`](deploy/README.md).
-The current evaluator API is
-`http://swpp26t02.147-46-242-174.sslip.io/api/v1`; release APK installation and
-submission details are in [`ITER3_SUBMISSION.md`](ITER3_SUBMISSION.md).
+The public API is `http://swpp26t02.147-46-242-174.sslip.io/api/v1`, served by
+the shared CPU server through Nginx. Its systemd and Nginx templates, how to
+inspect the installed revision before an update, plan backups, the read-only
+public check and the signed release APK are documented in
+[`deploy/README.md`](deploy/README.md). This checkout does not establish which
+revision or configuration the server is running.
 
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently
   plans for the written exam only.
-- **Question bank:** the HE package retains five authored spreadsheet questions.
-  Computer-general questions are absent; replacement or expansion remains a later
-  decision. See the [question review](docs/iter3-HE/01_question_review.md).
+- **Question bank:** five authored example questions cover the spreadsheet part
+  of the written exam only; 컴퓨터 일반 questions are absent. Replacement or
+  expansion remains a later decision. See
+  [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
-- **Deployment:** authentication and per-user storage remain open; the current
-  Iteration 3 server and APK use the shared HTTP endpoint documented above.
+- **Deployment:** authentication, per-user storage and plan retention remain
+  open; the public server and release APK use the shared HTTP endpoint above.
+
+## Historical records
+
+Earlier reports, demonstrations and experiments were removed from the current
+tree. They are preserved unchanged at commit
+[`6d8af7f`](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f). Their dates, builds, models and results describe
+those runs only and are not evidence about the current code, model or server.
+
+- [AI plan evaluation](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-ai-eval): frozen 37-case protocol,
+  runner and raw results. The 2026-11-04 run was judged **FAIL** against its
+  preregistered criteria (weakest-topic allocation missed its threshold), and
+  its server revision, model and decoding settings were not recorded.
+- [Heuristic-evaluation package](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE),
+  [fixed walkthrough](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/deploy/HE_EVALUATION.md),
+  [submission record](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/ITER3_SUBMISSION.md) and
+  [demo record](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-demo/README.md): fixed inputs, APK
+  identities, the 2026-10-30–31 physical-device run (including the unresolved
+  intermittent HTTP 307 on adjustment) and the question review.
+- [Testing record](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/TESTING_DOCUMENTATION.md),
+  [test-automation and scheduler record](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/ITER3_TEST_AUTOMATION_AND_P30_EVIDENCE.md),
+  [scheduler decision](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/P30_SCHEDULER_APPROACH.md) and
+  [verification index](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/README.md): dated CI runs, coverage
+  figures, public-server emulator screenshots and ownership notes.
+- [Gemini performance package](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/performance): the 2026-10-15
+  `gemini-3.5-flash-lite` measurements and their reproduction tools. They do not
+  describe the current OpenRouter model.
+- The earlier [frontend guide](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/frontend/README.md),
+  [deployment guide](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/deploy/README.md),
+  [developer guide](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/backend/DEVELOPER_GUIDE.md) and
+  [integration guide](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/backend/FRONTEND_INTEGRATION_GUIDE.md) contain dated
+  device-test APK, device-run, server-restart, Gemini comparison and
+  backend-verification records.

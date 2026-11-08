@@ -136,11 +136,27 @@ HTTP to `10.0.2.2`, `127.0.0.1`, `localhost`, and the assigned deployment host
 to that deployment host. API keys stay in the backend; the app never calls the
 model provider directly. The live API contract is unchanged by the model choice.
 
-For the signed evaluator APK and public endpoint, follow the
-[HE submission package](../docs/iter3-HE/04_submission_package.md) and
-[deployment guide](../deploy/README.md). The APK used in the recorded device run
-was built from `iteration-3-pr4-base` at `d8ba7688e533c06c66b00ad43aa41b6dde11a4a4`;
-it is separate from a local debug build.
+The signed release APK for the public endpoint is built by the `Prod APK`
+workflow; its artifact, signature check and installation are described in the
+[deployment guide](../deploy/README.md#release-apk). Record the workflow run and
+source commit with any result, since a local debug build is a different APK.
+
+### Physical device against the public server
+
+A live debug build can target the public server directly:
+
+```bash
+./gradlew :app:assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://swpp26t02.147-46-242-174.sslip.io/api/v1 --no-daemon
+adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
+```
+
+Never install a default live build (pointing at `10.0.2.2`) on a physical
+device; it cannot reach a backend. A debug build is signed with the local debug
+certificate, not the release certificate, so installing it over a release build
+(or the reverse) fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate
+test device or profile, or uninstall the old app only after accepting the loss of
+its device-local plans. The public server is shared and unauthenticated; plans
+created there are visible to anyone who lists them.
 
 ### Live release builds
 
@@ -540,11 +556,12 @@ times, without account names. These checks have not been run for this change.
 
 ## Verification
 
-These are recorded results from different source revisions, not a fresh test run
-of this checkout. See the [verification index](../docs/README.md#verification-status)
-for source identities and remaining gaps.
+This section describes what each kind of check covers. It is not a record of a
+fresh run of this checkout; record each run's revision, APK and environment with
+its result. Earlier dated device, deployment and emulator runs are kept in the
+[historical records](../README.md#historical-records).
 
-- Previous JVM checks passed for both flavors, with MockWebServer for HTTP.
+- JVM checks cover both flavors, with MockWebServer for HTTP.
 - `contract_checks/verify_request.py` checks the request the app serializes
   against a backend revision's source, offline (no server or model). CI uses
   `--backend-ref HEAD`, the backend in the same checkout.
@@ -568,17 +585,59 @@ for source identities and remaining gaps.
   adjustments right after loading questions and generating a plan. Each
   request must reach the server once, and the adjustment is still never
   resent automatically. The emulator retest at normal speed is described
-  under [Controlled adjustment server](#controlled-adjustment-server). The later
+  under [Controlled adjustment server](#controlled-adjustment-server). A manual
   device journey is not a repetition of this exact request-count matrix.
-- Physical device and deployed backend: the [2026-10-30–31 device report](../docs/iter3-HE/03_device_verification.md)
-  records Galaxy S26 Ultra / Android 17 on off-campus 5G, generation, app-restart
-  retention, adjustment, generation retry, and reload after a lost adjustment
-  response. Adjustment is **conditional**: intermittent HTTP 307 needed about
-  four explicit retries before success. The cause is unresolved; later
-  non-reproduction does not establish a fix. Server-restart retention is a
-  separately attributed 2026-10-30 team result
-  ([deployment record](../deploy/README.md#verification)), not a restart
-  performed in that device run. No new live check was performed for this documentation pass.
+- Physical device and deployed backend: only the
+  [manual live check](#manual-live-check) below exercises these. Earlier runs
+  recorded adjustment as conditional because of an intermittent HTTP 307 that
+  needed several explicit retries; its cause is unresolved, and later
+  non-reproduction does not establish a fix.
+
+### Manual live check
+
+Use this procedure on a device or emulator connected to a real backend (a local
+`python api_server.py` or the public server). It makes real model requests and
+writes plans to that server; use the public server only when its owner agrees.
+It checks rules the app and backend enforce, not a particular schedule: model
+output, session counts and response times vary between runs, so do not compare
+against a schedule or timing from an earlier run.
+
+1. **Generate.** Choose 컴퓨터활용능력 2급, a preparation start and exam date,
+   a level, answers to the example questions (including 모르겠음 at least once),
+   and a few weekday windows. Check the answer summary and per-topic scores
+   against the answers given, that progress is shown while the plan is made, and
+   that the app stays open. In the plan, every study session must lie inside a
+   chosen weekday window, after the preparation start and before the exam, and
+   must not overlap another session or an imported calendar event.
+2. **Reopen.** Force-stop and relaunch the app, open 계획 조정, and confirm the
+   plan is listed under its number with the same rows.
+3. **Adjust.** Choose one study session and adjust it. On success the view
+   jumps to the moved session's week; the moved session keeps its topic and
+   duration, lies inside the plan's original windows, ends by the exam date and
+   overlaps nothing, and every other row is unchanged. Relaunch the app and
+   confirm the adjusted rows remain. If no slot fits before the exam, the app
+   explains the shortage and the plan stays unchanged.
+4. **Generation failure.** Turn on airplane mode during generation. The app
+   shows that the plan could not be made, keeps every input, and offers 다시
+   시도 and 입력 수정하기. After restoring the network, 다시 시도 generates
+   without re-entering anything.
+5. **Uncertain adjustment.** Turn on airplane mode during an adjustment. The
+   app reports that the result cannot be confirmed, keeps the earlier rows, and
+   blocks further adjustment of that plan. After restoring the network, 최신
+   계획 불러오기 must succeed before a new selection can be submitted; the app
+   never resends the earlier request by itself.
+6. **Input checks.** Confirm the form blocks: no study weekday, a window ending
+   after midnight, and an exam date before the preparation start. A period whose
+   windows give no usable time returns the insufficient-time explanation with
+   입력 수정하기.
+
+Record the APK's workflow run or build command, source commit and signature
+check; the device model, Android version and network type; the API base URL and,
+when known, the backend revision; timestamps of generation and adjustment; and
+every failure, delay or retry as it happened. Record each HTTP 307 on
+adjustment with its time and the number of retries; a successful retry does not
+show that it is fixed. To check server-side persistence across a restart, see
+the [deployment guide](../deploy/README.md#verification).
 
 ### Controlled adjustment server
 
@@ -691,10 +750,18 @@ time. Live adjustment results mean nothing until the backend dependency in
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
-- Physical-device evidence is limited to the [recorded Galaxy S26 Ultra run](../docs/iter3-HE/03_device_verification.md);
-  it is not broad device coverage. TalkBack support is incomplete.
+- Physical-device evidence is limited to a few recorded single-device runs
+  (see [historical records](../README.md#historical-records)); it is not broad
+  device or reliability coverage. TalkBack support is incomplete.
 - Deployed adjustment can intermittently fail with HTTP 307; the cause and fix
-  remain unverified. See the device report's failure record 1.
+  remain unverified.
+- The questions cover only the spreadsheet part of the written exam (no 컴퓨터
+  일반 questions); see the
+  [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
+- Calendar events are read once, when a plan is created. Adjustment uses the
+  saved plan's external rows; re-reading the calendar after a plan is saved,
+  detecting newly conflicting study sessions and rescheduling them are not
+  implemented.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
   failure with retry, not as a storage problem. Retrying cannot succeed until the
   saved plan file on the server is repaired; the plan stays viewable and unchanged.
@@ -708,56 +775,3 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Validation wording depends on the backend's free-text `error.message`. If that
   text changes, the app shows the neutral fallback until the mapping is updated.
 - The app shows them under “계획 요약” in a plain gray box, without the AI tag, so the label does not claim model authorship.
-
-## P29/P30 integration device-test APK
-
-The integration branch is `feat/p29-p30-integration`. The device-test APK built on
-2026-11-07 uses application sources at `35be6ab6bfc08d09a5092d4c52bc1d0afcb71f62`.
-It is a signed `liveDebug` build (package `com.swpp.licenseplanner`, version
-`0.1.0`, minimum Android 8.0/API 26) pointing to the public CPU server:
-`http://swpp26t02.147-46-242-174.sslip.io/api/v1`.
-
-Build from `frontend/` with the configured JDK/Android SDK:
-
-```bash
-./gradlew :app:assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://swpp26t02.147-46-242-174.sslip.io/api/v1 --no-daemon
-adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
-```
-
-The APK uses a local debug signing certificate, not the CI release certificate.
-An existing release installation may reject an update with
-`INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate test device/profile, or
-uninstall the old app only after accepting loss of its device-local plans.
-Do not use a default live build pointing at `10.0.2.2` on a physical device.
-
-Local integration checks passed: 151 backend tests, 232 Demo and 230 Live unit
-tests, both flavor lint tasks, the live instrumentation-test APK build, and
-the existing serialized Android request contract check against this backend.
-The instrumentation APK was compiled; its device tests were not executed in
-this integration run. APK v2 signature and the packaged public API URL were
-verified. The server health endpoint returned HTTP 200; this does not identify
-the deployed backend revision.
-
-### Physical-device result (2026-11-07 KST)
-
-The signed device-test APK was installed on a Galaxy S24+ (SM-S926N, Android
-14) and connected to the public `.174` API. During plan creation, the app read
-two timed calendar events and one all-day event. The generated study rows did
-not overlap the timed events, and no study row was placed on the all-day-event
-date. This verifies the P29 → P30 initial-generation path: calendar events are
-sent as `busy_schedules` and the planner avoids them.
-
-The following recovery and boundary behaviors were also checked on that device:
-
-- Denying calendar-read permission shows Korean guidance with permission retry
-  and app-settings actions; a plan can still be generated without calendar data.
-- When no eligible study slot remains before the exam deadline, the app explains
-  the shortage and preserves the stored plan.
-- Calendar export was verified as a one-way copy to the device calendar.
-
-This is one device/API run, not broad compatibility or reliability coverage.
-Recurring-event and empty-calendar cases were not included in this run.
-Adjustment uses the saved plan's external-event snapshot; refreshing calendar
-events after a plan has been saved, detecting all newly conflicting study rows,
-and automatically rescheduling only those rows (US-C9 confirmation B) are not
-implemented by this integration. Export remains a one-way copy.
