@@ -12,7 +12,7 @@ from license_planner.agent import PlanningAgent
 from license_planner.csv_io import parse_busy_csv, parse_datetime, render_schedule_csv
 from license_planner.models import PlanRequest
 from license_planner.tools import check_initial_capacity
-from assessment_service import get_public_questions, parse_assessment_results, reviewed_topic_results
+from assessment_service import get_public_questions, parse_assessment_results, partition_assessment
 from license_planner.user_availability import (
     WEEKDAY_NAMES, load_personal_availability, parse_weekly_availability,
     save_personal_availability,
@@ -94,11 +94,9 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
     assessment_items = ()
     if "assessment_results" in payload:
         certification_id = str(payload.get("certification_id", "computer_specialist_level_2"))
-        assessment_items = parse_assessment_results(certification_id, payload["assessment_results"])
-        # A complete onboarding selection uses its reviewed topics; other results keep agent classification.
-        problem_results = reviewed_topic_results(certification_id, assessment_items)
-        if problem_results:
-            assessment_items = ()
+        submitted = parse_assessment_results(certification_id, payload["assessment_results"])
+        # Results matching reviewed records keep their stored topics; only the rest need classification.
+        problem_results, assessment_items = partition_assessment(certification_id, submitted)
     else:
         if require_assessment:
             raise ValueError("assessment_results is required")

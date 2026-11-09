@@ -76,14 +76,20 @@ Results are saved under `scenarios/results/api/`.
 The questionnaire writes a JSON assessment result containing the question,
 choices, correct answer, user answer, local `is_correct` result, and possible
 score. Planning requests submit this document as `assessment_results`; the API
-does not grade it. When the results contain exactly the configured onboarding
-selection (its IDs in any order, each with the same question text, normal
-choices, correct answer and possible score; an added `UNKNOWN` choice is
-allowed), each question counts once toward its reviewed `topic` in
-`assessment_questionnaire/questions.json`. Otherwise the planning agent maps each
-question to one or more fixed certification topics with contribution weights
-summing to 1. Either way the server aggregates topic-level strengths and
-weaknesses for the schedule.
+does not grade it, but it rejects (422) a result whose `is_correct` differs from
+comparing `user_answer` with `correct_answer` (`UNKNOWN` is always incorrect),
+malformed content, or a missing `possible_score`. Each submitted question is
+matched on its own: one with the same ID, question text, normal choices, correct
+answer and possible score as a complete `reviewed` record in
+`assessment_questionnaire/questions.json` (an added `UNKNOWN` choice is allowed,
+and the record need not be in the onboarding selection) counts once toward that
+record's `topic`. The planning agent maps only the remaining (unresolved)
+questions to one or more fixed certification topics with contribution weights
+summing to 1, and the server combines both into topic-level strengths and
+weaknesses for the schedule. A missing or invalid configured bank, mapping,
+selection or catalog entry returns 500 `INTERNAL_ERROR` before any model call
+instead of sending every question to the model; see
+[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#문항-은행-유지보수).
 
 This workspace contains two independent Python programs:
 
@@ -96,8 +102,11 @@ Both programs accept and emit timestamps in `YYYY/MM/DD/HH/MM` format. Planning 
 
 The License Planner MVP currently configures Computer Specialist Level 2, while topic names and question statistics are read from data rather than embedded in the planning algorithm. See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for the input validation, tool flow, schedule rules, and handoff details.
 
-The terminal questionnaire produces
-`assessment_questionnaire/output/assessment_results.json`. The same result
+The terminal questionnaire (`python -m assessment_questionnaire.cli` or
+`python assessment_questionnaire/cli.py` from `backend/`; see
+[its README](assessment_questionnaire/README.md)) produces
+`assessment_questionnaire/output/assessment_results.json`. Malformed question
+documents make it exit with code 2 before asking anything. The same result
 document can be passed to the HTTP Planning API or local planner CLI:
 
 ```json
@@ -106,7 +115,7 @@ document can be passed to the HTTP Planning API or local planner CLI:
 ]}}
 ```
 
-The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start`/`end` time windows. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. For a complete onboarding selection the reviewed question topics are used; otherwise the agent classifies each question across one or more catalog topics and proportionally attributes its possible/earned points. Weaker topics are ranked first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
+The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start`/`end` time windows. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. Each question that matches a complete reviewed bank record uses that record's topic; the agent classifies only the remaining questions across one or more catalog topics and proportionally attributes their possible/earned points. Before any model call, the minimum-capacity check uses the exact topic count when every question is resolved, the resolved topic count as a lower bound for a mixed request, and one topic when nothing is resolved; after analysis it uses the union of resolved and classified topics. The planning topic catalog (`config/certifications.json`) is loaded once per process, so restart the server after editing its topics. Weaker topics are ranked first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
 
 Study sessions are placed only inside the user's weekly availability. Supply at least one weekday and `start`/`end` window in `weekly_availability`, or save a profile through `PUT /api/v1/availability`; the backend stores it in `config/user_availability.json`. If neither a request nor saved profile contains an available window, Planning API returns HTTP 422 with an input error instead of using common default hours. The generated `topic` column records each study block's assigned topic; external events have a blank topic unless supplied. The agent is instructed to balance date-specific workload across equivalent dates (for example, 120 minutes across two equivalent dates becomes about 60 minutes per date), while the backend enforces only date-level available capacity and does not guarantee this balance. Busy event ranges are excluded; intervals include their start and exclude their end. There is no fixed session length or maximum number of study blocks per day. After saving a plan, the API attempts to retain the 100 most recent generated plan CSVs by removing older matching files; locked files can prevent cleanup.
 
@@ -212,21 +221,39 @@ one trace per server, chosen with `--case-id`. The default,
 `tests/api_tests/fixtures/scripted_selected_assessment_tool_calls.json`, is a
 synthetic trace written for this fixture, not a captured provider response: it
 submits the complete 18-question onboarding selection, analyzes it without
-`problem_topics` and builds sessions for all eight topics. The recorded
-original-five traces stay in
-`tests/api_tests/fixtures/recorded_model_tool_calls.json`; the backend tests pin
-`topic_errors_then_build_on_last_request` explicitly for the legacy
-classification and deadline checks. Adjustment answers with inspect, topic
+`problem_topics` and builds sessions for all eight topics. The same file holds
+two more synthetic cases: `original_five_reviewed_topics` (the original five
+questions, which match reviewed records and need no classification) and
+`mixed_reviewed_and_custom_questions` (two reviewed questions plus one custom
+question, the only one the trace classifies). The captured five-question traces
+stay unchanged in `tests/api_tests/fixtures/recorded_model_tool_calls.json`.
+They classify every question, which now matches the HTTP contract only for
+custom questions, so the backend tests replay them with each prompt marked as a
+custom question (`test_support/question_banks.py`) and pin
+`topic_errors_then_build_on_last_request` for the classification and deadline
+checks. Adjustment answers with inspect, topic
 inspection and the matching mutation tool. Plans live in a temporary directory
 removed on exit. Reading an OpenRouter key or model setting, or sending a
-provider request, raises an error. The legacy recorded request's own exam date
+provider request, raises an error. A client that sends a captured trace's
+original request unchanged gets reviewed topics, which the trace does not
+model; send custom questions with those case IDs. The legacy recorded request's own exam date
 (`2026/11/02/18/00`) leaves no free window after the plan, so its study
 sessions cannot move; generating the same request with a later exam date gives
 a plan that can be adjusted.
 
+A synthetic case is an object keyed by its case ID with `provenance` (stating
+that it is synthetic), the `request` it was written for and the
+`model_tool_calls` to replay. Add new synthetic cases to
+`scripted_selected_assessment_tool_calls.json`, never to the captured file, and
+use an ID that neither file already has. Send each case's own `request`: the
+two reviewed cases expect no `problem_topics`, and the mixed case maps only its
+custom question.
+
 ```bash
 # from backend/
 python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+python test_support/fixed_live_e2e_server.py --case-id original_five_reviewed_topics
+python test_support/fixed_live_e2e_server.py --case-id mixed_reviewed_and_custom_questions
 python test_support/fixed_live_e2e_server.py --case-id topic_errors_then_build_on_last_request
 python -m unittest discover -s tests/api_tests -p test_fixed_live_e2e_server.py -v
 ```

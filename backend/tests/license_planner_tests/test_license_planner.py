@@ -202,6 +202,31 @@ class PlanningApiContractTests(unittest.TestCase):
                          {"차트와 분석", "스프레드시트 기본"})
         self.assertEqual(sum(row["possible_score"] for row in result["topic_statistics"]), 1)
 
+    def test_weighted_custom_mapping_adds_to_reviewed_results_without_extra_questions(self):
+        from assessment_service import get_public_questions
+
+        reviewed = get_public_questions("computer_specialist_level_2")["questions"][3]
+        payload = make_api_payload()
+        payload["assessment_results"]["results"].append({
+            "problem_id": reviewed["id"] + 100, "question": "사용자 정의 차트 문항",
+            "choices": {"A": "가", "B": "나"}, "correct_answer": "A", "user_answer": "A",
+            "is_correct": True, "possible_score": 2})
+        payload["assessment_results"]["results"].append({
+            "problem_id": reviewed["id"], "question": reviewed["prompt"], "choices": reviewed["choices"],
+            "correct_answer": reviewed["correct_answer"], "user_answer": reviewed["correct_answer"],
+            "is_correct": True, "possible_score": reviewed["possible_score"]})
+        request = build_plan_request(payload, require_assessment=True)
+        unresolved = [{"problem_id": item.problem_id, "topics": [{"topic": "차트와 분석", "weight": 0.7},
+                                                                {"topic": "스프레드시트 기본", "weight": 0.3}]}
+                      for item in request.assessment_items]
+
+        result = PlannerTools(request).call("analyze_exam_results", {"problem_topics": unresolved})
+
+        self.assertEqual([row.problem_id for row in request.problem_results], [reviewed["id"]])
+        self.assertEqual(len(request.assessment_items), 2)
+        self.assertAlmostEqual(result["total_possible_score"], 4)
+        self.assertAlmostEqual(sum(row["problem_count"] for row in result["topic_statistics"]), 3)
+
     def test_planner_tool_builds_schedule_after_question_topic_analysis(self):
         request = build_plan_request(make_api_payload(), require_assessment=True)
         tools = PlannerTools(request)

@@ -86,6 +86,29 @@ def run_recording_agent(request, replies):
         return PlanningAgent(api_key="test-key").run(request), sent
 
 
+def custom_result(problem_id, *, correct=True, possible_score=1):
+    """A consistently scored custom question that matches no bank record."""
+    return {"problem_id": problem_id, "question": f"사용자 정의 문항 {problem_id}",
+            "choices": {"A": "가", "B": "나", "UNKNOWN": "모르겠음"}, "correct_answer": "A",
+            "user_answer": "A" if correct else "B", "is_correct": correct, "possible_score": possible_score}
+
+
+def mixed_request(reviewed_ids, custom_rows):
+    """Reviewed selection items answered correctly, followed by custom results."""
+    by_id = {question["id"]: question for question in bank_questions()}
+    assessment = results_for([by_id[question_id] for question_id in reviewed_ids], lambda question: True)
+    assessment["results"] += custom_rows
+    return build_plan_request(payload(assessment), require_assessment=True)
+
+
+def topic_mapping(problem_id, topic):
+    return {"problem_id": problem_id, "topics": [{"topic": topic, "weight": 1}]}
+
+
+def input_metadata(sent):
+    return json.loads(sent[0][0]["content"].split("Input metadata: ", 1)[1])
+
+
 class WrittenBankContentTests(unittest.TestCase):
     def test_bank_records_its_syllabus_cycle_and_onboarding_selection(self):
         document = _load_question_bank(CERT_ID)
@@ -192,15 +215,30 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
         with self.assertRaisesRegex(InsufficientCapacityError, "시간이 7분이라 진단된 학습 주제 8개에"):
             check_initial_capacity(request)
 
-    def test_original_five_question_request_keeps_model_classification(self):
+    def test_original_five_question_request_uses_reviewed_topics(self):
         request = build_plan_request(payload(results_for(bank_questions()[:5], lambda question: True)),
                                      require_assessment=True)
 
-        self.assertEqual(len(request.assessment_items), 5)
-        self.assertEqual(request.problem_results, ())
-        self.assertRegex(PlannerTools(request).call("analyze_exam_results", {}),
-                         "^INVALID_TOOL_CALL: problem_topics must classify")
+        result = PlannerTools(request).call("analyze_exam_results", {})
 
+        self.assertEqual(request.assessment_items, ())
+        self.assertEqual({row.problem_id: row.topic for row in request.problem_results}, ORIGINAL_LABELS)
+        self.assertEqual((result["total_possible_score"], result["total_earned_score"]), (5, 5))
+        self.assertEqual({row["topic"] for row in result["topic_statistics"]}, set(ORIGINAL_LABELS.values()))
+
+    def test_reviewed_subsets_keep_each_stored_topic_in_any_order(self):
+        questions = bank_questions()
+        subsets = {"one item": [questions[12]], "seventeen items": questions[:17],
+                   "reordered subset": [questions[9], questions[2], questions[15]]}
+        for label, subset in subsets.items():
+            with self.subTest(label):
+                request = build_plan_request(payload(results_for(subset, computer_general_missed)),
+                                             require_assessment=True)
+                self.assertEqual(request.assessment_items, ())
+                self.assertEqual([(row.problem_id, row.topic) for row in request.problem_results],
+                                 [(question["id"], question["topic"]) for question in subset])
+                self.assertEqual(sum(row.earned_score for row in request.problem_results),
+                                 sum(computer_general_missed(question) for question in subset))
     def test_reordered_selection_with_unknown_answers_uses_reviewed_topics(self):
         assessment = results_for(bank_questions(), computer_general_missed)
         assessment["results"].reverse()
@@ -240,36 +278,111 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
         self.assertNotIn("매크로 활용", tools.build_topics())
         self.assertEqual(len(tools.build_topics()), 7)
 
-    def test_custom_and_partial_submissions_keep_model_classification(self):
+    def test_changed_content_leaves_only_that_question_unresolved(self):
         def changed(index, **fields):
             questions = copy.deepcopy(bank_questions())
             questions[index].update(fields)
             return questions
 
-        extra = bank_questions() + [{**bank_questions()[0], "id": 19}]
-        cases = {"reused id with different text": changed(7, prompt="같은 ID를 다시 쓴 사용자 정의 문항입니다."),
-                 "reused id with different choices": changed(
-                     8, choices={**bank_questions()[8]["choices"], "D": "바뀐 선택지"}),
-                 "reused id with a different key": changed(9, correct_answer="A"),
-                 "reused id with a different score": changed(10, possible_score=2),
-                 "missing item": bank_questions()[:-1], "extra item": extra}
-        for label, questions in cases.items():
+        cases = {"reused id with different text": (7, changed(7, prompt="같은 ID를 다시 쓴 사용자 정의 문항입니다.")),
+                 "reused id with different choices": (8, changed(
+                     8, choices={**bank_questions()[8]["choices"], "D": "바뀐 선택지"})),
+                 "reused id with a different key": (9, changed(9, correct_answer="A")),
+                 "reused id with a different score": (10, changed(10, possible_score=2)),
+                 "id outside the bank": (18, bank_questions() + [{**bank_questions()[0], "id": 19}])}
+        for label, (index, questions) in cases.items():
             with self.subTest(label):
                 request = build_plan_request(payload(results_for(questions, lambda question: True)),
                                              require_assessment=True)
-                self.assertEqual(len(request.assessment_items), len(questions))
-                self.assertEqual(request.problem_results, ())
-
-    def test_selected_submission_with_extra_stored_items_keeps_reviewed_path_only_for_the_selection(self):
+                changed_id = questions[index]["id"]
+                self.assertEqual([item.problem_id for item in request.assessment_items], [changed_id])
+                self.assertEqual(len(request.problem_results), len(questions) - 1)
+                self.assertNotIn(changed_id, {row.problem_id for row in request.problem_results})
+    def test_submitted_reviewed_item_outside_onboarding_uses_its_stored_topic(self):
         with temporary_question_bank(larger_level_2_bank()):
-            stored = _load_question_bank(CERT_ID)["questions"]
-            reviewed_extra = [question for question in stored if question["id"] == 19]
-            request = build_plan_request(
-                payload(results_for(bank_questions() + reviewed_extra, lambda question: True)),
-                require_assessment=True)
+            stored = {question["id"]: question for question in _load_question_bank(CERT_ID)["questions"]}
+            request = build_plan_request(payload(results_for(bank_questions() + [stored[19]], lambda question: True)),
+                                         require_assessment=True)
+            served = [question["id"] for question in get_public_questions(CERT_ID)["questions"]]
 
-        self.assertEqual(len(request.assessment_items), 19)
-        self.assertEqual(request.problem_results, ())
+        self.assertEqual(request.assessment_items, ())
+        self.assertEqual([row.problem_id for row in request.problem_results], [*range(1, 19), 19])
+        self.assertEqual(request.problem_results[-1].topic, stored[19]["topic"])
+        self.assertEqual(served, list(range(1, 19)))
+        self.assertEqual(stored[20]["review_status"], "draft")
+
+class MixedEvidenceTests(unittest.TestCase):
+    def test_mixed_results_conserve_points_on_same_and_different_topics(self):
+        for label, topic in {"same topic": "차트와 분석", "different topic": "컴퓨터 시스템 보호"}.items():
+            with self.subTest(label):
+                request = mixed_request([4], [custom_result(101, correct=False)])
+                tools = PlannerTools(request)
+
+                result = tools.call("analyze_exam_results", {"problem_topics": [topic_mapping(101, topic)]})
+
+                self.assertEqual([row.problem_id for row in request.problem_results], [4])
+                self.assertEqual([item.problem_id for item in request.assessment_items], [101])
+                self.assertEqual((result["total_possible_score"], result["total_earned_score"]), (2, 1))
+                self.assertEqual(sum(row["problem_count"] for row in result["topic_statistics"]), 2)
+                self.assertEqual(set(tools.build_topics()), {"차트와 분석", topic})
+
+    def test_mapping_a_reviewed_question_or_omitting_a_custom_one_is_rejected_then_corrected(self):
+        request = mixed_request([4, 13], [custom_result(101), custom_result(102, correct=False)])
+        tools = PlannerTools(request)
+        valid = [topic_mapping(101, "함수와 데이터 관리"), topic_mapping(102, "인터넷 자료 활용")]
+
+        remapped = tools.call("analyze_exam_results", {"problem_topics": [*valid, topic_mapping(4, "스프레드시트 기본")]})
+        omitted = tools.call("analyze_exam_results", {"problem_topics": valid[:1]})
+
+        self.assertRegex(remapped, "^INVALID_TOOL_CALL: problem_id 4 already has a reviewed topic")
+        self.assertRegex(omitted, r"missing=\[102\], extra=\[\]")
+        self.assertFalse(tools.results_analyzed)
+        result = tools.call("analyze_exam_results", {"problem_topics": valid})
+        self.assertEqual((result["total_possible_score"], result["total_earned_score"]), (4, 3))
+        self.assertEqual(set(tools.build_topics()),
+                         {"차트와 분석", "컴퓨터 시스템 보호", "함수와 데이터 관리", "인터넷 자료 활용"})
+
+    def test_repeated_successful_analysis_does_not_accumulate_points(self):
+        request = mixed_request([4], [custom_result(101)])
+        tools = PlannerTools(request)
+        arguments = {"problem_topics": [topic_mapping(101, "차트와 분석")]}
+
+        first = tools.call("analyze_exam_results", arguments)
+        second = tools.call("analyze_exam_results", copy.deepcopy(arguments))
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["total_possible_score"], 2)
+
+    def test_model_input_counts_distinct_questions_and_lists_only_unresolved_ones(self):
+        request = mixed_request([1, 2], [custom_result(101)])
+        days = ("2026/10/19", "2026/10/21")
+        replies = [model_reply("analyze_exam_results", {"problem_topics": [topic_mapping(101, "차트와 분석")]}),
+                   build([(days[0], "스프레드시트 기본", 30), (days[0], "함수와 데이터 관리", 30),
+                          (days[1], "차트와 분석", 30)])]
+
+        (tools, _), sent = run_recording_agent(request, replies)
+
+        metadata = input_metadata(sent)
+        self.assertEqual((metadata["submitted_question_count"], metadata["reviewed_question_count"],
+                          metadata["unresolved_question_count"]), (3, 2, 1))
+        self.assertEqual([row["problem_id"] for row in metadata["assessment_results"]], [101])
+        self.assertIn("Classify only the unresolved questions", sent[0][0]["content"])
+        requirements = json.loads(sent[1][-1]["output"])["build_requirements"]
+        self.assertEqual(set(requirements["required_topics"]), {"스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"})
+        self.assertEqual({block.topic for block in tools.schedule}, set(requirements["required_topics"]))
+
+    def test_full_reviewed_selection_reports_eighteen_questions_without_unresolved_items(self):
+        request = build_plan_request(payload(results_for(bank_questions(), computer_general_missed)),
+                                     require_assessment=True)
+        topics = get_certification(CERT_ID).topics
+        replies = [model_reply("analyze_exam_results", {}),
+                   build([("2026/10/19", topic, 10) for topic in topics])]
+
+        _, sent = run_recording_agent(request, replies)
+
+        metadata = input_metadata(sent)
+        self.assertEqual((metadata["submitted_question_count"], metadata["reviewed_question_count"],
+                          metadata["unresolved_question_count"], metadata["assessment_results"]), (18, 18, 0, []))
 
 
 if __name__ == "__main__":

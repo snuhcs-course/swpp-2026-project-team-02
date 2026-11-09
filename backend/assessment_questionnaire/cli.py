@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any
 
-from assessment_service import select_onboarding_questions
+if __package__:
+    from .validation import QuestionContentError, document_questions, parse_json_bytes
+else:  # Run as ``python assessment_questionnaire/cli.py``: this file's directory is on sys.path.
+    from validation import QuestionContentError, document_questions, parse_json_bytes
 
 
 QUESTION_FILE = Path(__file__).resolve().parent / "questions.json"
@@ -20,45 +22,19 @@ def load_questions(path: Path = QUESTION_FILE) -> dict[str, Any]:
 
     A bank with ``onboarding_question_ids`` yields only that selection, in order, so
     retained unselected items and drafts are not asked. A custom document without it
-    asks every question as before.
+    asks every question as before. Validation needs no application configuration.
     """
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        data = path.read_bytes()
+    except OSError as error:
         raise ValueError(f"질문 JSON을 읽을 수 없습니다: {error}") from error
-    if not isinstance(document, dict) or not isinstance(document.get("questions"), list):
-        raise ValueError("질문 JSON에는 questions 배열이 필요합니다.")
     try:
-        selected = select_onboarding_questions(document, required=False)
-    except ValueError as error:
-        raise ValueError(f"진단 문항 선택 설정이 올바르지 않습니다: {error}") from error
-    if selected is not None:
-        document = {key: value for key, value in document.items() if key != "questions"}
-        document["questions"] = selected
-    if not document["questions"]:
-        raise ValueError("질문이 한 개 이상 있어야 합니다.")
-
-    seen_ids: set[int] = set()
-    for number, question in enumerate(document["questions"], start=1):
-        if not isinstance(question, dict):
-            raise ValueError(f"{number}번 질문은 객체여야 합니다.")
-        question_id = question.get("id")
-        choices = question.get("choices")
-        correct_answer = question.get("correct_answer")
-        points = question.get("possible_score")
-        if (not isinstance(question_id, int) or isinstance(question_id, bool) or question_id < 1
-                or question_id in seen_ids):
-            raise ValueError(f"{number}번 질문의 id는 중복되지 않는 양의 정수여야 합니다.")
-        if (not isinstance(choices, dict) or len(choices) < 2
-                or not all(isinstance(key, str) and isinstance(value, str) and value.strip()
-                           for key, value in choices.items())):
-            raise ValueError(f"{number}번 질문에는 두 개 이상의 선택지가 필요합니다.")
-        if not isinstance(correct_answer, str) or correct_answer not in choices:
-            raise ValueError(f"{number}번 질문의 correct_answer가 choices에 없습니다.")
-        if (not isinstance(points, (int, float)) or isinstance(points, bool)
-                or not math.isfinite(points) or points <= 0):
-            raise ValueError(f"{number}번 질문의 possible_score는 양수여야 합니다.")
-        seen_ids.add(question_id)
+        document = parse_json_bytes(data, "question JSON")
+        questions = document_questions(document)
+    except QuestionContentError as error:
+        raise ValueError(f"질문 JSON이 올바르지 않습니다: {error}") from error
+    document = {key: value for key, value in document.items() if key != "questions"}
+    document["questions"] = questions
     return document
 
 

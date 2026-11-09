@@ -77,7 +77,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 일정 생성 응답에는 화면 표시에 쓸 `schedules` 배열, `schedule_csv` 문자열,
 저장 CSV 다운로드 경로 `schedule_csv_url`이 포함됩니다. 새 계획을 저장할 때 삭제 가능한 자동 생성 CSV 중 최근 100개를 유지하고 더 오래된 파일을 정리합니다. 진단 질문 API는
 더미 문항의 정답도 제공하며, FE가 기본 비교 로직으로 `is_correct`를 계산합니다.
-Planning API는 재채점하지 않습니다. 설정된 진단(onboarding) 선택 문항 전체를 같은 ID·지문·선택지·정답·배점으로 제출하면(순서 무관, `UNKNOWN` 선택지 허용) 선택 문항의 검토된 `topic`을 문항당 가중치 1로 쓰고, 그 밖의 결과는 Agent가 문항마다 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
+Planning API는 재채점하지 않지만 `is_correct`가 `user_answer`와 `correct_answer` 비교 결과(`UNKNOWN`은 항상 오답)와 다르면 모델 호출·저장 전에 HTTP 422로 거절합니다. 제출 문항은 하나씩 따로 대조합니다. ID·지문·일반 선택지·정답·배점이 완전한 `reviewed` 문항 레코드와 같으면(순서·부분 집합 무관, `UNKNOWN` 선택지 허용, 진단 선택에 들어 있지 않아도 됨) 그 레코드의 `topic`을 가중치 1로 쓰고, 나머지 미분류 문항만 Agent가 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
 정상 요청은 HTTP 200, 잘못된
 입력은 HTTP 422, OpenRouter 키 설정 누락은 HTTP 503, OpenRouter 인증·크레딧·속도 제한·통신·응답 형식 실패는 HTTP 502, 알 수 없는
 내부 오류는 HTTP 500의 `{ "error": { "code", "message" } }` 형태입니다.
@@ -145,10 +145,11 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 ```text
 CLI 또는 앱 호출
   → JSON 입력 배열, 날짜, 점수, 주간 가능 시간 검증
+  → 제출 문항을 검토된 레코드와 문항별로 대조 (확인된 문항·미분류 문항으로 나눔, 설정 오류면 HTTP 500)
   → 모델 호출 전 최소 가용 시간 확인 (부족하면 NOT_ENOUGH_TIME)
   → OpenRouter Agent에 입력, 날짜별 가용 시간(분), 도구 스키마 전달
   → get_certification_profile
-  → analyze_exam_results (분석된 Topic 수만큼의 최소 시간 확인)
+  → analyze_exam_results (미분류 문항만 매핑, 확인된 Topic과의 합집합 수만큼 최소 시간 확인)
   → build_study_schedule (성공하면 즉시 종료)
   → 기존 일정 + 공부 일정을 CSV로 합쳐 반환
 ```
@@ -168,7 +169,7 @@ Agent는 최대 6번 모델을 호출합니다(`AGENT_MAX_STEPS`). `build_study_
 | 입력 | 형식 | 규칙 |
 | --- | --- | --- |
 | `self_assessment` | 문장 또는 `None` | Agent가 문장 내용을 직접 학습 분량 산정에 참고합니다. 고정된 수준 구간으로 변환하지 않습니다. |
-| `problem_results` | 토픽이 정해진 문제 결과 튜플 | HTTP API와 CLI 입력은 문항별 `assessment_results` JSON입니다. 제출 결과가 설정된 진단 선택 전체(같은 ID·문항 내용)이면 `build_plan_request`가 선택 문항의 검토된 `topic`으로 이 튜플을 만들고, 그 밖의 결과는 Agent가 고정 자격증 Topic으로 매핑합니다. 구버전 내부 호출도 이 필드를 씁니다. |
+| `problem_results` | 토픽이 정해진 문제 결과 튜플 | HTTP API와 CLI 입력은 문항별 `assessment_results` JSON입니다. `build_plan_request`는 검토된 레코드와 내용이 같은 문항으로 이 튜플(문항당 한 행)을 만들고, 나머지 문항은 `assessment_items`로 남깁니다. 두 파티션은 같은 문제 ID를 공유할 수 없고, 함께 있으면 분석이 미분류 문항의 매핑 결과를 이 행에 더합니다. 구버전 내부 호출도 이 필드를 씁니다. |
 | `preparation_start` | datetime 또는 `None` | 형식은 `YYYY/MM/DD/HH/MM`; 날짜 일정 생성 시 필수입니다. |
 | `exam_date` | datetime 또는 `None` | 같은 형식이며 시작 시각보다 뒤여야 합니다. |
 | `busy_periods` | 기존 일정 객체 튜플 또는 `None` | API JSON의 `busy_schedules` 배열에서 변환됩니다. 시작·종료는 `YYYY/MM/DD/HH/MM`이며 ID는 양의 정수입니다. |
@@ -187,7 +188,7 @@ Agent는 최대 6번 모델을 호출합니다(`AGENT_MAX_STEPS`). `build_study_
 | 필드 | 자료형 | 필수 여부와 규칙 |
 | --- | --- | --- |
 | `self_assessment` | 문자열 또는 `null` | 선택. 사용자가 스스로의 수준을 설명하는 문장입니다. |
-| `assessment_results` | 객체 | HTTP API 필수. `certification_id`와 `results` 배열을 포함합니다. 각 결과는 `problem_id`, `question`, `choices`, `correct_answer`, `user_answer`, `is_correct`, `possible_score`입니다. |
+| `assessment_results` | 객체 | HTTP API 필수. `certification_id`와 `results` 배열을 포함합니다. 각 결과는 `problem_id`, `question`, `choices`, `correct_answer`, `user_answer`, `is_correct`, `possible_score`입니다. 지문·선택지 키와 문구는 비어 있으면 안 되고, `UNKNOWN`을 뺀 일반 선택지가 두 개 이상이어야 합니다. `possible_score`는 필수인 양의 유한 수(불리언 제외, 기본값 1 없음)이고 배점 합계도 유한해야 합니다. `UNKNOWN`은 `모르겠음` 표시로만 쓰고 정답 키가 될 수 없습니다. `is_correct`는 `user_answer == correct_answer`(`UNKNOWN`은 항상 오답)와 같아야 하며, 하나라도 어긋나면 고치지 않고 모델 호출·저장 전에 HTTP 422로 거절합니다. |
 | `preparation_start` | 날짜·시간 문자열 | 필수. 형식은 `YYYY/MM/DD/HH/MM`입니다. |
 | `exam_date` | 날짜·시간 문자열 | 필수이며 준비 시작보다 늦어야 합니다. 형식은 `YYYY/MM/DD/HH/MM`입니다. |
 | `busy_schedules` | 일정 객체 배열 또는 `null` | 선택. 각 일정은 숫자형 문자열 ID와 시작·종료 시각을 가집니다. 일정 구간은 시작 포함·종료 제외입니다. |
@@ -262,15 +263,15 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 | 422 | `INVALID_INPUT` | 요청 JSON의 필드·형식·날짜·점수가 유효하지 않음 |
 | 502 | `UPSTREAM_ERROR` | OpenRouter 인증 거절·크레딧 소진·속도 제한·통신 실패·잘못된 모델 응답 |
 | 503 | `UPSTREAM_ERROR` | `OPENROUTER_API_KEY` 등 서버 측 upstream 설정이 누락됨 |
-| 500 | `INTERNAL_ERROR` | 예측하지 못한 서버 오류 |
+| 500 | `INTERNAL_ERROR` | 예측하지 못한 서버 오류, 또는 문항 은행·진단 선택·자격증 카탈로그 설정 오류(고정 메시지, 경로 없음) |
 
-가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 코드 뒤의 한국어 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. 설정된 진단 선택 전체를 제출한 `assessment_results` 요청은 선택 문항의 검토된 Topic이 정해져 있으므로 그 Topic 수(현재 8개)로 모델 호출 전에 확인합니다. 선택 밖에 저장된 문항은 점수나 필수 Topic에 들어가지 않습니다. 그 밖의 `assessment_results` 요청은 모델이 문항을 분류하기 전에는 Topic 수를 알 수 없으므로 모델 호출 전에는 가용 시간 0분만 거절합니다(OpenRouter 키가 없어도 같은 422). 분석이 성공하면 실제 분석된 서로 다른 Topic 수로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, OpenRouter 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
+가용 시간이 필수 Topic마다 최소 1분을 줄 수 없음이 증명되면 HTTP 422 `INVALID_INPUT`과 `NOT_ENOUGH_TIME`으로 시작하는 `error.message`를 반환합니다. 코드 뒤의 한국어 메시지에는 가용 시간(분), 필수 Topic 근거, 공부 시간 추가·준비 시작 앞당기기·시험일 연기 안내가 들어가며, 일정 필드는 없고 파일도 저장하지 않습니다. 확인은 두 단계입니다. 모든 문항이 검토된 레코드와 일치하면 그 서로 다른 Topic 수(진단 선택 전체는 8개)로 모델 호출 전에 확인합니다. 일부만 일치하면 확인된 Topic 수를 하한으로 씁니다(미분류 문항이 같은 Topic일 수 있으므로 하나를 더하지 않습니다). 일치하는 문항이 없으면 모델이 분류하기 전에는 Topic 수를 알 수 없으므로 가용 시간 0분만 거절합니다(OpenRouter 키가 없어도 같은 422). 제출하지 않은 저장 문항은 점수나 필수 Topic에 들어가지 않습니다. 분석이 성공하면 확인된 Topic과 매핑된 Topic의 합집합 크기로 다시 확인해, 부족하면 일정 생성이나 추가 모델 요청 없이 중단합니다. 내부 `problem_results`는 입력 Topic 수, 결과가 없는 내부 요청은 자격증 기본 Topic 수로 모델 호출 전에 확인합니다. 이 확인은 기계적 최소 조건일 뿐 충분한 학습량을 보장하지 않습니다. 반면 모델의 날짜별 제안이 하루 용량을 넘는 등 잘못된 배분, 호출 한도 초과, 반복 실패, OpenRouter 통신 오류는 입력 불가 증거가 아니므로 HTTP 502/503으로 반환됩니다. CLI는 HTTP 형식과 별도로 stderr에 `ERROR: 메시지`, 종료 코드 2를 사용합니다.
 
 ## 점수와 일정 계산
 
 현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. Agent가 원문 자기평가와 토픽별 점수 통계를 직접 참고해 학습량을 정합니다.
 
-제출 결과가 설정된 진단 선택 전체(같은 ID·지문·선택지·정답·배점, 순서 무관)이면 각 문항을 선택 문항의 검토된 `topic` 하나에 가중치 1로 반영하고, Agent에는 분류가 이미 정해졌으니 `problem_topics` 없이 분석하라고 안내합니다. 원래 5문항 요청, 일부 문항, 선택 밖 문항을 더한 요청, ID는 같지만 내용이 다른 사용자 정의 문항 등 그 밖의 `assessment_results`는 Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단하며, 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 경로는 입력 Topic 이름을 그대로 사용합니다. Agent는 시험일까지의 기간, 자유형 자기평가, Topic별 점수와 사용자의 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 학습 시간을 제안합니다.
+검토된 레코드와 같은 ID·지문·일반 선택지·정답·배점으로 제출된 문항(원래 5문항, 일부 문항, 진단 선택 밖의 `reviewed` 문항 포함)은 그 레코드의 `topic` 하나에 가중치 1로 반영합니다. 모든 문항이 이렇게 정해지면 Agent에 `problem_topics` 없이 분석하라고 안내합니다. ID는 같지만 내용이 다른 문항, 예전 지문, 사용자 정의 문항 등 미분류 문항만 Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단합니다. 모델 입력에는 서로 다른 제출 문항 수(`submitted_question_count`), 검토 Topic이 정해진 수(`reviewed_question_count`), 미분류 수(`unresolved_question_count`)와 미분류 문항만 들어갑니다. 매핑에 검토된 문항 ID를 넣거나 미분류 문항을 빠뜨리면 `INVALID_TOOL_CALL`로 거절되어 남은 요청 한도 안에서 고칠 수 있고, 성공한 분석을 다시 실행해도 점수가 누적되지 않습니다. 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 경로는 입력 Topic 이름을 그대로 사용합니다. Agent는 시험일까지의 기간, 자유형 자기평가, Topic별 점수와 사용자의 실제 가능 시간·기존 일정을 참고해 날짜별·주제별 학습 시간을 제안합니다.
 
 Agent는 날짜별·주제별 공부 시간(분)을 직접 제안합니다. 예를 들어 총 120분이고 용량이 비슷한 공부 가능 날짜가 2일이면 날짜별 약 60분씩 배정하도록 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다. 가용 시간 계산과 배치는 같은 빈 구간을 사용합니다. 준비 시작일과 시험일은 각 시각으로 잘라 내고, 바쁜 일정은 시작 포함·종료 제외 구간으로 빼며 겹치는 바쁜 일정은 한 번만 뺍니다. 각 빈 구간의 1분 미만 나머지는 버리고 정수 분만 합산합니다. 예를 들어 월요일 18:00–20:00 가능, 준비 시작 18:30, 시험 19:30, 바쁜 일정 18:45–19:05와 19:00–19:15이면 가용 시간은 30분입니다.
 
@@ -341,7 +342,7 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 
 ### 일정 제안 오류와 모델 요청 한도
 
-일정이 만들어지면 서버는 모델에 더 묻지 않고 바로 응답합니다. `tests/api_tests/test_plan_generation.py`는 마지막 허용 요청에서 일정이 만들어진 기록된 도구 호출을 재생해 이 경로가 HTTP 200으로 끝나는지 확인합니다. 분석 뒤 Topic 수 확인에서 용량이 부족하면 일정 생성 시도 없이 HTTP 422 `NOT_ENOUGH_TIME`으로 멈춥니다.
+일정이 만들어지면 서버는 모델에 더 묻지 않고 바로 응답합니다. `tests/api_tests/test_plan_generation.py`는 마지막 허용 요청에서 일정이 만들어진 기록된 도구 호출을 재생해 이 경로가 HTTP 200으로 끝나는지 확인합니다. 기록된 5문항 trace는 모든 문항을 모델이 분류한다고 가정하므로, 테스트는 기록 파일을 바꾸지 않고 각 지문을 사용자 정의 문항으로 표시한 요청(`test_support/question_banks.py`의 `custom_question_variant`)으로 재생합니다. 분석 뒤 Topic 수 확인에서 용량이 부족하면 일정 생성 시도 없이 HTTP 422 `NOT_ENOUGH_TIME`으로 멈춥니다.
 
 반복 오류 검사는 같은 인자로 같은 오류가 다시 날 때만 멈추므로, 인자가 매번 다른 잘못된 제안(과목 누락, 오타 과목명, 0분 날짜 배정 등)은 호출 한도까지 이어질 수 있습니다. 이를 줄이기 위해 `build_study_schedule` 스키마의 `topic`과 `date`를 enum으로 제한합니다. 분석 전에는 선택 자격증의 과목 목록(내부 호환 `problem_results`는 입력 과목 이름 그대로), 분석 후에는 실제 분석된 과목만 허용하고, 날짜는 날짜별 가용 시간이 있을 때 1분 이상 공부할 수 있는 날짜만 허용합니다. 분석이 성공하면 그 함수 응답에 `build_requirements`(필수 과목 목록과 날짜별 가용 시간)를 함께 보냅니다. 이 안내는 모델에 주는 힌트일 뿐이고, 실제 제안은 서버가 이전과 똑같이 검증합니다. 과목 누락, 오타, 0분 날짜, 하루 용량 초과는 여전히 고칠 수 있는 제안 오류이며, 모델이 6회 안에 고치지 못하면 HTTP 502입니다. 입력 시간이 부족하다는 HTTP 422는 독립적인 최소 용량 확인에서만 나옵니다. `tests/license_planner_tests/test_planning_capacity.py`는 이런 제안 오류를 고정 응답으로 재생해 검증할 뿐이고, 실제 모델에서 실패가 얼마나 줄었는지는 측정하지 않습니다.
 
@@ -385,7 +386,15 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 | `provenance` | `kind`(`authored`/`external`), 작성자·출처를 적는 `reference`, 외부 문항은 재사용 근거 `reuse_basis` |
 | `review_status` | `draft` 또는 `reviewed`. 정답·선택지·해설·출제기준 매핑·출처 검토를 마친 문항만 `reviewed`로 바꿉니다 |
 
-초안(`draft`)은 해설·태그·정답이 비어 있어도 보관할 수 있지만, 모든 레코드는 중복되지 않는 양의 정수 ID와 `provenance`가 필요합니다. 쓰지 않는 문항의 ID를 다른 문항에 재사용하지 않습니다. 진단 선택은 비어 있지 않고 중복·없는 ID가 없어야 하며, 선택 문항은 모두 완전한 `reviewed` 레코드이고 `topic`이 `config/certifications.json`에 있어야 합니다. 그렇지 않으면 질문 API는 일부나 전체 문항으로 대신하지 않고 HTTP 500 `INTERNAL_ERROR`를 반환합니다. 문항을 모음에 추가하기만 하면 진단과 앱은 바뀌지 않습니다. 진단 선택을 바꿀 때만 아래 파일을 함께 바꿉니다.
+초안(`draft`)은 해설·태그·정답이 비어 있어도 보관할 수 있지만, 모든 레코드는 중복되지 않는 양의 정수 ID와 `provenance`가 필요합니다. 쓰지 않는 문항의 ID를 다른 문항에 재사용하지 않습니다. `reviewed` 레코드는 진단 선택에 들어 있지 않아도 완전해야 하고(지문, 일반 선택지 두 개 이상, 정답, 양의 유한 배점, `topic`·`subject`·`syllabus_section`·`explanation`) `topic`이 `config/certifications.json`에 있어야 합니다. 제출 결과 대조에 쓰이기 때문입니다. 은행 레코드는 예약 키 `UNKNOWN`을 선택지로 가질 수 없습니다. API가 제공하는 모든 은행은 `onboarding_question_ids`가 반드시 있어야 하며, 코드에 자격증 ID 목록을 두지 않습니다. 진단 선택은 비어 있지 않고 중복·없는 ID가 없어야 하며, 선택 문항은 모두 `reviewed`이고 배점 합계가 유한해야 합니다.
+
+문항 은행, 진단 선택, `question_banks.json` 매핑, 활성화 카탈로그(`certification_selector/certifications.json`)와 계획 카탈로그(`config/certifications.json`)가 서로 맞지 않으면(활성화된 자격증의 계획 항목·매핑·은행 파일 누락, 다른 자격증 ID의 은행, `assessment_questionnaire` 밖 경로, 잘못된 UTF-8·JSON·내용) `assessment_service.AssessmentConfigurationError`가 납니다. 질문 API와 계획 생성은 모두 일부·전체 문항이나 모델 분류로 대신하지 않고 모델 호출·저장 전에 HTTP 500 `INTERNAL_ERROR`를 반환합니다. 응답 메시지는 경로나 trace가 없는 고정 문구이고, 자격증 ID와 실패한 필드·카탈로그를 적은 진단은 서버 로그(`api_server` logger)에만 남습니다. 활성화되지 않은 ID는 질문 API에서 계속 404입니다.
+
+문항 내용·선택 검증은 표준 라이브러리만 쓰는 `assessment_questionnaire/validation.py`에 있습니다. 서비스와 질문 CLI가 같은 모듈을 쓰며, 이 모듈은 서비스·planner·카탈로그·자격 증명 모듈을 가져오지 않습니다. 그래서 CLI는 `backend/`에서 `python -m assessment_questionnaire.cli`와 `python assessment_questionnaire/cli.py` 두 방식 모두로 실행되고, 진단 선택이 없는 사용자 정의 문서도 계획 카탈로그 없이 검사합니다. 잘못된 문서(UTF-8·JSON 오류, 빈 지문·선택지, 일반 선택지 한 개, 잘못된 정답 키·배점, 넘치는 배점 합계 등)는 문항을 보여 주거나 결과를 쓰기 전에 `오류: ...`와 종료 코드 2로 끝납니다. 은행의 검토·출처 규칙과 제출 결과 규칙은 이 기본 내용 검사를 공유하되 서로 다릅니다. 초안은 ID·상태·출처만 검사합니다.
+
+서버는 검증한 은행 스냅샷(공개 선택 문항과 대조용 `reviewed` 색인)을 프로세스 안에 자격증·경로마다 최신 하나씩, 최대 8개까지 보관합니다. 요청마다 활성화 카탈로그·매핑·은행 파일의 stat 값(장치·inode·크기·mtime_ns·ctime_ns)과 경로 포함 여부를 다시 확인하고, 하나라도 바뀌면 잠금 안에서 다시 읽고 검증합니다. 읽는 동안 파일이 바뀌면 최대 3번 다시 시도한 뒤 설정 오류로 끝냅니다. 다시 만들기에 실패하면 이전 스냅샷을 버리므로 잘못된 파일로 바꾼 뒤에도 이전 문항이 제공되지 않고, 파일을 고치면 다음 요청부터 복구됩니다. 반환 값은 매번 새로 만든 사본이라 호출자가 바꿔도 캐시는 바뀌지 않습니다. 계획 Topic 카탈로그(`config/certifications.json`)는 프로세스 시작 때 한 번 읽어 대조·도구 스키마·배분에 같은 값으로 쓰므로, Topic을 바꾸면 서버를 다시 시작해야 합니다.
+
+문항을 모음에 추가하기만 하면 진단과 앱은 바뀌지 않습니다. 진단 선택을 바꿀 때만 아래 파일을 함께 바꿉니다.
 
 진단 선택 문항이나 그 내용을 바꿀 때는 다음 파일을 함께 검토합니다. 각 파일의 역할이 달라 한 곳만 고치면 서버·앱·데모의 표시와 채점이 어긋날 수 있습니다.
 
@@ -397,7 +406,7 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 | `../frontend/app/src/demo/java/com/swpp/licenseplanner/data/DemoQuestionFixture.kt` | demo 빌드의 내장 진단 선택 사본 | 지문·선택지·정답·배점이 질문 API의 선택 문항과 같은지(선택 밖 문항·메타데이터는 복사하지 않음) |
 | `../frontend/app/src/main/java/com/swpp/licenseplanner/domain/Scoring.kt` | 앱의 로컬 채점 | 정답 키와 같으면 맞음, '모르겠음'은 항상 0점이라는 규칙이 새 문항에도 맞는지 |
 
-질문 API(`GET /api/v1/certifications/{id}/questions`)는 `topic`을 빼고 문항을 보냅니다(`assessment_service.py`). 따라서 앱 화면의 단원 표시는 `LocalTopics.kt`의 고정 매핑입니다. 계획 생성 때는 진단 선택 전체를 같은 ID·문항 내용으로 제출한 결과만 선택 문항의 `topic`을 쓰고, 그 밖의 결과는 Agent가 문항 내용을 읽고 `config/certifications.json`의 Topic에 비중으로 다시 매핑합니다. 선택 문항의 내용을 바꾸면 이전 앱이 보내는 결과는 Agent 분류 경로로 처리됩니다. 두 매핑이 같다고 가정하지 말고, 문항을 바꾼 뒤 위 파일들을 실제로 대조합니다. 문항 수나 ID가 바뀌면 이를 고정값으로 쓰는 백엔드·프론트엔드 테스트와 시나리오 입력도 함께 확인합니다.
+질문 API(`GET /api/v1/certifications/{id}/questions`)는 `topic`을 빼고 문항을 보냅니다(`assessment_service.py`). 따라서 앱 화면의 단원 표시는 `LocalTopics.kt`의 고정 매핑입니다. 계획 생성 때는 검토된 레코드와 같은 ID·문항 내용으로 제출된 문항마다 그 레코드의 `topic`을 쓰고, 나머지 문항만 Agent가 문항 내용을 읽고 `config/certifications.json`의 Topic에 비중으로 다시 매핑합니다. 문항 내용을 바꾸면 이전 앱이 보내는 그 문항만 Agent 분류 경로로 처리됩니다. 두 매핑이 같다고 가정하지 말고, 문항을 바꾼 뒤 위 파일들을 실제로 대조합니다. 문항 수나 ID가 바뀌면 이를 고정값으로 쓰는 백엔드·프론트엔드 테스트와 시나리오 입력도 함께 확인합니다.
 
 ## 자격증 추가와 확장
 

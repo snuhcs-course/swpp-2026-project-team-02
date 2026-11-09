@@ -57,7 +57,7 @@
         {"id": 1, "topic": "B", "prompt": "문항 2", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1}
       ]
     },
-    "expected_error": "중복되지 않는 양의 정수"
+    "expected_error": "duplicate question id"
   },
   {
     "case_id": "assessment_05_unknown_correct_answer_rejected",
@@ -70,7 +70,7 @@
         {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "C", "possible_score": 1}
       ]
     },
-    "expected_error": "correct_answer가 choices에 없습니다"
+    "expected_error": "correct_answer must be one of its normal choice keys"
   },
   {
     "case_id": "assessment_06_nonpositive_score_rejected",
@@ -83,7 +83,7 @@
         {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 0}
       ]
     },
-    "expected_error": "possible_score는 양수"
+    "expected_error": "possible_score must be a positive finite number"
   },
   {
     "case_id": "assessment_07_eof_does_not_write_partial_json",
@@ -217,6 +217,138 @@
         {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
       ]
     },
-    "expected_error": "is not reviewed"
+    "expected_error": "selects unreviewed questions"
+  },
+  {
+    "case_id": "assessment_15_list_correct_answer_rejected",
+    "description": "목록 형태의 정답 키를 TypeError 없이 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": ["B"], "possible_score": 1}
+      ]
+    },
+    "expected_error": "correct_answer must be one of its normal choice keys"
+  },
+  {
+    "case_id": "assessment_16_null_questions_container_rejected",
+    "description": "questions가 null이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {"certification_id": "x", "questions": null},
+    "expected_error": "non-empty questions array"
+  },
+  {
+    "case_id": "assessment_17_integer_questions_container_rejected",
+    "description": "questions가 정수이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {"certification_id": "x", "questions": 3},
+    "expected_error": "non-empty questions array"
+  },
+  {
+    "case_id": "assessment_18_missing_prompt_rejected",
+    "description": "문항 본문이 없으면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "non-empty prompt"
+  },
+  {
+    "case_id": "assessment_19_missing_possible_score_rejected",
+    "description": "배점이 없으면 1점으로 가정하지 않고 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B"}
+      ]
+    },
+    "expected_error": "possible_score must be a positive number"
+  },
+  {
+    "case_id": "assessment_20_blank_choice_key_rejected",
+    "description": "빈 선택지 키를 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {" ": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "non-empty keys and text"
+  },
+  {
+    "case_id": "assessment_21_single_normal_choice_rejected",
+    "description": "모르겠음을 빼고 일반 선택지가 하나뿐이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"B": "$A$1", "UNKNOWN": "모르겠음"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "at least two normal choices"
+  },
+  {
+    "case_id": "assessment_22_unknown_correct_answer_reserved",
+    "description": "UNKNOWN은 정답 키가 될 수 없습니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1", "UNKNOWN": "모르겠음"}, "correct_answer": "UNKNOWN", "possible_score": 1}
+      ]
+    },
+    "expected_error": "correct_answer must be one of its normal choice keys"
+  },
+  {
+    "case_id": "assessment_23_mislabeled_unknown_choice_rejected",
+    "description": "UNKNOWN 선택지는 모르겠음으로 표시해야 합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1", "UNKNOWN": "기타"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "must be labeled 모르겠음"
+  },
+  {
+    "case_id": "assessment_24_boolean_score_rejected",
+    "description": "불리언 배점을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": true}
+      ]
+    },
+    "expected_error": "possible_score must be a positive number"
+  },
+  {
+    "case_id": "assessment_25_overflowing_total_rejected",
+    "description": "각각 유한하지만 합계가 넘치는 배점을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1e+308},
+        {"id": 2, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1e+308}
+      ]
+    },
+    "expected_error": "total possible score is not finite"
   }
 ]

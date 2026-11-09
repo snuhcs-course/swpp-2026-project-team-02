@@ -17,11 +17,14 @@ import api_service
 import openrouter_client
 from api_server import DEFAULT_API_CONFIG, make_handler
 from openrouter_client import inference_summary
+from test_support.question_banks import custom_question_variant
 from scenarios import run_license_planner_test_cases as planner_runner
 from scenarios import run_schedule_adjuster_test_cases as adjuster_runner
 
-RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
-                      .read_text(encoding="utf-8"))["topic_errors_then_build_on_last_request"]
+_CAPTURED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
+                       .read_text(encoding="utf-8"))["topic_errors_then_build_on_last_request"]
+# The captured classifier trace, replayed with explicitly custom questions so they stay unresolved.
+RECORDED = {**_CAPTURED, "request": custom_question_variant(_CAPTURED["request"])}
 OVERRIDE_MODEL = "vendor/override-model"
 LATER_MODEL = "vendor/later-model"
 RETURNED_MODEL = "provider/routed-model-id"

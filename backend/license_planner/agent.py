@@ -8,7 +8,8 @@ from openrouter_client import create_response, decode_call, function_output, par
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
 from .settings import DATETIME_FORMAT, load_api_key, load_model
-from .tools import PlannerTools, check_initial_capacity, tool_schemas, usable_date_minutes
+from .tools import (PlannerTools, check_initial_capacity, submitted_question_count, tool_schemas,
+                    usable_date_minutes)
 
 # Agent settings: the shared transport in openrouter_client.py selects the model and timeout.
 AGENT_MAX_STEPS = 6  # Maximum reason/action/observation cycles per user request.
@@ -17,9 +18,10 @@ AGENT_MAX_OUTPUT_TOKENS = 16384  # Output bound per model request, including rea
 AGENT_SYSTEM_PROMPT = (
     "You create study schedules through the provided tools. Inspect the certification profile, "
     "analyze exam results, then build the schedule in that order. Never invent scores, dates, "
-    "topics, or certification details. For each question, map the knowledge it requires to one or "
-    "more topics from the certification profile; assign contribution weights summing to 1 per question. "
-    "Use the user's locally calculated correctness as supplied. Use the user's free-form self-assessment and topic scores "
+    "topics, or certification details. For each unresolved question supplied in assessment_results, map the "
+    "knowledge it requires to one or more topics from the certification profile; assign contribution weights "
+    "summing to 1 per question. Reviewed questions already have fixed topics and must not be classified. "
+    "Use the user's validated local correctness as supplied. Use the user's free-form self-assessment and topic scores "
     "directly to choose study minutes per topic and date. Do not classify users into fixed readiness "
     "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
     "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
@@ -92,7 +94,9 @@ class PlanningAgent:
                        if request.weekly_availability else None)
         user = {"certification_id": request.certification_id,
                 "self_assessment": request.self_assessment,
-                "problem_result_count": len(request.assessment_items or request.problem_results),
+                "submitted_question_count": submitted_question_count(request),
+                "reviewed_question_count": len({item.problem_id for item in request.problem_results}),
+                "unresolved_question_count": len(request.assessment_items),
                 "assessment_results": [
                     {"problem_id": item.problem_id, "question": item.question,
                      "choices": item.choices,
@@ -108,9 +112,14 @@ class PlanningAgent:
             user["usable_minutes_by_date"] = date_minutes
         failed_calls: set[tuple[str, str, str]] = set()  # 마지막 성공 이후 실패한 (도구, 인자, 오류)입니다.
         seen_call_ids: set[str] = set()  # 이번 요청에서 받은 함수 호출 ID입니다.
-        classification = ("Use the supplied question, choices, answers, and local correctness fields for topic classification. "
-                          if request.assessment_items or not request.problem_results else
-                          "Topic classification is already supplied; call analyze_exam_results without problem_topics. ")
+        if request.assessment_items and request.problem_results:
+            classification = ("Reviewed topics are already supplied for reviewed_question_count questions. Classify only "
+                              "the unresolved questions in assessment_results with problem_topics, using their question, "
+                              "choices, answers, and local correctness fields; never include reviewed question IDs. ")
+        elif request.assessment_items or not request.problem_results:
+            classification = ("Use the supplied question, choices, answers, and local correctness fields for topic classification. ")
+        else:
+            classification = "Topic classification is already supplied; call analyze_exam_results without problem_topics. "
         history: list[dict] = [{"role": "user", "content": "Prepare this user's plan using tools. " + classification + "Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]  # 요청 안에서만 쓰는 모델 대화 기록입니다.
         for _ in range(self.max_steps):
             schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()))

@@ -173,10 +173,36 @@ class InitialCapacityTests(unittest.TestCase):
                                    questions=0, windows={"monday": [{"start": "18:00", "end": "20:00"}]})
         check_initial_capacity(two_minutes)
 
-    def test_assessment_items_take_precedence_over_legacy_topic_results(self):
-        results = (ProblemResult(1, CHARTS, 1, 0), ProblemResult(2, BASICS, 1, 0))
+    def test_mixed_input_uses_resolved_topics_as_a_lower_bound(self):
+        resolved = tuple(ProblemResult(problem_id, topic, 1, 0)
+                         for problem_id, topic in ((11, CHARTS), (12, BASICS), (13, FUNCTIONS)))
+        two_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), problem_results=resolved,
+                                   windows={"monday": [{"start": "18:00", "end": "20:00"}]})
 
-        check_initial_capacity(one_minute_request(questions=1, problem_results=results))
+        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 2분이라 이미 확인된 학습 주제 3개에") as raised:
+            run_agent(two_minutes, [])
+        self.assertEqual(raised.exception.ask_model.call_count, 0)
+        three_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 3), problem_results=resolved,
+                                     windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        check_initial_capacity(three_minutes)
+
+    def test_unresolved_question_overlapping_a_resolved_topic_needs_no_extra_minute(self):
+        request = one_minute_request(problem_results=(ProblemResult(11, CHARTS, 1, 1),))
+        check_initial_capacity(request)
+        tools = PlannerTools(request)
+
+        result = tools.call("analyze_exam_results", {"problem_topics": mapping(CHARTS)})
+
+        self.assertIsInstance(result, dict, result)
+        self.assertEqual(tools.build_topics(), [CHARTS])
+        self.assertEqual((result["total_possible_score"], result["total_earned_score"]), (2, 1))
+
+    def test_overlapping_result_partitions_are_rejected_before_the_model(self):
+        request = one_minute_request(problem_results=(ProblemResult(1, CHARTS, 1, 0),))
+
+        with self.assertRaisesRegex(ValueError, r"both topic-resolved and unresolved: \[1\]") as raised:
+            run_agent(request, [])
+        self.assertEqual(raised.exception.ask_model.call_count, 0)
 
     def test_no_result_fallback_uses_the_selected_catalog_topics(self):
         def request_until(minute):
@@ -222,7 +248,8 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
 
         result = tools.call("analyze_exam_results", {"problem_topics": mapping(CHARTS, BASICS)[:1]})
 
-        self.assertRegex(result, "^INVALID_TOOL_CALL: problem_topics must map every assessment problem")
+        self.assertRegex(result, r"^INVALID_TOOL_CALL: problem_topics must map every unresolved assessment problem "
+                                 r"exactly once; missing=\[2\], extra=\[\]")
         self.assertFalse(tools.results_analyzed)
 
     def test_bundled_analysis_and_build_stop_before_the_build_runs(self):

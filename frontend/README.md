@@ -23,7 +23,11 @@ sampling both written subjects (컴퓨터 일반 and 스프레드시트 일반, 
 They are authored examples, not official exam questions or a validated
 diagnostic. Questions the backend stores outside that selection are never
 shown, so adding them needs no app change or new APK while the selection stays
-the same. Routine study check-ins using further questions are not implemented.
+the same. The live app rejects a question response (error with retry, inputs
+kept) when an item has fewer than two normal choices besides 모르겠음, a reserved
+`UNKNOWN` key is misused, or the total possible score is not finite, matching
+the backend's checks. Routine study check-ins using further questions are not
+implemented.
 
 ## Build and run
 
@@ -55,6 +59,8 @@ bash ./gradlew --no-daemon testDemoDebugUnitTest testLiveDebugUnitTest
 # from the repository root; uses the request exported by the unit tests above
 python frontend/contract_checks/verify_request.py --backend-ref HEAD \
     --request frontend/app/build/contract-check/study-plan-request.json
+# offline tests of the check itself (counts, extraction allowlist, failures)
+python -m unittest discover -s frontend/contract_checks -p 'test_*.py'
 
 # from frontend/
 bash ./gradlew --no-daemon createDemoDebugUnitTestCoverageReport createLiveDebugUnitTestCoverageReport
@@ -89,7 +95,10 @@ by its exact identity. The backend is
 scheduler, adjustment loop and plan store with fixed model replies and no
 OpenRouter access (see `backend/README.md`). Its default case,
 `selected_onboarding_reviewed_topics`, is the synthetic complete-selection
-trace this test needs. Without that server the test
+trace this test needs. The synthetic `original_five_reviewed_topics` and
+`mixed_reviewed_and_custom_questions` cases (selected with `--case-id`) cover
+the original five questions and a reviewed-plus-custom request for backend
+tests; this instrumentation test does not use them. Without that server the test
 fails rather than skipping. Use a disposable emulator:
 
 ```bash
@@ -572,7 +581,14 @@ its result. Earlier dated device, deployment and emulator runs are kept in the
 - JVM checks cover both flavors, with MockWebServer for HTTP.
 - `contract_checks/verify_request.py` checks the request the app serializes
   against a backend revision's source, offline (no server or model). CI uses
-  `--backend-ref HEAD`, the backend in the same checkout.
+  `--backend-ref HEAD`, the backend in the same checkout. It also reports how
+  the backend adapted the questions: distinct submitted questions, how many
+  matched reviewed bank records, how many remain for model classification,
+  the raw `assessment_items` and converted `problem_results` row counts, and the
+  reviewed/model/mixed path. Reviewed plus unresolved must equal submitted; the
+  app's full 18-question request reports 18/18/0 on the reviewed path.
+  `contract_checks/test_verify_request.py` tests the counts, mixed reporting,
+  malformed input and the extraction allowlist offline.
 - Demo and live flows were run end to end on an emulator and compared with the
   Figma design.
 - Plan adjustment: JVM tests cover the request body, response checks, the demo

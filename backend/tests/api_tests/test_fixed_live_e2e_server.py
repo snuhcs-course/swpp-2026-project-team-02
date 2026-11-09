@@ -18,6 +18,7 @@ from study_plan_store import StudyPlanStore
 from test_support.fixed_live_e2e_server import (
     DEFAULT_CASE_ID, LEGACY_CASE_ID, ScriptedAdjustmentAgent, load_cases, running_server,
 )
+from test_support.question_banks import custom_question_variant
 
 WIRE = "%Y/%m/%d/%H/%M"
 ROOMY_EXAM = "2026/11/30/18/00"
@@ -41,10 +42,15 @@ def request_json(url: str, method: str = "GET", payload: dict | None = None) -> 
 
 
 class FixedLiveE2EServerTests(unittest.TestCase):
-    """The recorded original-five trace, pinned explicitly so its classification and deadlines stay covered."""
+    """The recorded five-question classifier trace, pinned explicitly so classification and deadlines stay covered.
+
+    Its questions are replayed as explicitly custom questions: the unchanged original five
+    now resolve to reviewed topics, which the captured trace does not model.
+    """
 
     def setUp(self):
-        self.case = load_cases()[LEGACY_CASE_ID]
+        recorded = load_cases()[LEGACY_CASE_ID]
+        self.case = {**recorded, "request": custom_question_variant(recorded["request"])}
 
     def generate(self, server, exam_date: str | None = None) -> dict:
         payload = copy.deepcopy(self.case["request"])
@@ -228,6 +234,41 @@ class SelectedOnboardingE2EServerTests(unittest.TestCase):
                 f"{server.api_base_url}/study-plans?schedule_csv_file={quote(plan['schedule_csv_file'], safe='')}")
             self.assertEqual(status, 200, listing)
             self.assertEqual(listing["plans"][0]["schedules"], moved["schedules"])
+
+
+
+class CompatibilityE2EServerTests(unittest.TestCase):
+    """Synthetic original-five and mixed reviewed/custom traces, selected explicitly by case ID."""
+
+    def plan(self, case_id):
+        case = load_cases()[case_id]
+        self.assertIn("not a captured provider response", case["provenance"])
+        with running_server(case_id=case_id) as server:
+            status, plan = request_json(f"{server.api_base_url}/study-plans", "POST", case["request"])
+            self.assertEqual(status, 200, plan)
+            identifier = plan["schedule_csv_file"]
+            status, listing = request_json(
+                f"{server.api_base_url}/study-plans?schedule_csv_file={quote(identifier, safe='')}")
+            self.assertEqual(status, 200, listing)
+            self.assertEqual(listing["plans"][0]["schedules"], plan["schedules"])
+        return case, plan
+
+    def test_original_five_use_reviewed_topics(self):
+        case, plan = self.plan("original_five_reviewed_topics")
+
+        self.assertEqual([row["problem_id"] for row in case["request"]["assessment_results"]["results"]],
+                         [1, 2, 3, 4, 5])
+        self.assertEqual(plan["tool_calls"][0], {"tool": "analyze_exam_results", "arguments": {}})
+        self.assertEqual({row["topic"] for row in plan["schedules"]},
+                         {"스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"})
+
+    def test_mixed_case_classifies_only_the_custom_question(self):
+        case, plan = self.plan("mixed_reviewed_and_custom_questions")
+
+        mapping = plan["tool_calls"][0]["arguments"]["problem_topics"]
+        self.assertEqual([item["problem_id"] for item in mapping], [501])
+        self.assertEqual(len(case["request"]["assessment_results"]["results"]), 3)
+        self.assertEqual({row["topic"] for row in plan["schedules"] if row["topic"]}, {"컴퓨터 시스템 보호"})
 
 
 if __name__ == "__main__":
