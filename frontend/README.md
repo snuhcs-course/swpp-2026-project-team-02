@@ -123,7 +123,18 @@ model or the deployed server.
 | `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (OpenRouter `openai/gpt-6-luna`, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
-calculation, not backend or AI output. The live flavor never falls back to demo
+calculation, not backend or AI output. Demo workload: each topic shown on the
+score screen gets its own session count, one base session plus one extra when
+its score is below 60%. Each part is multiplied by the stricter of the chosen
+level and the overall-score level (80% advanced ×0.5, 60% intermediate ×1,
+otherwise beginner ×2) and rounded up separately, so an advanced learner still
+gets a weak topic's extra session. Extra sessions go to the weak topics that
+earned them. All 18 answered 모르겠음 at beginner level needs 32 sessions (four
+per topic); all 18 correct at advanced level needs eight (one per topic). These
+are demonstration assumptions for a practical evaluation journey, not the live
+model's allocation or an estimate of the preparation the exam needs; a perfect
+score keeps every topic and does not mean mastery. When the sessions do not fit,
+the demo shows the required and available counts and no partial plan. The live flavor never falls back to demo
 data: on failure it shows an error with retry and keeps all inputs.
 
 ## Live backend
@@ -760,7 +771,8 @@ artifact), and record the APK SHA-256 and the backend commit with each result.
 Both cases choose 기본 기능은 알아요 and answer every example question
 correctly, with preparation starting 2026-10-19. The demo results below were
 observed on 2026-10-17 with the earlier five-question build (answers B, B, A, A,
-C); the 18-question bank has more topics, so re-observe them before comparing.
+C) and the earlier demo workload rule; the 18-question bank has more topics and
+the demo now uses per-topic quotas, so re-observe them before comparing.
 
 | Case | Exam date and study windows | Demo result (five-question build, 2026-10-17) |
 | --- | --- | --- |
@@ -799,6 +811,11 @@ time. Live adjustment results mean nothing until the backend dependency in
 - Form state is held in memory and is lost if the process is killed. The
   generated-plan list is saved on this device only (no sync or server import).
 - Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
+- Demo session counts follow the fixed demonstration rule in
+  [Flavors](#flavors) (32 sessions for all 모르겠음 at beginner level,
+  eight for a perfect advanced score). They are not the live model's allocation
+  or an estimate of the preparation the exam needs, and the 2026-10-17 demo
+  evaluation results predate this rule.
 - Proven live insufficient capacity arrives as HTTP 422 and is shown as described
   in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It
   does not open the demo shortfall screen; the warning-origin exam-date editor

@@ -8,6 +8,7 @@ import com.swpp.licenseplanner.data.CalendarBusySnapshot
 import com.swpp.licenseplanner.data.CalendarReadOutcome
 import com.swpp.licenseplanner.data.CalendarReadRepository
 import com.swpp.licenseplanner.data.CalendarReadWindow
+import com.swpp.licenseplanner.data.DemoPlanningRepository
 import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
@@ -19,6 +20,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -156,6 +158,96 @@ class CalendarReadViewModelTest {
         assertEquals(CalendarReadState.Idle, vm.calendarRead.value)
         assertTrue(vm.form.value.busySchedules.isEmpty())
         assertFalse(vm.calendarRead.value is CalendarReadState.Loaded)
+    }
+
+    /** The demo flavor's real planner, recording each request it receives. */
+    private class RecordingDemoPlanning : PlanningRepository {
+        private val demo = DemoPlanningRepository()
+        val requests = mutableListOf<StudyPlanRequest>()
+        override suspend fun generate(request: StudyPlanRequest): PlanOutcome {
+            requests += request
+            return demo.generate(request)
+        }
+    }
+
+    @Test fun laterExamDateAfterImportedShortfallGeneratesWithoutTheOldImport() = runTest(dispatcher) {
+        val busy = listOf(
+            ScheduleRow("17", "2026/11/09/18/00", "2026/11/09/19/00", "외부 일정"),
+            ScheduleRow("23", "2026/11/11/18/00", "2026/11/11/19/00", "외부 일정"),
+        )
+        val calendar = Calendar(CalendarReadOutcome.Loaded(CalendarBusySnapshot(busy, 0, 0)))
+        val planning = RecordingDemoPlanning()
+        val vm = PlanFormViewModel(
+            Questions(),
+            planning,
+            Adjustment(),
+            today = LocalDate.of(2026, 11, 9),
+            planStore = BytesPlanStore(
+                MemoryPlanBytes(),
+                PlanStorageScope.of(demo = true, apiBaseUrl = "http://test/api/v1"),
+                dispatcher,
+            ),
+            calendarReadRepository = calendar,
+        )
+        vm.selectCertification(CERTIFICATION_ID)
+        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        vm.setLevel(CurrentLevel.BEGINNER)
+        vm.loadQuestions()
+        advanceUntilIdle()
+        val questions = vm.form.value.questions
+        assertEquals(18, questions.size)
+        questions.forEach { vm.answer(it.id, UNKNOWN_KEY) }
+        for (day in listOf(Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY, Weekday.THURSDAY, Weekday.FRIDAY)) {
+            vm.setDayEnabled(day, true) // the default 18:00–19:00 window
+        }
+
+        assertTrue(vm.startCalendarRead())
+        assertTrue(vm.calendarReadPermissionPrompted())
+        vm.onCalendarReadPermission(true)
+        advanceUntilIdle()
+        assertEquals(CalendarReadState.Loaded(2, 0, 0), vm.calendarRead.value)
+        val imported = vm.form.value
+        assertEquals(busy, imported.busySchedules)
+
+        // 25 weekday slots before 2026-12-14, two of them taken by the import.
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(GenerationState.DemoShortfall(required = 32, available = 23), vm.generation.value)
+        assertEquals(busy, planning.requests.single().busySchedules)
+
+        // An unchanged date keeps the import and the warning.
+        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        assertEquals(imported, vm.form.value)
+        assertEquals(CalendarReadState.Loaded(2, 0, 0), vm.calendarRead.value)
+        assertEquals(GenerationState.DemoShortfall(32, 23), vm.generation.value)
+
+        // A later date clears the import without reading the calendar again.
+        vm.setExamDate(LocalDate.of(2027, 1, 4))
+        assertEquals(imported.copy(examDate = LocalDate.of(2027, 1, 4), busySchedules = emptyList()), vm.form.value)
+        assertEquals(CalendarReadState.Idle, vm.calendarRead.value)
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+
+        assertEquals(CalendarReadState.Idle, vm.calendarRead.value)
+        assertFalse(vm.calendarReadPermissionPrompted())
+        assertEquals(1, calendar.windows.size)
+        assertEquals(2, planning.requests.size)
+        assertEquals(
+            planning.requests[0].copy(examDate = "2027/01/04/00/00", busySchedules = emptyList()),
+            planning.requests[1],
+        )
+        val success = vm.generation.value as GenerationState.Success
+        assertTrue(success.isDemo)
+        val rows = success.response.schedules
+        assertEquals(32, rows.size)
+        assertTrue(rows.all { it.scheduleId.startsWith("study-") })
+        assertEquals(8, rows.groupingBy { it.topic }.eachCount().size)
+        assertTrue(rows.groupingBy { it.topic }.eachCount().values.all { it == 4 })
+        // The formerly imported intervals hold study sessions now.
+        assertTrue(rows.any { it.startDate == "2026/11/09/18/00" })
+        assertTrue(rows.any { it.startDate == "2026/11/11/18/00" })
+        assertFalse(success.response.scheduleCsv.contains("외부 일정"))
+        assertEquals(1, vm.plans.value.size)
     }
 
     private val studyPlan = StudyPlanResponse(

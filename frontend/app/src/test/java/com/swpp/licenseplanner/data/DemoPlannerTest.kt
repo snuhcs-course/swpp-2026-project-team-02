@@ -65,9 +65,11 @@ class DemoPlannerTest {
             val beginner = sessions(request(answers, CurrentLevel.BEGINNER))
             assertTrue(intermediate >= advanced && beginner >= intermediate)
         }
-        // All correct, advanced: 3 topics × 2 = 6 × 0.5 = 3; beginner: 6 × 2.0 = 12.
+        // All correct: one base session per topic, rounded up from 0.5 when advanced; beginner doubles it.
         assertEquals(3, sessions(request(allCorrect, CurrentLevel.ADVANCED)))
-        assertEquals(12, sessions(request(allCorrect, CurrentLevel.BEGINNER)))
+        assertEquals(6, sessions(request(allCorrect, CurrentLevel.BEGINNER)))
+        // All unknown is weak and beginner-level everywhere: (1 + 1) × 2 per topic.
+        assertEquals(12, sessions(request(allUnknown, CurrentLevel.ADVANCED)))
     }
 
     @Test
@@ -98,11 +100,11 @@ class DemoPlannerTest {
     @Test
     fun shortfallReturnsCountsWithoutRows() {
         val saturday = defaultAvailability() + (Weekday.SATURDAY to DayAvailability(true, LocalTime.of(10, 0), 60))
-        // 2026-10-05 → 2026-11-02 has four Saturdays; all-unknown beginner needs (3 × 5) × 2 = 30.
+        // 2026-10-05 → 2026-11-02 has four Saturdays; all-unknown beginner needs 3 topics × 4 = 12.
         val result = DemoPlanner.plan(request(allUnknown, CurrentLevel.BEGINNER, saturday, LocalDate.of(2026, 11, 2)))
-        assertEquals(DemoResult.Shortfall(required = 30, available = 4), result)
+        assertEquals(DemoResult.Shortfall(required = 12, available = 4), result)
         val outcome = runBlocking { DemoPlanningRepository().generate(request(allUnknown, CurrentLevel.BEGINNER, saturday, LocalDate.of(2026, 11, 2))) }
-        assertEquals(PlanOutcome.DemoShortfall(30, 4), outcome)
+        assertEquals(PlanOutcome.DemoShortfall(12, 4), outcome)
     }
 
     @Test
@@ -132,6 +134,111 @@ class DemoPlannerTest {
         assertEquals(LocalTopics.catalogOrder.dropLast(1).toSet(), rows.map { it.topic }.toSet())
         assertEquals(listOf(LocalTopics.SYSTEM_USE, LocalTopics.INTERNET_DATA, LocalTopics.SYSTEM_PROTECTION),
             rows.take(3).map { it.topic })
+    }
+
+    // --- Full onboarding selection: per-topic quotas (demo workload assumptions) ---
+
+    private val fullBank = TestFixtures.publicQuestions()
+    private val weekdayEvenings = defaultAvailability() +
+        Weekday.entries.take(5).associateWith { DayAvailability(true, LocalTime.of(18, 0), 60) }
+
+    private fun fullRequest(
+        answers: Map<Int, String>,
+        level: CurrentLevel,
+        exam: LocalDate = LocalDate.of(2027, 1, 4),
+        availability: Map<Weekday, DayAvailability> = weekdayEvenings,
+    ): StudyPlanRequest = (RequestMapper.map(
+        TestFixtures.completeState(fullBank, answers, level, availability, start = LocalDate.of(2026, 11, 9), exam = exam),
+    ) as MappingResult.Ready).request
+
+    private fun topicCounts(request: StudyPlanRequest): Map<String, Int> =
+        study(DemoPlanner.plan(request)).groupingBy { it.topic }.eachCount()
+
+    private fun answersMissing(vararg ids: Int) = fullBank.associate { it.id to if (it.id in ids) UNKNOWN_KEY else it.correctAnswer }
+
+    @Test
+    fun fullWeakBeginnerSelectionFitsFourSessionsPerTopicInFortyWeekdaySlots() {
+        val request = fullRequest(fullBank.associate { it.id to UNKNOWN_KEY }, CurrentLevel.BEGINNER)
+        val rows = study(DemoPlanner.plan(request))
+
+        assertEquals(32, rows.size)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 4 }, topicCounts(request))
+        assertEquals(DemoResult.Shortfall(required = 32, available = 25),
+            DemoPlanner.plan(request.copy(examDate = "2026/12/14/00/00")))
+        val weekdays = generateSequence(LocalDate.of(2026, 11, 9)) { it.plusDays(1) }
+            .takeWhile { it.isBefore(LocalDate.of(2027, 1, 4)) }.count { it.dayOfWeek.value <= 5 }
+        assertEquals(40, weekdays)
+        assertTrue(rows.all { !WireDateTime.parseOrNull(it.startDate)!!.toLocalDate().isAfter(LocalDate.of(2027, 1, 3)) })
+    }
+
+    @Test
+    fun perfectAdvancedSelectionKeepsOneSessionForEveryTopic() {
+        val request = fullRequest(fullBank.associate { it.id to it.correctAnswer }, CurrentLevel.ADVANCED)
+
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 1 }, topicCounts(request))
+    }
+
+    @Test
+    fun mixedScoresGiveEachTopicItsOwnQuota() {
+        // 16/18 overall is advanced: the weak 시스템 활용 topic gets 1 + 1, every other topic 1.
+        val advanced = fullRequest(answersMissing(7, 8), CurrentLevel.ADVANCED)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 2 else 1 },
+            topicCounts(advanced))
+        // 14/18 is intermediate: 시스템 활용 (0/3) is weak, 인터넷 자료 활용 (3/4) is not.
+        val intermediate = fullRequest(answersMissing(6, 7, 8, 9), CurrentLevel.ADVANCED)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 2 else 1 },
+            topicCounts(intermediate))
+        // A beginner choice doubles both components.
+        val beginner = fullRequest(answersMissing(6, 7, 8, 9), CurrentLevel.BEGINNER)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 4 else 2 },
+            topicCounts(beginner))
+        // The first round runs weakest first, then catalog order.
+        assertEquals(LocalTopics.SYSTEM_USE, study(DemoPlanner.plan(beginner)).first().topic)
+    }
+
+    @Test
+    fun scoreAndLevelThresholdsAreInclusive() {
+        val unmapped = (101..105).map { id ->
+            fullBank.first().copy(id = id, prompt = "예시 문항 $id")
+        }
+        fun count(correct: Int) = sessions((RequestMapper.map(TestFixtures.completeState(
+            unmapped, unmapped.mapIndexed { index, q -> q.id to if (index < correct) q.correctAnswer else UNKNOWN_KEY }.toMap(),
+            CurrentLevel.ADVANCED, exam = longExam)) as MappingResult.Ready).request)
+        // 60% is neither weak nor beginner-level; 40% is both.
+        assertEquals(1, count(3))
+        assertEquals(4, count(2))
+        assertEquals(1, count(5))
+    }
+
+    @Test
+    fun fullSelectionScoresAndLevelsNeverReduceSessions() {
+        for (level in CurrentLevel.entries) {
+            var previous = 0
+            for (wrong in 0..fullBank.size) {
+                val answers = fullBank.mapIndexed { i, q -> q.id to if (i < wrong) UNKNOWN_KEY else q.correctAnswer }.toMap()
+                val count = sessions(fullRequest(answers, level, exam = LocalDate.of(2027, 6, 1)))
+                assertTrue("level=$level wrong=$wrong count=$count previous=$previous", count >= previous)
+                previous = count
+            }
+        }
+        val answers = answersMissing(1, 6, 10, 18)
+        val counts = CurrentLevel.entries.sortedDescending().map { sessions(fullRequest(answers, it, exam = LocalDate.of(2027, 6, 1))) }
+        assertEquals(counts.sorted(), counts)
+    }
+
+    @Test
+    fun fullSelectionIsDeterministicAndAvoidsImportedEvents() {
+        val busyDays = listOf("2026/11/10", "2026/11/18", "2026/12/03")
+        val request = fullRequest(fullBank.associate { it.id to UNKNOWN_KEY }, CurrentLevel.BEGINNER)
+            .copy(busySchedules = busyDays.mapIndexed { index, day -> busy(index + 1, "$day/17/30", "$day/18/30") })
+
+        val first = DemoPlanner.plan(request) as DemoResult.Plan
+        assertEquals(first, DemoPlanner.plan(request))
+        val rows = study(first)
+        assertEquals(32, rows.size)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 4 }, topicCounts(request))
+        assertTrue(busyDays.all { day -> rows.none { it.startDate.startsWith(day) } })
+        assertEquals(3, first.response.schedules.count { it.scheduleId.startsWith("external-") })
     }
 
     @Test
