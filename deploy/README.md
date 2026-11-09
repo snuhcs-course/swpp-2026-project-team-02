@@ -200,7 +200,7 @@ verify model generation, adjustment or persistence. Those writes need a separate
 
 Record the server revision from [Before an update](#before-an-update), the times, and the
 identifier used. Earlier restart, reboot and off-campus results are kept in the
-[historical records](../README.md#historical-records); they do not establish the current state.
+[archived deployment verification records](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/deploy/README.md#verification); they do not establish the current state.
 The Android-side procedure is in
 [`../frontend/README.md`](../frontend/README.md#manual-live-check).
 
@@ -227,7 +227,7 @@ host before packaging because the release network policy would block it on the d
 ## Limitations
 
 - Intermittent HTTP 307 adjustment failures were observed on the deployed server (see the
-  [historical records](../README.md#historical-records)). The backend sends no 307; an Nginx or
+  [2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md)). The backend sends no 307; an Nginx or
   network redirect is only a hypothesis. The cause is unresolved, and successful retries or a later
   failure to reproduce do not establish a fix.
 - The assigned public endpoint is HTTP, not HTTPS.

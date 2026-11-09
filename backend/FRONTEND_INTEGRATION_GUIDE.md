@@ -194,7 +194,7 @@ and by the Android client's controlled tests described in
 `../frontend/README.md#verification`. Neither exercises OpenRouter or the
 deployed server. Earlier deployed and physical-device runs, including an
 unresolved intermittent HTTP 307 on adjustment, are kept in the
-[historical records](../README.md#historical-records); they did not include
+[2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md); they did not include
 the full two-plan same-file/CSV/original-window isolation procedure, which
 remains unverified against a real server.
 

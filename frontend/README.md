@@ -567,7 +567,7 @@ times, without account names. These checks have not been run for this change.
 This section describes what each kind of check covers. It is not a record of a
 fresh run of this checkout; record each run's revision, APK and environment with
 its result. Earlier dated device, deployment and emulator runs are kept in the
-[historical records](../README.md#historical-records).
+[archived frontend verification records](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/frontend/README.md#verification).
 
 - JVM checks cover both flavors, with MockWebServer for HTTP.
 - `contract_checks/verify_request.py` checks the request the app serializes
@@ -761,7 +761,7 @@ time. Live adjustment results mean nothing until the backend dependency in
 
 - Written exam only; practical-exam support is an open decision.
 - Physical-device evidence is limited to a few recorded single-device runs
-  (see [historical records](../README.md#historical-records)); it is not broad
+  (see [2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md)); it is not broad
   device or reliability coverage. TalkBack support is incomplete.
 - Deployed adjustment can intermittently fail with HTTP 307; the cause and fix
   remain unverified.

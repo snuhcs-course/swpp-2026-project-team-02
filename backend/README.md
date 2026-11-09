@@ -255,7 +255,7 @@ of recorded results. A passing live run describes that
 run only; it does not establish provider reliability, latency or the quality of
 a plan. The repository has no maintained model-evaluation runner; the earlier
 frozen evaluation and its failed result are preserved in the
-[historical archive](../README.md#historical-records).
+[archived AI evaluation](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-ai-eval).
 
 ## Model configuration
 
