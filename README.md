@@ -1,4 +1,4 @@
-# Team 2 Project
+# License Planner
 
 This repository is organized into separate application areas:
 
@@ -83,9 +83,22 @@ revision or configuration the server is running.
 
 - **Practical exam (실기):** whether and how to support it. The app currently
   plans for the written exam only.
-- **Question bank:** five authored example questions cover the spreadsheet part
-  of the written exam only; 컴퓨터 일반 questions are absent. Replacement or
-  expansion remains a later decision. See
+- **Question bank:** onboarding presents a configured selection of 18 authored
+  example questions, nine each for 컴퓨터 일반 and 스프레드시트 일반, sampling
+  every major section of the KCCI 2024–2026 written syllabus with one to four
+  items per section. The stored collection may grow beyond that selection
+  without changing onboarding; it currently holds exactly those 18 items. They
+  are not an official or validated assessment. Their internal `reviewed` flags
+  were prepared for PR review; the second (teammate) content review is still
+  pending. The official comparison with the 2027–2029 syllabus is done: the bank
+  stays mapped to 2024–2026 (`syllabus_version: "2024-2026"`, IDs 1–18
+  unchanged), and updating it is planned as a separate change in 2027. Carried
+  forward are the Windows 10 basis of IDs 6/8 (their prompts are now
+  version-neutral, without newer-cycle remapping), the section rename for IDs
+  9–12, the remapping of ID 10, and missing AI basics, AI ethics and ICT
+  convergence items. From 2027-01-01 the bank is behind the current syllabus
+  until that update lands. Deeper coverage, routine check-ins, practical
+  workbook tasks and timed mock exams remain later decisions. See
   [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in

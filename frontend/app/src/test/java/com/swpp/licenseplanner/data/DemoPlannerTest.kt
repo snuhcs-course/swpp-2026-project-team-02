@@ -5,6 +5,7 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
+import com.swpp.licenseplanner.domain.LocalTopics
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
@@ -19,7 +20,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 
 class DemoPlannerTest {
-    private val questions = TestFixtures.publicQuestions()
+    private val questions = TestFixtures.spreadsheetFiveQuestions()
     private val allCorrect = questions.associate { it.id to it.correctAnswer }
     private val allUnknown = questions.associate { it.id to UNKNOWN_KEY }
     private val longExam = LocalDate.of(2027, 3, 1)
@@ -119,6 +120,18 @@ class DemoPlannerTest {
         assertEquals("함수와 데이터 관리", response.schedules[1].topic)
         assertEquals("차트와 분석", response.schedules[2].topic)
         assertTrue(runBlocking { DemoPlanningRepository().generate(request()) }.let { it is PlanOutcome.Success && it.isDemo })
+    }
+
+    @Test
+    fun fullBankPlanCoversBothSubjectsWeakestFirst() {
+        val bank = TestFixtures.publicQuestions()
+        val answers = bank.associate { it.id to if (it.id in 6..14) UNKNOWN_KEY else it.correctAnswer }
+        val req = (RequestMapper.map(TestFixtures.completeState(bank, answers, CurrentLevel.ADVANCED, exam = longExam))
+            as MappingResult.Ready).request
+        val rows = (DemoPlanner.plan(req) as DemoResult.Plan).response.schedules
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).toSet(), rows.map { it.topic }.toSet())
+        assertEquals(listOf(LocalTopics.SYSTEM_USE, LocalTopics.INTERNET_DATA, LocalTopics.SYSTEM_PROTECTION),
+            rows.take(3).map { it.topic })
     }
 
     @Test

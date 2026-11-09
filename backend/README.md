@@ -76,9 +76,14 @@ Results are saved under `scenarios/results/api/`.
 The questionnaire writes a JSON assessment result containing the question,
 choices, correct answer, user answer, local `is_correct` result, and possible
 score. Planning requests submit this document as `assessment_results`; the API
-does not grade it. Instead, the planning agent maps each question to one or more
-fixed certification topics with contribution weights summing to 1, then
-aggregates topic-level strengths and weaknesses for the schedule.
+does not grade it. When the results contain exactly the configured onboarding
+selection (its IDs in any order, each with the same question text, normal
+choices, correct answer and possible score; an added `UNKNOWN` choice is
+allowed), each question counts once toward its reviewed `topic` in
+`assessment_questionnaire/questions.json`. Otherwise the planning agent maps each
+question to one or more fixed certification topics with contribution weights
+summing to 1. Either way the server aggregates topic-level strengths and
+weaknesses for the schedule.
 
 This workspace contains two independent Python programs:
 
@@ -101,7 +106,7 @@ document can be passed to the HTTP Planning API or local planner CLI:
 ]}}
 ```
 
-The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start`/`end` time windows. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. The agent classifies each question across one or more catalog topics, proportionally attributes its possible/earned points, and ranks weaker topics first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
+The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start`/`end` time windows. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. For a complete onboarding selection the reviewed question topics are used; otherwise the agent classifies each question across one or more catalog topics and proportionally attributes its possible/earned points. Weaker topics are ranked first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
 
 Study sessions are placed only inside the user's weekly availability. Supply at least one weekday and `start`/`end` window in `weekly_availability`, or save a profile through `PUT /api/v1/availability`; the backend stores it in `config/user_availability.json`. If neither a request nor saved profile contains an available window, Planning API returns HTTP 422 with an input error instead of using common default hours. The generated `topic` column records each study block's assigned topic; external events have a blank topic unless supplied. The agent is instructed to balance date-specific workload across equivalent dates (for example, 120 minutes across two equivalent dates becomes about 60 minutes per date), while the backend enforces only date-level available capacity and does not guarantee this balance. Busy event ranges are excluded; intervals include their start and exclude their end. There is no fixed session length or maximum number of study blocks per day. After saving a plan, the API attempts to retain the 100 most recent generated plan CSVs by removing older matching files; locked files can prevent cleanup.
 
@@ -202,17 +207,27 @@ describe them as CI coverage.
 the Android live-flavor instrumentation test. Validation, the planner and
 adjustment agent loops, their tools, stored exam deadlines and
 `StudyPlanStore` are real; only the model replies are fixed. Planning replays
-the recorded trace in `tests/api_tests/fixtures/recorded_model_tool_calls.json`,
-and adjustment answers with inspect, topic inspection and the matching mutation
-tool. Plans live in a temporary directory removed on exit. Reading an
-OpenRouter key or model setting, or sending a provider request, raises an
-error. The recorded request's own exam date (`2026/11/02/18/00`) leaves no
-free window after the plan, so its study sessions cannot move; generating the
-same request with a later exam date gives a plan that can be adjusted.
+one trace per server, chosen with `--case-id`. The default,
+`selected_onboarding_reviewed_topics` in
+`tests/api_tests/fixtures/scripted_selected_assessment_tool_calls.json`, is a
+synthetic trace written for this fixture, not a captured provider response: it
+submits the complete 18-question onboarding selection, analyzes it without
+`problem_topics` and builds sessions for all eight topics. The recorded
+original-five traces stay in
+`tests/api_tests/fixtures/recorded_model_tool_calls.json`; the backend tests pin
+`topic_errors_then_build_on_last_request` explicitly for the legacy
+classification and deadline checks. Adjustment answers with inspect, topic
+inspection and the matching mutation tool. Plans live in a temporary directory
+removed on exit. Reading an OpenRouter key or model setting, or sending a
+provider request, raises an error. The legacy recorded request's own exam date
+(`2026/11/02/18/00`) leaves no free window after the plan, so its study
+sessions cannot move; generating the same request with a later exam date gives
+a plan that can be adjusted.
 
 ```bash
 # from backend/
 python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+python test_support/fixed_live_e2e_server.py --case-id topic_errors_then_build_on_last_request
 python -m unittest discover -s tests/api_tests -p test_fixed_live_e2e_server.py -v
 ```
 

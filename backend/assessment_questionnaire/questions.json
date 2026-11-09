@@ -1,6 +1,27 @@
 {
   "certification_id": "computer_specialist_level_2",
   "certification_name": "컴퓨터활용능력 2급",
+  "syllabus_version": "2024-2026",
+  "onboarding_question_ids": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18
+  ],
   "questions": [
     {
       "id": 1,
@@ -13,7 +34,15 @@
         "D": "#A1"
       },
       "correct_answer": "B",
-      "possible_score": 1
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "열과 행 앞에 모두 $를 붙인 $A$1은 수식을 복사해도 바뀌지 않는 절대 참조입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, original five-question example set; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
     },
     {
       "id": 2,
@@ -26,7 +55,15 @@
         "D": "=AVERAGE(A1:A5)"
       },
       "correct_answer": "B",
-      "possible_score": 1
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "SUM 함수는 지정한 범위의 숫자를 모두 더합니다. COUNT는 숫자 셀 개수, MAX는 최댓값, AVERAGE는 평균을 구합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, original five-question example set; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
     },
     {
       "id": 3,
@@ -39,7 +76,15 @@
         "D": "=AVERAGE(A1>=60)"
       },
       "correct_answer": "A",
-      "possible_score": 1
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "IF(조건, 참일 때 값, 거짓일 때 값) 형식이므로 A1>=60이면 '통과', 아니면 '재시험'을 표시합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, original five-question example set; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
     },
     {
       "id": 4,
@@ -52,7 +97,15 @@
         "D": "표면형 차트"
       },
       "correct_answer": "A",
-      "possible_score": 1
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "차트 활용",
+      "explanation": "원형 차트는 전체에 대한 각 항목의 비율을 비교하는 데 적합합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, original five-question example set; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
     },
     {
       "id": 5,
@@ -65,7 +118,288 @@
         "D": "셀 수식이 값으로 바뀝니다"
       },
       "correct_answer": "C",
-      "possible_score": 1
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 관리",
+      "explanation": "자동 필터는 조건에 맞지 않는 행을 삭제하지 않고 화면에서 숨기며, 필터를 해제하면 다시 표시됩니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, original five-question example set; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 6,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "Windows 파일 탐색기에서 선택한 파일의 이름을 바꾸는 바로 가기 키는 무엇인가요?",
+      "choices": {
+        "A": "F1",
+        "B": "F2",
+        "C": "F5",
+        "D": "F11"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "파일 탐색기에서 F2를 누르면 선택한 항목의 이름을 바꿀 수 있습니다. F1은 도움말, F5는 새로 고침, F11은 전체 화면입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 7,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "실행 중인 프로그램의 작업 데이터를 임시로 보관하며 전원을 끄면 내용이 사라지는 장치는 무엇인가요?",
+      "choices": {
+        "A": "SSD",
+        "B": "ROM",
+        "C": "USB 플래시 드라이브",
+        "D": "RAM"
+      },
+      "correct_answer": "D",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "RAM은 실행 중인 프로그램과 데이터를 임시로 보관하는 휘발성 주기억장치로, 전원이 꺼지면 내용이 사라집니다. SSD, ROM, USB 플래시 드라이브는 비휘발성입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 8,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "Windows에서 설치된 장치의 상태를 확인하고 특정 장치의 드라이버를 업데이트하는 도구는 무엇인가요?",
+      "choices": {
+        "A": "장치 관리자",
+        "B": "파일 탐색기",
+        "C": "디스크 정리",
+        "D": "작업 스케줄러"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "장치 관리자에서 설치된 하드웨어의 상태를 확인하고 드라이버 업데이트, 사용 안 함, 제거 등을 할 수 있습니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 9,
+      "topic": "인터넷 자료 활용",
+      "prompt": "웹 주소에 입력한 도메인 이름을 IP 주소로 확인할 때 사용하는 서비스는 무엇인가요?",
+      "choices": {
+        "A": "SMTP",
+        "B": "FTP",
+        "C": "DNS",
+        "D": "DHCP"
+      },
+      "correct_answer": "C",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "DNS는 도메인 이름을 IP 주소로 변환합니다. SMTP는 메일 전송, FTP는 파일 전송, DHCP는 IP 주소 자동 할당에 사용합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 10,
+      "topic": "인터넷 자료 활용",
+      "prompt": "사진을 저장할 때 널리 사용하는 손실 압축 이미지 형식은 무엇인가요?",
+      "choices": {
+        "A": "PNG",
+        "B": "JPEG",
+        "C": "BMP",
+        "D": "SVG"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "JPEG는 사진 저장에 널리 쓰는 손실 압축 형식입니다. PNG는 무손실 압축, BMP는 일반적으로 압축하지 않는 형식, SVG는 벡터 형식입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 11,
+      "topic": "인터넷 자료 활용",
+      "prompt": "네트워크를 통해 저장 공간이나 컴퓨팅 자원을 필요에 따라 사용하는 방식은 무엇인가요?",
+      "choices": {
+        "A": "디스크 조각 모음",
+        "B": "로컬 이중 부팅",
+        "C": "화면 미러링",
+        "D": "클라우드 컴퓨팅"
+      },
+      "correct_answer": "D",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "클라우드 컴퓨팅은 네트워크를 통해 저장 공간이나 서버 같은 컴퓨팅 자원을 필요한 만큼 사용하는 방식입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 12,
+      "topic": "인터넷 자료 활용",
+      "prompt": "웹 페이지의 제목, 문단, 링크 같은 문서 구조를 정의하는 데 사용하는 것은 무엇인가요?",
+      "choices": {
+        "A": "HTML",
+        "B": "CSS",
+        "C": "DNS",
+        "D": "JPEG"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "HTML은 제목, 문단, 링크 같은 웹 문서의 구조를 표시하는 마크업 언어입니다. CSS는 표현(스타일)을 담당합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 13,
+      "topic": "컴퓨터 시스템 보호",
+      "prompt": "은행을 사칭한 이메일이 링크에서 비밀번호를 입력하라고 합니다. 가장 적절한 대응은 무엇인가요?",
+      "choices": {
+        "A": "자물쇠 표시만 보고 입력한다",
+        "B": "발신자 이름만 보고 입력한다",
+        "C": "링크를 열지 않고 은행 공식 앱이나 연락처로 확인한다",
+        "D": "답장으로 비밀번호를 보낸다"
+      },
+      "correct_answer": "C",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 보호",
+      "explanation": "피싱이 의심되면 링크를 열지 말고 은행의 공식 앱이나 알려진 연락처로 직접 확인합니다. 자물쇠 표시나 발신자 이름만으로는 안전을 보장할 수 없습니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 14,
+      "topic": "컴퓨터 시스템 보호",
+      "prompt": "정해진 규칙에 따라 들어오거나 나가는 네트워크 통신을 허용하거나 차단하는 기능은 무엇인가요?",
+      "choices": {
+        "A": "파일 압축",
+        "B": "방화벽",
+        "C": "화면 잠금",
+        "D": "디스크 조각 모음"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 보호",
+      "explanation": "방화벽은 정해진 규칙에 따라 들어오거나 나가는 네트워크 통신을 허용하거나 차단합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 15,
+      "topic": "스프레드시트 기본",
+      "prompt": "Excel 2021에서 사용자가 워크시트를 삭제하거나 이름을 바꾸지 못하게 하려면 어떤 기능을 사용하나요?",
+      "choices": {
+        "A": "셀 잠금",
+        "B": "인쇄 영역 설정",
+        "C": "틀 고정",
+        "D": "통합 문서 구조 보호"
+      },
+      "correct_answer": "D",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "응용 프로그램 준비",
+      "explanation": "통합 문서 구조 보호는 워크시트 삽입, 삭제, 이름 바꾸기, 이동을 막습니다. 셀 잠금은 시트 보호와 함께 셀 편집만 제한합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 16,
+      "topic": "스프레드시트 기본",
+      "prompt": "Excel 2021에서 값이 100 이상인 셀만 자동으로 색을 표시하려면 어떤 기능이 알맞나요?",
+      "choices": {
+        "A": "조건부 서식",
+        "B": "틀 고정",
+        "C": "찾기 및 바꾸기",
+        "D": "인쇄 제목"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 입력",
+      "explanation": "조건부 서식은 셀 값이 규칙을 만족할 때 지정한 서식을 자동으로 적용하며, 값이 바뀌면 서식도 다시 적용됩니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 17,
+      "topic": "페이지 설정과 인쇄",
+      "prompt": "Excel 2021에서 여러 페이지에 걸친 표의 첫 행을 각 인쇄 페이지 위에 반복하려면 어떤 기능이 알맞나요?",
+      "choices": {
+        "A": "인쇄 영역",
+        "B": "틀 고정",
+        "C": "인쇄 제목",
+        "D": "페이지 나누기 미리 보기"
+      },
+      "correct_answer": "C",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "출력 작업",
+      "explanation": "페이지 설정의 인쇄 제목(반복할 행)을 지정하면 선택한 행이 각 인쇄 페이지 위쪽에 반복됩니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
+    },
+    {
+      "id": 18,
+      "topic": "매크로 활용",
+      "prompt": "VBA 매크로를 포함한 통합 문서를 표준 매크로 사용 형식으로 저장할 때 사용하는 확장자는 무엇인가요?",
+      "choices": {
+        "A": ".xlsx",
+        "B": ".xlsm",
+        "C": ".csv",
+        "D": ".xltx"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "매크로 활용",
+      "explanation": ".xlsm은 매크로 사용 통합 문서 형식입니다. .xlsx는 매크로를 저장할 수 없고, .csv는 텍스트 형식, .xltx는 매크로 없는 서식 파일입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "reviewed"
     }
   ]
 }

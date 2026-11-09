@@ -97,6 +97,30 @@ def _run_case(case: dict) -> dict:
             expected = {"exit_code": case["expected_exit_code"], "output_exists": False}
             passed = actual == expected
 
+    elif kind == "question_document_cli":
+        with tempfile.TemporaryDirectory(prefix="assessment-document-") as temp_dir:
+            question_path = Path(temp_dir) / "questions.json"
+            output_path = Path(temp_dir) / "assessment_results.json"
+            question_path.write_text(json.dumps(case["question_document"], ensure_ascii=False), encoding="utf-8")
+            source_before = question_path.read_bytes()
+            with patch.object(sys, "argv", ["assessment-questionnaire", "--questions", str(question_path), "--output", str(output_path)]), \
+                    patch("builtins.input", side_effect=case["answers"]), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                exit_code = cli.main()
+            _, parsed = _read_results(output_path)
+            actual = {
+                "exit_code": exit_code,
+                "problem_ids": [row["problem_id"] for row in parsed["results"]],
+                "correct_count": sum(row["is_correct"] for row in parsed["results"]),
+                "source_unchanged": question_path.read_bytes() == source_before,
+            }
+            expected = {
+                "exit_code": case["expected_exit_code"],
+                "problem_ids": case["expected_problem_ids"],
+                "correct_count": case["expected_correct_count"],
+                "source_unchanged": True,
+            }
+            passed = actual == expected
+
     elif kind == "cli_project_bank":
         with tempfile.TemporaryDirectory(prefix="assessment-cli-") as temp_dir:
             output_path = Path(temp_dir) / "assessment_results.json"

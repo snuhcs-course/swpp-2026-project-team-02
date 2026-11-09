@@ -8,19 +8,33 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from assessment_service import select_onboarding_questions
+
 
 QUESTION_FILE = Path(__file__).resolve().parent / "questions.json"
 DEFAULT_OUTPUT_FILE = Path(__file__).resolve().parent / "output" / "assessment_results.json"
 
 
 def load_questions(path: Path = QUESTION_FILE) -> dict[str, Any]:
-    """Load and validate a certification's multiple-choice assessment JSON."""
+    """Load and validate a certification's multiple-choice assessment JSON.
+
+    A bank with ``onboarding_question_ids`` yields only that selection, in order, so
+    retained unselected items and drafts are not asked. A custom document without it
+    asks every question as before.
+    """
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"질문 JSON을 읽을 수 없습니다: {error}") from error
     if not isinstance(document, dict) or not isinstance(document.get("questions"), list):
         raise ValueError("질문 JSON에는 questions 배열이 필요합니다.")
+    try:
+        selected = select_onboarding_questions(document, required=False)
+    except ValueError as error:
+        raise ValueError(f"진단 문항 선택 설정이 올바르지 않습니다: {error}") from error
+    if selected is not None:
+        document = {key: value for key, value in document.items() if key != "questions"}
+        document["questions"] = selected
     if not document["questions"]:
         raise ValueError("질문이 한 개 이상 있어야 합니다.")
 

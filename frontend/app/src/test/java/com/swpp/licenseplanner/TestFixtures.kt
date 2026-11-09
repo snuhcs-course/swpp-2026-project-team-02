@@ -11,12 +11,15 @@ import com.swpp.licenseplanner.domain.defaultAvailability
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Shared test data. The public response fixture mirrors the pinned bank's public fields. */
+/** Shared test data. The public response fixture mirrors the served onboarding selection's public fields. */
 object TestFixtures {
     fun publicResponseJson(): String =
         checkNotNull(javaClass.classLoader?.getResource("questions-response.json")) { "missing fixture" }.readText()
 
     fun publicQuestions(): List<Question> = QuestionAdapter.parse(publicResponseJson(), CERTIFICATION_ID)
+
+    /** The bank's original five spreadsheet questions, a fixed three-label set for workload rules. */
+    fun spreadsheetFiveQuestions(): List<Question> = publicQuestions().filter { it.id in 1..5 }
 
     /** A valid three-question set: two known IDs and one new, unmapped ID worth 2 points. */
     fun threeQuestionJson(): String = """

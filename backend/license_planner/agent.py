@@ -108,7 +108,10 @@ class PlanningAgent:
             user["usable_minutes_by_date"] = date_minutes
         failed_calls: set[tuple[str, str, str]] = set()  # 마지막 성공 이후 실패한 (도구, 인자, 오류)입니다.
         seen_call_ids: set[str] = set()  # 이번 요청에서 받은 함수 호출 ID입니다.
-        history: list[dict] = [{"role": "user", "content": "Prepare this user's plan using tools. Use the supplied question, choices, answers, and local correctness fields for topic classification. Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]  # 요청 안에서만 쓰는 모델 대화 기록입니다.
+        classification = ("Use the supplied question, choices, answers, and local correctness fields for topic classification. "
+                          if request.assessment_items or not request.problem_results else
+                          "Topic classification is already supplied; call analyze_exam_results without problem_topics. ")
+        history: list[dict] = [{"role": "user", "content": "Prepare this user's plan using tools. " + classification + "Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]  # 요청 안에서만 쓰는 모델 대화 기록입니다.
         for _ in range(self.max_steps):
             schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()))
             output, calls, answer = parse_reply(self._ask_model(history, schemas))

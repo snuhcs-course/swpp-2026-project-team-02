@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
+from assessment_service import _onboarding_selection
 from license_planner.agent import PlanningAgent
 
 RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
@@ -86,6 +87,10 @@ class PlanGenerationHttpTests(unittest.TestCase):
         except HTTPError as error:
             with error:
                 return error.code, json.loads(error.read())
+
+    def get(self, path):
+        with urlopen(f"{self.base}{path}", timeout=10) as response:
+            return response.status, json.loads(response.read())
 
     def saved_files(self):
         return sorted(path.name for path in self.store.iterdir() if path != self.existing)
@@ -305,6 +310,39 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertCountEqual(item["topic"]["enum"], topics)
         self.assertNotIn("2026/10/20", item["date"]["enum"])
         self.assertIn("2026/10/19", item["date"]["enum"])
+
+    def test_complete_onboarding_selection_plans_every_reviewed_topic_over_http(self):
+        status, bank = self.get("/certifications/computer_specialist_level_2/questions")
+        self.assertEqual(status, 200, bank)
+        computer_general = {"컴퓨터 시스템 활용", "인터넷 자료 활용", "컴퓨터 시스템 보호"}
+        reviewed = {question["id"]: question["topic"]
+                    for question in _onboarding_selection("computer_specialist_level_2")[1]}
+        payload = copy.deepcopy(RECORDED["topic_errors_then_build_on_last_request"]["request"])
+        payload["assessment_results"]["results"] = [
+            {"problem_id": question["id"], "question": question["prompt"], "choices": question["choices"],
+             "correct_answer": question["correct_answer"],
+             "user_answer": question["correct_answer"] if reviewed[question["id"]] not in computer_general
+             else next(key for key in question["choices"] if key != question["correct_answer"]),
+             "is_correct": reviewed[question["id"]] not in computer_general,
+             "possible_score": question["possible_score"]}
+            for question in bank["questions"]]
+        topics = list(dict.fromkeys(reviewed.values()))
+        days = ("2026/10/19", "2026/10/21", "2026/10/23")
+        self.replies = [model_reply("analyze_exam_results", {}),
+                        model_reply("build_study_schedule", {"daily_topic_minutes": [
+                            {"date": days[index % len(days)], "topic": topic, "minutes": 30}
+                            for index, topic in enumerate(topics)]})]
+
+        status, body = self.post(payload)
+
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(bank["questions"]), 18)
+        self.assertEqual(len(topics), 8)
+        self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        self.assertEqual([call["tool"] for call in body["tool_calls"]],
+                         ["analyze_exam_results", "build_study_schedule"])
+        self.assertEqual(self.replies, [])
+        self.assertEqual(len(self.saved_files()), 2)
 
 
 if __name__ == "__main__":

@@ -4,9 +4,11 @@
 This is an E2E fixture for the Android live flavor.  It uses the real API
 handler, request validation, scheduler, adjustment agent loop and tools,
 stored exam deadlines, and StudyPlanStore, but replaces only the outbound
-OpenRouter exchange: planning replays a checked-in recorded tool-call trace,
-and adjustment replies are chosen deterministically from the conversation the
-agent sends.  Any attempt to read an API key or send a provider request fails.
+OpenRouter exchange: planning replays a checked-in tool-call trace, and
+adjustment replies are chosen deterministically from the conversation the
+agent sends.  The default trace is a synthetic one for a complete onboarding
+selection; the recorded five-question traces remain selectable by case ID.
+Any attempt to read an API key or send a provider request fails.
 It must never be deployed or configured with a production API key.
 """
 
@@ -40,20 +42,28 @@ from license_planner.agent import PlanningAgent
 from schedule_adjuster.agent import AdjustmentAgent
 
 
-FIXTURE_PATH = BACKEND_ROOT / "tests" / "api_tests" / "fixtures" / "recorded_model_tool_calls.json"
-DEFAULT_CASE_ID = "topic_errors_then_build_on_last_request"
+FIXTURE_DIR = BACKEND_ROOT / "tests" / "api_tests" / "fixtures"
+FIXTURE_PATH = FIXTURE_DIR / "recorded_model_tool_calls.json"
+SCRIPTED_FIXTURE_PATH = FIXTURE_DIR / "scripted_selected_assessment_tool_calls.json"
+LEGACY_CASE_ID = "topic_errors_then_build_on_last_request"
+DEFAULT_CASE_ID = "selected_onboarding_reviewed_topics"
 
 
 def load_cases() -> dict[str, dict]:
-    """Load only the recorded model responses used by the fixture server."""
-    cases = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    if not isinstance(cases, dict):
-        raise ValueError("recorded model fixture must contain an object")
+    """Load the recorded and synthetic model responses used by the fixture server."""
+    cases: dict[str, dict] = {}
+    for path in (FIXTURE_PATH, SCRIPTED_FIXTURE_PATH):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValueError(f"model fixture {path.name} must contain an object")
+        if cases.keys() & loaded.keys():
+            raise ValueError(f"model fixture {path.name} repeats a case ID")
+        cases.update(loaded)
     return cases
 
 
 def recorded_agent(case: dict) -> type[PlanningAgent]:
-    """Create a PlanningAgent class that returns one recorded tool call per request."""
+    """Create a PlanningAgent class that returns one fixture tool call per request."""
     calls = case.get("model_tool_calls")
     if not isinstance(calls, list) or not calls:
         raise ValueError("fixture case must contain non-empty model_tool_calls")
@@ -66,7 +76,7 @@ def recorded_agent(case: dict) -> type[PlanningAgent]:
 
         def _ask_model(self, input_items, tools):
             if not self._replies:
-                raise RuntimeError("fixed E2E fixture exhausted recorded model tool calls")
+                raise RuntimeError("fixed E2E fixture exhausted its model tool calls")
             reply = self._replies.pop(0)
             name, arguments = reply.get("name"), reply.get("args")
             if not isinstance(name, str) or not isinstance(arguments, dict):
@@ -147,7 +157,7 @@ class FixedLiveE2EServer:
 @contextlib.contextmanager
 def running_server(host: str = "127.0.0.1", port: int = 0,
                    case_id: str = DEFAULT_CASE_ID) -> Iterator[FixedLiveE2EServer]:
-    """Start the real HTTP handler with one recorded planning trace and isolated storage."""
+    """Start the real HTTP handler with one planning trace and isolated storage."""
     cases = load_cases()
     try:
         case = cases[case_id]
@@ -181,7 +191,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="0.0.0.0", help="address to bind (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="TCP port to bind (default: 8000)")
-    parser.add_argument("--case-id", default=DEFAULT_CASE_ID, help="recorded planning case to replay")
+    parser.add_argument("--case-id", default=DEFAULT_CASE_ID,
+                        help=f"planning case to replay (default: {DEFAULT_CASE_ID})")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")

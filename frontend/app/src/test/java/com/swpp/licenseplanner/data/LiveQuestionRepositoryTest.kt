@@ -45,7 +45,7 @@ class LiveQuestionRepositoryTest {
         assertEquals("GET", recorded.method)
         assertEquals("/api/v1/certifications/computer_specialist_level_2/questions", recorded.path)
         assertEquals(0L, recorded.bodySize)
-        assertEquals(listOf(1, 2, 3, 4, 5), outcome.questions.map { it.id })
+        assertEquals((1..18).toList(), outcome.questions.map { it.id })
         assertEquals(TestFixtures.publicQuestions(), outcome.questions)
     }
 

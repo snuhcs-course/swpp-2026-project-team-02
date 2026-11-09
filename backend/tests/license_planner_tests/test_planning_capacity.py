@@ -17,7 +17,7 @@ from license_planner.tools import PlannerTools, check_initial_capacity
 from license_planner.user_availability import parse_weekly_availability
 
 CERT = get_certification("computer_specialist_level_2")
-BASICS, FUNCTIONS, CHARTS = CERT.topics
+BASICS, FUNCTIONS, CHARTS = CERT.topics[:3]
 MONDAY = date(2026, 10, 19)
 
 
@@ -483,7 +483,7 @@ class ProposalGuidanceTests(unittest.TestCase):
         self.assertRegex(errors[2], "exceed 0 available minutes on 2026-10-20")
         self.assertRegex(errors[3], "exceed 120 available minutes on 2026-10-19")
         for request in sent[1:]:
-            self.assertCountEqual(build_item_schema(request)["topic"]["enum"], CERT.topics)
+            self.assertCountEqual(build_item_schema(request)["topic"]["enum"], [BASICS, FUNCTIONS, CHARTS])
             self.assertEqual(build_item_schema(request)["date"]["enum"], list(self.USABLE))
         self.assertEqual(sum((b.end_datetime - b.start_datetime for b in tools.schedule), timedelta()),
                          timedelta(minutes=180))

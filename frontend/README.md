@@ -18,8 +18,12 @@ Back (or an unchanged date) returns to the warning and discards the unconfirmed
 date.
 
 **Scope:** written exam (필기) only; practical exam (실기) is not included. The
-questions are authored examples, not official exam questions or a validated
-diagnostic.
+assessment shows the backend's configured onboarding selection: 18 questions
+sampling both written subjects (컴퓨터 일반 and 스프레드시트 일반, nine each).
+They are authored examples, not official exam questions or a validated
+diagnostic. Questions the backend stores outside that selection are never
+shown, so adding them needs no app change or new APK while the selection stays
+the same. Routine study check-ins using further questions are not implemented.
 
 ## Build and run
 
@@ -76,12 +80,16 @@ changed; CI starts from a fresh checkout, so its tests always run.
 `app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` is the only
 instrumentation test. It sits in the live flavor's source set, so only
 `connectedLiveDebugAndroidTest` runs it; demo instrumentation has no tests and
-contacts no server. It loads the questions, generates a plan, adjusts one study
-session, checks that the whole moved session ends by the plan's exam date and
-that no other row changed, and reads the plan back by its exact identity. The
-backend is `backend/test_support/fixed_live_e2e_server.py`: the real API
-handler, scheduler, adjustment loop and plan store with fixed model replies and
-no OpenRouter access (see `backend/README.md`). Without that server the test
+contacts no server. It loads the 18 onboarding questions, submits all of them
+(some answered 모르겠음), checks that the plan covers the topics of both written
+subjects, adjusts one study session, checks that the whole moved session ends
+by the plan's exam date and that no other row changed, and reads the plan back
+by its exact identity. The backend is
+`backend/test_support/fixed_live_e2e_server.py`: the real API handler,
+scheduler, adjustment loop and plan store with fixed model replies and no
+OpenRouter access (see `backend/README.md`). Its default case,
+`selected_onboarding_reviewed_topics`, is the synthetic complete-selection
+trace this test needs. Without that server the test
 fails rather than skipping. Use a disposable emulator:
 
 ```bash
@@ -102,7 +110,7 @@ model or the deployed server.
 
 | Flavor | Needs backend | Questions | Plans | Adjustment |
 | --- | --- | --- | --- | --- |
-| `demo` (default) | No | Five bundled example questions | Local deterministic planner, labeled "demo" on every screen | Local rule, no network |
+| `demo` (default) | No | Bundled copy of the 18-question onboarding selection (both written subjects) | Local deterministic planner, labeled "demo" on every screen | Local rule, no network |
 | `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (OpenRouter `openai/gpt-6-luna`, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
@@ -733,10 +741,12 @@ emulator checks above.
 Fixed inputs for repeatable plan-quality and performance checks. Use the APKs
 from `assembleDemoDebug`/`assembleLiveDebug` (or CI's `android-debug-apks`
 artifact), and record the APK SHA-256 and the backend commit with each result.
-Both cases choose 기본 기능은 알아요 and answer the five example questions
-correctly (B, B, A, A, C), with preparation starting 2026-10-19.
+Both cases choose 기본 기능은 알아요 and answer every example question
+correctly, with preparation starting 2026-10-19. The demo results below were
+observed on 2026-10-17 with the earlier five-question build (answers B, B, A, A,
+C); the 18-question bank has more topics, so re-observe them before comparing.
 
-| Case | Exam date and study windows | Demo result (observed 2026-10-17) |
+| Case | Exam date and study windows | Demo result (five-question build, 2026-10-17) |
 | --- | --- | --- |
 | A: adjustment | 2026-12-14; Mon 18:00 for 2 h, Tue 18:00 for 1 h, Wed 18:00 for 2 h | Six sessions. Adjusting `study-1` moves it to 10/26 19:00–20:00; adjusting it again moves it to 10/28 19:00–20:00. |
 | B: no free slot | 2026-11-02; Mon, Wed, Fri 18:00 for 1 h | Six sessions fill every slot; adjusting one reports 옮길 수 있는 시간이 없어요. |
@@ -755,9 +765,14 @@ time. Live adjustment results mean nothing until the backend dependency in
   device or reliability coverage. TalkBack support is incomplete.
 - Deployed adjustment can intermittently fail with HTTP 307; the cause and fix
   remain unverified.
-- The questions cover only the spreadsheet part of the written exam (no 컴퓨터
-  일반 questions); see the
-  [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
+- The 18 selected questions sample each major section of the written syllabus
+  with one to four items, so a single answer can move a topic score a long way.
+  Their teammate content review is still pending. They are mapped to the
+  2024–2026 syllabus; the official 2027–2029 comparison is done, but its
+  findings (IDs 6/8 Windows basis, IDs 9–12 section rename, ID 10 remap, no AI
+  basics, AI ethics or ICT convergence items) are left to a separate 2027
+  update, so from 2027-01-01 the questions are behind the current syllabus. See
+  the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - Calendar events are read once, when a plan is created. Adjustment uses the
   saved plan's external rows; re-reading the calendar after a plan is saved,
   detecting newly conflicting study sessions and rescheduling them are not

@@ -33,11 +33,21 @@ The current MVP uses `computer_specialist_level_2`.
 
 ## Question bank
 
-`GET /api/v1/certifications/{certification_id}/questions` returns questions in
-bank order. Each question contains `id`, `prompt`, `choices`, `correct_answer`,
-and `possible_score`; the response also includes `certification_id` and
-`certification_name`. The MVP question bank is authored example content, not an
-official exam bank or validated diagnostic.
+`GET /api/v1/certifications/{certification_id}/questions` returns the bank's
+configured onboarding selection in its configured order. Each question contains
+`id`, `prompt`, `choices`, `correct_answer`, and `possible_score`; the response
+also includes `certification_id` and `certification_name`. The MVP question bank
+is authored example content, not an official exam bank or validated diagnostic.
+For Level 2 the selection is IDs 1–18: four-choice, one-point items, nine each
+for 컴퓨터 일반 and 스프레드시트 일반. The response does not include topic labels,
+review metadata or questions stored outside the selection, so the stored
+collection can grow without changing this response. A missing or invalid Level 2
+selection (empty, a repeated or unknown ID, or a selected item that is not
+reviewed and complete) returns `500` / `INTERNAL_ERROR` with no questions.
+The selection is mapped to the KCCI 2024–2026 written syllabus. Its update for
+the 2027–2029 syllabus is a separate planned change, so from 2027-01-01 the
+served questions are behind the current syllabus; see
+[question-bank maintenance](DEVELOPER_GUIDE.md#문항-은행-유지보수).
 
 ```json
 {
@@ -155,10 +165,14 @@ minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
 that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the
 topic basis, and advises adding study windows, starting preparation earlier, or
 choosing a later exam date. No schedule fields are returned and no plan file is
-saved. The check runs in two stages. Before any model call the exact topic count
-is unknown, so only zero usable minutes is rejected there, even when no server key
-is configured. After the model maps the questions to topics, the actual number of
-distinct assessed topics is checked before any schedule is built. Passing the
+saved. The check runs in two stages. When the results contain exactly the
+served onboarding selection (same IDs, question text, normal choices, correct
+answers and possible scores, in any order, with `UNKNOWN` allowed), the server
+uses the selected items' reviewed topics, so every one of those topics is
+required and the topic count is checked before any model call. Otherwise the exact topic count is unknown before the
+model call, so only zero usable minutes is rejected there, even when no server
+key is configured; after the model maps the questions to topics, the actual
+number of distinct assessed topics is checked before any schedule is built. Passing the
 check does not mean the time is enough to prepare. Invalid model allocations,
 repeated tool failures and provider errors stay `502`/`503`; they never become
 `NOT_ENOUGH_TIME`. On success, `agent_summary` is a short server-written summary
