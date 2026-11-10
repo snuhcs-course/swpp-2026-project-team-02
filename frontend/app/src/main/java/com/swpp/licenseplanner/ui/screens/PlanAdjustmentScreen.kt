@@ -60,6 +60,16 @@ internal fun adjustmentMode(plan: SessionPlan, state: AdjustmentState): Adjustme
 internal fun movedScheduleId(plan: SessionPlan, state: AdjustmentState): String? =
     (state as? AdjustmentState.Success)?.targetScheduleId?.takeIf { plan.isStudy(it) }
 
+/**
+ * The current plan's nonblank summary while it is adjustable and either untouched (as when a
+ * saved plan is reopened) or just adjusted, or null. Other outcomes show their own guidance.
+ */
+internal fun shownSummary(plan: SessionPlan, state: AdjustmentState): String? =
+    plan.current.agentSummary?.takeIf {
+        it.isNotBlank() && adjustmentMode(plan, state) == AdjustmentMode.Adjustable &&
+            (state == AdjustmentState.Idle || state is AdjustmentState.Success)
+    }
+
 /** Index of the week holding [scheduleId], or -1. */
 private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
     weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == scheduleId } } }
@@ -116,7 +126,7 @@ fun PlanAdjustmentScreen(
     }
     val shownIndex = weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0))
     val week = weeks.getOrNull(shownIndex)
-    val summary = plan.current.agentSummary?.takeIf { it.isNotBlank() }
+    val summary = shownSummary(plan, state)
     // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
     val exportAction: @Composable () -> Unit = {
         if (exportBlock != ExportBlock.NoStudy) SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
@@ -231,7 +241,10 @@ fun PlanAdjustmentScreen(
                         "다른 일정을 고르거나, 공부 시간을 넉넉히 넣어 새 계획을 만들어 주세요. 이 계획의 공부 시간은 바뀌지 않아요.",
                 )
                 state == AdjustmentState.Reloaded -> Unit
-                else -> Note("놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요.")
+                else -> {
+                    if (summary != null) PlanSummary(summary)
+                    Note("놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요.")
+                }
             }
         }
         if (week != null) {
