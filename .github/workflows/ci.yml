@@ -67,6 +67,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m unittest discover -s ../scripts/tests -v
 
+      - name: AI evaluation runner offline tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s ../docs/iter3-ai-eval -p 'test_*.py' -v
+
       - name: Validate coverage reports
         run: python ../scripts/verify_test_evidence.py --repo-root .. --scope backend
 

@@ -280,8 +280,9 @@ plans there can prune other people's plans; agree with the server owner before
 writing to it. Keep API keys, raw provider error bodies and `.env` contents out
 of recorded results. A passing live run describes that
 run only; it does not establish provider reliability, latency or the quality of
-a plan. The repository has no maintained model-evaluation runner; the earlier
-frozen evaluation and its failed result are preserved in the
+a plan. For P10 weak-topic allocation evaluation, use the restored
+[AI evaluation runner](../docs/iter3-ai-eval/README.md), updated for the selected
+18-question, eight-topic bank. The earlier frozen evaluation and its failed result are preserved in the
 [archived AI evaluation](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-ai-eval).
 
 ## Model configuration
