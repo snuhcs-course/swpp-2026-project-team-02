@@ -57,13 +57,14 @@ object QuestionAdapter {
         if (response.certificationId != expectedCertificationId) invalid("certification_id does not match")
         if (response.questions.isEmpty()) invalid("questions is empty")
         val seen = HashSet<Int>()
-        return response.questions.map { dto ->
+        val questions = response.questions.map { dto ->
             if (dto.id < 1) invalid("question id must be positive: ${dto.id}")
             if (!seen.add(dto.id)) invalid("duplicate question id: ${dto.id}")
             if (dto.prompt.isBlank()) invalid("prompt is blank for id ${dto.id}")
             if (dto.choices.isEmpty() || dto.choices.any { (key, label) -> key.isBlank() || label.isBlank() }) {
                 invalid("choices are invalid for id ${dto.id}")
             }
+            if (dto.choices.keys.count { it != UNKNOWN_KEY } < 2) invalid("fewer than two normal choices for id ${dto.id}")
             if (dto.correctAnswer !in dto.choices) invalid("correct_answer is not a choice for id ${dto.id}")
             if (dto.correctAnswer == UNKNOWN_KEY) invalid("correct_answer uses the reserved UNKNOWN key for id ${dto.id}")
             dto.choices[UNKNOWN_KEY]?.let { label ->
@@ -72,5 +73,7 @@ object QuestionAdapter {
             if (!dto.possibleScore.isFinite() || dto.possibleScore <= 0) invalid("possible_score must be positive for id ${dto.id}")
             Question(dto.id, dto.prompt, LinkedHashMap(dto.choices), dto.correctAnswer, dto.possibleScore)
         }
+        if (!questions.sumOf { it.possibleScore }.isFinite()) invalid("total possible_score is not finite")
+        return questions
     }
 }

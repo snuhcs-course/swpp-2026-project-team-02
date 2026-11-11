@@ -33,11 +33,26 @@ The current MVP uses `computer_specialist_level_2`.
 
 ## Question bank
 
-`GET /api/v1/certifications/{certification_id}/questions` returns questions in
-bank order. Each question contains `id`, `prompt`, `choices`, `correct_answer`,
-and `possible_score`; the response also includes `certification_id` and
-`certification_name`. The MVP question bank is authored example content, not an
-official exam bank or validated diagnostic.
+`GET /api/v1/certifications/{certification_id}/questions` returns the bank's
+configured onboarding selection in its configured order. Each question contains
+`id`, `prompt`, `choices`, `correct_answer`, and `possible_score`; the response
+also includes `certification_id` and `certification_name`. The MVP question bank
+is authored example content, not an official exam bank or validated diagnostic.
+For Level 2 the selection is IDs 1–18: four-choice, one-point items, nine each
+for 컴퓨터 일반 and 스프레드시트 일반. The response does not include topic labels,
+review metadata or questions stored outside the selection, so the stored
+collection can grow without changing this response. Every configured bank must
+name its selection explicitly; there is no whole-bank fallback. A missing or
+invalid selection (empty, a repeated or unknown ID, a selected item that is not
+reviewed and complete, or selected scores whose total is not finite), an
+incomplete reviewed record, or an enabled certification whose planning entry,
+bank mapping or bank file is missing or mismatched returns `500` /
+`INTERNAL_ERROR` with a fixed message and no questions; the message never
+contains file paths. An ID that is not enabled still returns `404`.
+The selection is mapped to the KCCI 2024–2026 written syllabus. Its update for
+the 2027–2029 syllabus is a separate planned change, so from 2027-01-01 the
+served questions are behind the current syllabus; see
+[question-bank maintenance](DEVELOPER_GUIDE.md#문항-은행-유지보수).
 
 ```json
 {
@@ -93,10 +108,47 @@ results. Dates use `YYYY/MM/DD/HH/MM` and availability times use `HH:MM`.
 ```
 
 `assessment_results.certification_id` must match the top-level ID. Each result
-must include a positive integer `problem_id`, question text, string choice map,
-correct and user choice keys, boolean `is_correct`, and positive numeric
-`possible_score`. The server validates the result structure; the Android app is
-responsible for comparing the selected answer with the answer key.
+must include a positive integer `problem_id`, non-empty question text, a choice
+map with non-empty keys and labels and at least two normal choices besides
+`UNKNOWN`, correct and user choice keys, boolean `is_correct`, and a positive
+finite numeric `possible_score` (it is required; there is no one-point default).
+`UNKNOWN` is reserved: its label must be `모르겠음` and it is never the correct
+key. The Android app compares the selected answer with the answer key; the
+server checks that `is_correct` equals that comparison, with `UNKNOWN` always
+incorrect, and that the total possible score is finite. Any violation returns
+`422` / `INVALID_INPUT` before a model call or saved plan; inconsistent flags
+are rejected, never rewritten.
+
+### Busy schedules
+
+`busy_schedules` lists existing commitments the plan must avoid. It may be
+omitted, `null` or empty. Each item is an object:
+
+```json
+{
+  "schedule_id": "12345",
+  "start_date": "2026/11/04/19/00",
+  "end_date": "2026/11/04/20/00",
+  "topic": "외부 일정"
+}
+```
+
+`schedule_id` must be a positive base-10 integer string, unique within the
+request; a prefix such as `calendar:` or a repeated ID returns `422
+INVALID_INPUT`. Leading zeros are normalized away. Intervals are half-open
+`[start_date, end_date)`: a study block may end exactly when a busy item starts,
+but no study block overlaps one by a positive duration, and overlapping busy items
+are subtracted once. Busy items that leave no usable time return the
+`NOT_ENOUGH_TIME` error described below before any model call. Every item is
+returned as an `external-<ID>` row in `schedules` and `schedule_csv`.
+
+The Android calendar import sends one item per calendar occurrence with the
+generic topic `외부 일정`. Recurring occurrences share a provider event ID, so the
+app keeps that ID for the first occurrence and assigns later occurrences unused
+numeric IDs above the largest provider ID. Timed events are widened to whole
+minutes in Korean local time; all-day events block their whole dates. Titles and
+other event details are not sent. See `../frontend/README.md#calendar-import` for
+which events the app includes.
 
 The response includes `schedules`, with `schedule_id`, `start_date`, `end_date`,
 and `topic` on each row, plus `schedule_csv` and `agent_summary`. The server may
@@ -107,7 +159,9 @@ and displays the schedule rows. Date fields use the same
 The Android live flavor does not fall back to demo data after an API error. It
 keeps the form values and surfaces the error. Common statuses are `422` for
 invalid input, `502` for upstream planning errors, `503` for missing server
-configuration, and `500` for unexpected server errors. Error bodies use
+configuration, and `500` for unexpected server errors or a question-bank
+configuration fault (fixed message, no paths; retrying cannot help until the
+server's bank or catalogs are repaired). Error bodies use
 `{"error":{"code":"...","message":"..."}}`.
 
 `502`/`503` `UPSTREAM_ERROR` messages are fixed public sentences, not the
@@ -124,10 +178,19 @@ minute, plan generation returns `422` / `INVALID_INPUT` with an `error.message`
 that starts with `NOT_ENOUGH_TIME`. After that code, the Korean message states the usable minutes and the
 topic basis, and advises adding study windows, starting preparation earlier, or
 choosing a later exam date. No schedule fields are returned and no plan file is
-saved. The check runs in two stages. Before any model call the exact topic count
-is unknown, so only zero usable minutes is rejected there, even when no server key
-is configured. After the model maps the questions to topics, the actual number of
-distinct assessed topics is checked before any schedule is built. Passing the
+saved. Each submitted question is matched on its own: when its ID, question
+text, normal choices, correct answer and possible score equal a complete
+reviewed bank record (any subset, in any order, with `UNKNOWN` allowed; the
+record need not be in the onboarding selection), its reviewed topic is used and
+the model does not classify it. Only the remaining questions are classified by
+the model. The check runs in two stages. Before any model call, a request whose
+questions are all resolved uses its exact topic count; a mixed request uses the
+number of resolved topics as a lower bound (unresolved questions may share
+those topics); a request with no resolved question can only be rejected for
+zero usable minutes, even when no server key is configured. After the model
+maps the unresolved questions, the union of all assessed topics is checked
+before any schedule is built. A bank or configuration fault returns `500`
+instead of sending every question to the model. Passing the
 check does not mean the time is enough to prepare. Invalid model allocations,
 repeated tool failures and provider errors stay `502`/`503`; they never become
 `NOT_ENOUGH_TIME`. On success, `agent_summary` is a short server-written summary
@@ -143,21 +206,15 @@ endpoint as described below; it does not import the server's plans into its list
 
 ## Task 2: select, adjust, and update a saved plan
 
-Later deployed OpenRouter and physical-device results are linked in the
-[verification index](../docs/README.md#verification-status). The 2026-10-30 to 31
-device report includes successful adjustment and explicit reload after a lost
-response, but records an unresolved intermittent HTTP 307. It does not attach
-the full two-plan same-file/CSV/original-window isolation matrix. These recorded
-results are distinct from the historical backend-only check below.
-
-Historical backend verification (2026-10-17): Fifteen isolated HTTP/storage tests
-passed using a replacement agent that executes the real domain tools. Fifteen
-existing adjustment tests passed; the planner suite passed 12/13 with an existing
-weekday-normalization expectation mismatch. Live Gemini calls were not run
-because no key was configured. Android tests could not run because the SDK
-location was unavailable. That backend task did not change the Android UI.
-Later frontend adjustment and recovery implementation is described here and in `../frontend/README.md`; the
-old suite/SDK observations above are dated evidence, not current blockers.
+The behavior below is covered by the offline API suite (`tests/api_tests/`,
+including the real-handler fixture in `test_support/fixed_live_e2e_server.py`)
+and by the Android client's controlled tests described in
+`../frontend/README.md#verification`. Neither exercises OpenRouter or the
+deployed server. Earlier deployed and physical-device runs, including an
+unresolved intermittent HTTP 307 on adjustment, are kept in the
+[2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md); they did not include
+the full two-plan same-file/CSV/original-window isolation procedure, which
+remains unverified against a real server.
 
 ### Select a plan
 

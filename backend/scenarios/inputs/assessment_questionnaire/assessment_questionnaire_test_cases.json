@@ -1,11 +1,11 @@
 [
   {
     "case_id": "assessment_01_project_question_bank",
-    "description": "현재 더미 질문 JSON은 컴활 2급의 유효한 5개 문항을 제공합니다.",
+    "description": "현재 컴활 2급 질문 은행은 설정된 진단 선택 18문항(과목당 9문항)을 제공합니다.",
     "kind": "project_question_bank",
     "expected_certification_id": "computer_specialist_level_2",
-    "expected_question_count": 5,
-    "expected_topics": ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
+    "expected_question_count": 18,
+    "expected_topics": ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석", "페이지 설정과 인쇄", "매크로 활용", "컴퓨터 시스템 활용", "인터넷 자료 활용", "컴퓨터 시스템 보호"]
   },
   {
     "case_id": "assessment_02_scoring_and_planner_json",
@@ -57,7 +57,7 @@
         {"id": 1, "topic": "B", "prompt": "문항 2", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1}
       ]
     },
-    "expected_error": "중복되지 않는 양의 정수"
+    "expected_error": "duplicate question id"
   },
   {
     "case_id": "assessment_05_unknown_correct_answer_rejected",
@@ -70,7 +70,7 @@
         {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "C", "possible_score": 1}
       ]
     },
-    "expected_error": "correct_answer가 choices에 없습니다"
+    "expected_error": "correct_answer must be one of its normal choice keys"
   },
   {
     "case_id": "assessment_06_nonpositive_score_rejected",
@@ -83,7 +83,7 @@
         {"id": 1, "topic": "A", "prompt": "문항", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 0}
       ]
     },
-    "expected_error": "possible_score는 양수"
+    "expected_error": "possible_score must be a positive finite number"
   },
   {
     "case_id": "assessment_07_eof_does_not_write_partial_json",
@@ -102,11 +102,253 @@
   },
   {
     "case_id": "assessment_08_cli_writes_default_bank_json",
-    "description": "실제 CLI가 모든 더미 문항 응답을 받아 결과 JSON을 생성합니다.",
+    "description": "실제 CLI가 기본 은행의 설정된 진단 선택 문항에만 응답을 받아 결과 JSON을 생성합니다.",
     "kind": "cli_project_bank",
-    "answers": ["B", "B", "A", "A", "C"],
+    "answers": ["B", "B", "A", "A", "C", "B", "D", "A", "C", "B", "D", "A", "C", "B", "D", "A", "C", "B"],
     "expected_exit_code": 0,
-    "expected_result_count": 5,
-    "expected_correct_count": 5
+    "expected_result_count": 18,
+    "expected_correct_count": 18
+  },
+  {
+    "case_id": "assessment_09_selection_skips_unselected_items_and_drafts",
+    "description": "더 큰 문항 모음에서는 설정된 선택 문항만 설정 순서대로 묻고, 미선택 검토 문항과 미완성 초안은 묻지 않으며 원본 파일을 바꾸지 않습니다.",
+    "kind": "question_document_cli",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "syllabus_version": "2024-2026",
+      "onboarding_question_ids": [3, 1],
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항 1", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 2, "topic": "스프레드시트 기본", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 3, "topic": "스프레드시트 기본", "prompt": "문항 3", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
+      ]
+    },
+    "answers": ["A", "B"],
+    "expected_exit_code": 0,
+    "expected_problem_ids": [3, 1],
+    "expected_correct_count": 1
+  },
+  {
+    "case_id": "assessment_10_legacy_custom_document_asks_every_question",
+    "description": "선택 설정이 없는 사용자 정의 질문 문서는 기존처럼 모든 문항을 묻습니다.",
+    "kind": "question_document_cli",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "questions": [
+        {"id": 7, "topic": "A", "prompt": "문항 7", "choices": {"A": "x", "B": "y"}, "correct_answer": "A", "possible_score": 1},
+        {"id": 8, "topic": "B", "prompt": "문항 8", "choices": {"A": "x", "B": "y"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "answers": ["A", "A"],
+    "expected_exit_code": 0,
+    "expected_problem_ids": [7, 8],
+    "expected_correct_count": 1
+  },
+  {
+    "case_id": "assessment_11_empty_selection_rejected",
+    "description": "빈 진단 선택을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "syllabus_version": "2024-2026",
+      "onboarding_question_ids": [],
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항 1", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 2, "topic": "스프레드시트 기본", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 3, "topic": "스프레드시트 기본", "prompt": "문항 3", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
+      ]
+    },
+    "expected_error": "must be a non-empty array"
+  },
+  {
+    "case_id": "assessment_12_duplicate_selection_rejected",
+    "description": "진단 선택의 ID 중복을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "syllabus_version": "2024-2026",
+      "onboarding_question_ids": [1, 1],
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항 1", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 2, "topic": "스프레드시트 기본", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 3, "topic": "스프레드시트 기본", "prompt": "문항 3", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
+      ]
+    },
+    "expected_error": "repeats a question id"
+  },
+  {
+    "case_id": "assessment_13_unknown_selection_rejected",
+    "description": "없는 문항을 가리키는 진단 선택을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "syllabus_version": "2024-2026",
+      "onboarding_question_ids": [1, 99],
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항 1", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 2, "topic": "스프레드시트 기본", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 3, "topic": "스프레드시트 기본", "prompt": "문항 3", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
+      ]
+    },
+    "expected_error": "unknown question ids"
+  },
+  {
+    "case_id": "assessment_14_selected_draft_rejected",
+    "description": "초안 문항을 고른 진단 선택을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "테스트 자격증",
+      "syllabus_version": "2024-2026",
+      "onboarding_question_ids": [1, 4],
+      "questions": [
+        {"id": 1, "topic": "스프레드시트 기본", "prompt": "문항 1", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 2, "topic": "스프레드시트 기본", "prompt": "문항 2", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 3, "topic": "스프레드시트 기본", "prompt": "문항 3", "choices": {"A": "정답", "B": "오답"}, "correct_answer": "A", "possible_score": 1, "subject": "스프레드시트 일반", "syllabus_section": "데이터 계산", "explanation": "A가 정답입니다.", "provenance": {"kind": "authored", "reference": "시나리오용 작성 문항"}, "review_status": "reviewed"},
+        {"id": 4, "prompt": "검토 전 초안", "choices": {"A": "후보"}, "provenance": {"kind": "authored", "reference": "시나리오용 초안"}, "review_status": "draft"}
+      ]
+    },
+    "expected_error": "selects unreviewed questions"
+  },
+  {
+    "case_id": "assessment_15_list_correct_answer_rejected",
+    "description": "목록 형태의 정답 키를 TypeError 없이 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": ["B"], "possible_score": 1}
+      ]
+    },
+    "expected_error": "correct_answer must be one of its normal choice keys"
+  },
+  {
+    "case_id": "assessment_16_null_questions_container_rejected",
+    "description": "questions가 null이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {"certification_id": "x", "questions": null},
+    "expected_error": "non-empty questions array"
+  },
+  {
+    "case_id": "assessment_17_integer_questions_container_rejected",
+    "description": "questions가 정수이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {"certification_id": "x", "questions": 3},
+    "expected_error": "non-empty questions array"
+  },
+  {
+    "case_id": "assessment_18_missing_prompt_rejected",
+    "description": "문항 본문이 없으면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "non-empty prompt"
+  },
+  {
+    "case_id": "assessment_19_missing_possible_score_rejected",
+    "description": "배점이 없으면 1점으로 가정하지 않고 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B"}
+      ]
+    },
+    "expected_error": "possible_score must be a positive number"
+  },
+  {
+    "case_id": "assessment_20_blank_choice_key_rejected",
+    "description": "빈 선택지 키를 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {" ": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "non-empty keys and text"
+  },
+  {
+    "case_id": "assessment_21_single_normal_choice_rejected",
+    "description": "모르겠음을 빼고 일반 선택지가 하나뿐이면 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"B": "$A$1", "UNKNOWN": "모르겠음"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "at least two normal choices"
+  },
+  {
+    "case_id": "assessment_22_unknown_correct_answer_reserved",
+    "description": "UNKNOWN은 정답 키가 될 수 없습니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1", "UNKNOWN": "모르겠음"}, "correct_answer": "UNKNOWN", "possible_score": 1}
+      ]
+    },
+    "expected_error": "correct_answer must be one of its normal choice keys"
+  },
+  {
+    "case_id": "assessment_23_mislabeled_unknown_choice_rejected",
+    "description": "UNKNOWN 선택지는 모르겠음으로 표시해야 합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1", "UNKNOWN": "기타"}, "correct_answer": "B", "possible_score": 1}
+      ]
+    },
+    "expected_error": "must be labeled 모르겠음"
+  },
+  {
+    "case_id": "assessment_24_boolean_score_rejected",
+    "description": "불리언 배점을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": true}
+      ]
+    },
+    "expected_error": "possible_score must be a positive number"
+  },
+  {
+    "case_id": "assessment_25_overflowing_total_rejected",
+    "description": "각각 유한하지만 합계가 넘치는 배점을 거부합니다.",
+    "kind": "invalid_question_document",
+    "question_document": {
+      "certification_id": "computer_specialist_level_2",
+      "certification_name": "컴퓨터활용능력 2급",
+      "questions": [
+        {"id": 1, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1e+308},
+        {"id": 2, "prompt": "셀 A1을 고정 참조하는 표기는 무엇인가요?", "choices": {"A": "A1", "B": "$A$1"}, "correct_answer": "B", "possible_score": 1e+308}
+      ]
+    },
+    "expected_error": "total possible score is not finite"
   }
 ]

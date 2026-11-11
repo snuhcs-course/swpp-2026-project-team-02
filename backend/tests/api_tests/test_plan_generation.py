@@ -18,10 +18,14 @@ from urllib.request import Request, urlopen
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
+from assessment_service import _onboarding_selection
 from license_planner.agent import PlanningAgent
+from test_support.question_banks import custom_question_variant
 
-RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
-                      .read_text(encoding="utf-8"))
+# Captured classifier traces, replayed with explicitly custom questions so they stay unresolved.
+RECORDED = {case_id: {**case, "request": custom_question_variant(case["request"])}
+            for case_id, case in json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
+                                            .read_text(encoding="utf-8")).items()}
 SUCCESS_FIELDS = {"schedules", "schedule_csv", "schedule_csv_file", "schedule_csv_url", "agent_summary"}
 CALL_IDS = itertools.count(1)
 REAL_ASK_MODEL = PlanningAgent._ask_model
@@ -86,6 +90,10 @@ class PlanGenerationHttpTests(unittest.TestCase):
         except HTTPError as error:
             with error:
                 return error.code, json.loads(error.read())
+
+    def get(self, path):
+        with urlopen(f"{self.base}{path}", timeout=10) as response:
+            return response.status, json.loads(response.read())
 
     def saved_files(self):
         return sorted(path.name for path in self.store.iterdir() if path != self.existing)
@@ -305,6 +313,108 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertCountEqual(item["topic"]["enum"], topics)
         self.assertNotIn("2026/10/20", item["date"]["enum"])
         self.assertIn("2026/10/19", item["date"]["enum"])
+
+    def test_complete_onboarding_selection_plans_every_reviewed_topic_over_http(self):
+        status, bank = self.get("/certifications/computer_specialist_level_2/questions")
+        self.assertEqual(status, 200, bank)
+        computer_general = {"컴퓨터 시스템 활용", "인터넷 자료 활용", "컴퓨터 시스템 보호"}
+        reviewed = {question["id"]: question["topic"]
+                    for question in _onboarding_selection("computer_specialist_level_2")[1]}
+        payload = copy.deepcopy(RECORDED["topic_errors_then_build_on_last_request"]["request"])
+        payload["assessment_results"]["results"] = [
+            {"problem_id": question["id"], "question": question["prompt"], "choices": question["choices"],
+             "correct_answer": question["correct_answer"],
+             "user_answer": question["correct_answer"] if reviewed[question["id"]] not in computer_general
+             else next(key for key in question["choices"] if key != question["correct_answer"]),
+             "is_correct": reviewed[question["id"]] not in computer_general,
+             "possible_score": question["possible_score"]}
+            for question in bank["questions"]]
+        topics = list(dict.fromkeys(reviewed.values()))
+        days = ("2026/10/19", "2026/10/21", "2026/10/23")
+        self.replies = [model_reply("analyze_exam_results", {}),
+                        model_reply("build_study_schedule", {"daily_topic_minutes": [
+                            {"date": days[index % len(days)], "topic": topic, "minutes": 30}
+                            for index, topic in enumerate(topics)]})]
+
+        status, body = self.post(payload)
+
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(bank["questions"]), 18)
+        self.assertEqual(len(topics), 8)
+        self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        self.assertEqual([call["tool"] for call in body["tool_calls"]],
+                         ["analyze_exam_results", "build_study_schedule"])
+        self.assertEqual(self.replies, [])
+        self.assertEqual(len(self.saved_files()), 2)
+
+
+    def bank_results(self, questions, *, correct=lambda question: True):
+        return [{"problem_id": question["id"], "question": question["prompt"],
+                 "choices": {**question["choices"], "UNKNOWN": "모르겠음"},
+                 "correct_answer": question["correct_answer"],
+                 "user_answer": question["correct_answer"] if correct(question) else "UNKNOWN",
+                 "is_correct": correct(question), "possible_score": question["possible_score"]}
+                for question in questions]
+
+    def test_original_five_over_http_use_reviewed_topics_without_classification(self):
+        _, bank = self.get("/certifications/computer_specialist_level_2/questions")
+        payload = copy.deepcopy(RECORDED["topic_errors_then_build_on_last_request"]["request"])
+        payload["assessment_results"]["results"] = self.bank_results(bank["questions"][:5],
+                                                                     correct=lambda question: question["id"] != 4)
+        topics = ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
+        self.replies = [model_reply("analyze_exam_results", {}),
+                        model_reply("build_study_schedule", {"daily_topic_minutes": [
+                            {"date": "2026/10/19", "topic": topic, "minutes": 30} for topic in topics]})]
+
+        status, body = self.post(payload)
+
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["tool_calls"][0], {"tool": "analyze_exam_results", "arguments": {}})
+        self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        self.assertEqual((self.model_requests, self.replies), (2, []))
+
+    def test_mixed_reviewed_and_custom_questions_over_http_classify_only_the_custom_question(self):
+        _, bank = self.get("/certifications/computer_specialist_level_2/questions")
+        payload = copy.deepcopy(RECORDED["topic_errors_then_build_on_last_request"]["request"])
+        custom = {"problem_id": 501, "question": "사용자 정의 보안 문항", "choices": {"A": "가", "B": "나"},
+                  "correct_answer": "A", "user_answer": "B", "is_correct": False, "possible_score": 1}
+        payload["assessment_results"]["results"] = [*self.bank_results(bank["questions"][12:14]), custom]
+        rejected_remap = [{"problem_id": 13, "topics": [{"topic": "컴퓨터 시스템 보호", "weight": 1}]}]
+        mapping = [{"problem_id": 501, "topics": [{"topic": "컴퓨터 시스템 보호", "weight": 1}]}]
+        sent = []
+        scripted = PlanningAgent._ask_model
+        self.replies = [model_reply("analyze_exam_results", {"problem_topics": rejected_remap}),
+                        model_reply("analyze_exam_results", {"problem_topics": mapping}),
+                        model_reply("build_study_schedule", {"daily_topic_minutes": [
+                            {"date": "2026/10/19", "topic": "컴퓨터 시스템 보호", "minutes": 60}]})]
+
+        def recording_ask_model(agent, input_items, tools):
+            sent.append(copy.deepcopy(input_items))
+            return scripted(agent, input_items, tools)
+
+        with patch.object(PlanningAgent, "_ask_model", recording_ask_model):
+            status, body = self.post(payload)
+
+        self.assertEqual(status, 200, body)
+        metadata = json.loads(sent[0][0]["content"].split("Input metadata: ", 1)[1])
+        self.assertEqual([row["problem_id"] for row in metadata["assessment_results"]], [501])
+        self.assertEqual((metadata["submitted_question_count"], metadata["reviewed_question_count"]), (3, 2))
+        analysis = json.loads(sent[2][-1]["output"])["result"]
+        self.assertEqual((analysis["total_possible_score"], analysis["total_earned_score"]), (3, 2))
+        self.assertEqual({row["topic"] for row in body["schedules"]}, {"컴퓨터 시스템 보호"})
+        self.assertEqual(len(self.saved_files()), 2)
+
+    def test_missing_configured_selection_fails_without_model_classification(self):
+        from test_support.question_banks import level_2_bank, temporary_question_bank
+
+        document = level_2_bank()
+        del document["onboarding_question_ids"]
+        payload = copy.deepcopy(RECORDED["topic_errors_then_build_on_last_request"]["request"])
+        with temporary_question_bank(document):
+            status, body = self.post(payload)
+
+        self.assertEqual((status, body["error"]["code"]), (500, "INTERNAL_ERROR"), body)
+        self.assertEqual((self.model_requests, self.saved_files()), (0, []))
 
 
 if __name__ == "__main__":

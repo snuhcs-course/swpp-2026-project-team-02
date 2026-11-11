@@ -60,6 +60,7 @@ class RequestMapperTest {
         assertEquals(CERTIFICATION_ID, assessment["certification_id"]!!.jsonPrimitive.content)
         val results = assessment["results"]!!.jsonArray.map { it.jsonObject }
         assertEquals(questions.map { it.id }, results.map { it["problem_id"]!!.jsonPrimitive.int })
+        assertEquals((1..18).toList(), results.map { it["problem_id"]!!.jsonPrimitive.int })
         for ((question, result) in questions.zip(results)) {
             assertEquals(question.prompt, result["question"]!!.jsonPrimitive.content)
             assertEquals(question.correctAnswer, result["correct_answer"]!!.jsonPrimitive.content)

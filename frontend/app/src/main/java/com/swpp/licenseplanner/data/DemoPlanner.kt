@@ -20,12 +20,16 @@ sealed interface DemoResult {
 
 /**
  * Deterministic local demonstration planner. Its workload
- * rules are demonstration assumptions; they do not mirror the backend's Gemini
- * allocation and never use removed backend readiness rules.
+ * rules are demonstration assumptions; they do not mirror the backend's model
+ * allocation, estimate necessary exam preparation, or use removed backend readiness rules.
+ *
+ * Each represented topic gets its own quota: one base session plus one extra when its
+ * score is below 60%, each component multiplied by the effective level's multiplier and
+ * rounded up separately, so even an advanced learner keeps a weak topic's extra session.
  */
 object DemoPlanner {
-    private const val BASE_SESSIONS_PER_TOPIC = 2
-    private const val WEAK_TOPIC_EXTRA_SESSIONS = 3
+    private const val BASE_SESSIONS_PER_TOPIC = 1
+    private const val WEAK_TOPIC_EXTRA_SESSIONS = 1
     private const val WEAK_TOPIC_PERCENT = 60.0
     private const val SESSION_MINUTES = 60L
     const val CSV_HEADER = "schedule_id,start_date,end_date,topic"
@@ -36,19 +40,21 @@ object DemoPlanner {
 
     fun plan(request: StudyPlanRequest): DemoResult {
         val topics = topicTotals(request)
-        val required = requiredSessions(request, topics)
+        val multiplier = levelMultiplier(request, topics)
+        val ordered = topics.sortedWith(compareBy<TopicTotal> { it.percent }
+            .thenBy { LocalTopics.catalogOrder.indexOf(it.topic) })
+        val assignments = assignTopics(ordered.map { it.topic to quota(it, multiplier) })
+        val required = assignments.size
         val busy = busyRows(request)
         val slots = slots(request, busy.map { it.second })
         if (slots.size < required) return DemoResult.Shortfall(required, slots.size)
 
-        val ordered = topics.sortedWith(compareBy<TopicTotal> { it.percent }
-            .thenBy { LocalTopics.catalogOrder.indexOf(it.topic) })
         val study = slots.take(required).mapIndexed { index, (start, end) ->
             ScheduleRow(
                 scheduleId = "study-${index + 1}",
                 startDate = WireDateTime.format(start),
                 endDate = WireDateTime.format(end),
-                topic = ordered[index % ordered.size].topic,
+                topic = assignments[index],
             ) to (start to end)
         }
         // Chronological like the backend CSV: start, then end, then ID.
@@ -81,10 +87,32 @@ object DemoPlanner {
                 )
             }
 
-    private fun requiredSessions(request: StudyPlanRequest, topics: List<TopicTotal>): Int {
-        val base = topics.sumOf { topic ->
-            BASE_SESSIONS_PER_TOPIC + if (topic.percent < WEAK_TOPIC_PERCENT) WEAK_TOPIC_EXTRA_SESSIONS else 0
+    /** A topic's own session count: the rounded base (at least one) plus its rounded weak-topic extra. */
+    private fun quota(topic: TopicTotal, multiplier: Double): Int {
+        val base = maxOf(1, ceil(BASE_SESSIONS_PER_TOPIC * multiplier).toInt())
+        val extra = if (topic.percent < WEAK_TOPIC_PERCENT) ceil(WEAK_TOPIC_EXTRA_SESSIONS * multiplier).toInt() else 0
+        return base + extra
+    }
+
+    /**
+     * Topic per session in rounds over [quotas] in their given order (weakest first), skipping
+     * a topic once its own quota is filled, so extra sessions stay with the topics that earned them.
+     */
+    private fun assignTopics(quotas: List<Pair<String, Int>>): List<String> {
+        val remaining = quotas.map { it.second }.toIntArray()
+        val result = mutableListOf<String>()
+        while (remaining.any { it > 0 }) {
+            quotas.forEachIndexed { index, (topic, _) ->
+                if (remaining[index] > 0) {
+                    result += topic
+                    remaining[index]--
+                }
+            }
         }
+        return result
+    }
+
+    private fun levelMultiplier(request: StudyPlanRequest, topics: List<TopicTotal>): Double {
         val possible = topics.sumOf { it.possible }
         val overall = if (possible > 0) topics.sumOf { it.earned } / possible * 100 else 0.0
         val scoreLevel = when {
@@ -94,13 +122,11 @@ object DemoPlanner {
         }
         val chosenLevel = CurrentLevel.fromSelfAssessment(request.selfAssessment) ?: CurrentLevel.BEGINNER
         // The stricter (lower) of the chosen and score levels; enum order is beginner < advanced.
-        val level = minOf(chosenLevel, scoreLevel)
-        val multiplier = when (level) {
+        return when (minOf(chosenLevel, scoreLevel)) {
             CurrentLevel.BEGINNER -> 2.0
             CurrentLevel.INTERMEDIATE -> 1.0
             CurrentLevel.ADVANCED -> 0.5
         }
-        return maxOf(ceil(base * multiplier).toInt(), topics.size)
     }
 
     /** Imported busy rows as `external-<id>` rows with their parsed half-open intervals. */

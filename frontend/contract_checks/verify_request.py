@@ -12,11 +12,15 @@ availability profiles, generated outputs, the unit tests in ``backend/tests/``, 
 the scenario runners and fixtures in ``backend/scenarios/``). In a separate Python
 process it then compares the request's assessment results with
 ``assessment_service.get_public_questions`` and validates the request with
-``api_service.build_plan_request(..., require_assessment=True)``.
+``api_service.build_plan_request(..., require_assessment=True)``. It reports how
+the backend adapted the submitted questions: the distinct submitted question
+count, how many matched reviewed bank records (fixed topics) and how many remain
+unresolved for model classification, the raw ``assessment_items`` count, the
+converted ``problem_results`` row count, and the reviewed/model/mixed path.
 
-No HTTP server, network call, or Gemini agent is used. Passing verifies
+No HTTP server, network call, or model agent is used. Passing verifies
 public-data-to-request mapping and input validation only; it does not verify the
-HTTP handler, a running server, Gemini planning, or the Android UI.
+HTTP handler, a running server, model planning, or the Android UI.
 """
 from __future__ import annotations
 
@@ -37,6 +41,7 @@ ALLOWED_PATHS = (
     re.compile(r"backend/certification_selector/certifications\.json"),
     re.compile(r"backend/config/(api_server|certifications|license_planner)\.json"),
     re.compile(r"backend/assessment_questionnaire/(question_banks|questions)\.json"),
+    re.compile(r"backend/assessment_questionnaire/(__init__|validation)\.py"),
 )
 
 # Runs inside the snapshot with -I, so only the snapshot's backend is importable.
@@ -86,7 +91,9 @@ for question, result in zip(public, results):
         problems.append(f"problem {pid}: is_correct does not match the local comparison")
 try:
     plan = build_plan_request(request, require_assessment=True)
-    accepted = {"assessment_items": len(plan.assessment_items),
+    accepted = {"submitted_ids": [r.get("problem_id") for r in results],
+                "reviewed_ids": [row.problem_id for row in plan.problem_results],
+                "unresolved_ids": [item.problem_id for item in plan.assessment_items],
                 "weekdays": [d for d in range(7) if plan.weekly_availability.for_weekday(d)]}
 except Exception as error:
     problems.append(f"build_plan_request rejected the request: {type(error).__name__}: {error}")
@@ -96,6 +103,45 @@ print(json.dumps({"public_questions": len(public), "results": len(results),
                   "accepted": accepted, "problems": problems}, ensure_ascii=False))
 sys.exit(1 if problems else 0)
 '''
+
+
+def adaptation_report(submitted_ids: list, reviewed_ids: list, unresolved_ids: list) -> dict:
+    """Count adapted questions by distinct problem ID; weighted rows are not extra questions.
+
+    ``reviewed_ids`` holds one entry per converted ``problem_results`` row and
+    ``unresolved_ids`` one per raw ``assessment_items`` entry. Raises ``ValueError``
+    when the reviewed and unresolved questions do not reconcile with the submission.
+    """
+    submitted, reviewed, unresolved = set(submitted_ids), set(reviewed_ids), set(unresolved_ids)
+    if len(submitted) != len(submitted_ids):
+        raise ValueError("submitted question IDs repeat")
+    if reviewed & unresolved:
+        raise ValueError(f"questions are both reviewed and unresolved: {sorted(reviewed & unresolved)}")
+    if len(reviewed) + len(unresolved) != len(submitted) or reviewed | unresolved != submitted:
+        raise ValueError("reviewed and unresolved questions do not reconcile with the submitted questions")
+    path = "mixed" if reviewed and unresolved else "reviewed" if reviewed else "model"
+    return {"submitted_questions": len(submitted), "reviewed_questions": len(reviewed),
+            "unresolved_questions": len(unresolved), "assessment_items": len(unresolved_ids),
+            "problem_result_rows": len(reviewed_ids), "path": path}
+
+
+def report(child_stdout: str) -> tuple[dict | None, list[str]]:
+    """Turn the child's accepted IDs into the printed adaptation counts."""
+    try:
+        output = json.loads(child_stdout)
+    except json.JSONDecodeError:
+        return None, ["the check produced no readable result"]
+    problems = list(output.get("problems") or [])
+    accepted = output.get("accepted")
+    if accepted:
+        try:
+            adaptation = adaptation_report(accepted.pop("submitted_ids"), accepted.pop("reviewed_ids"),
+                                           accepted.pop("unresolved_ids"))
+        except ValueError as error:
+            problems.append(str(error))
+        else:
+            accepted = {**adaptation, **accepted}
+    return {**output, "accepted": accepted, "problems": problems}, problems
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -135,12 +181,14 @@ def main() -> int:
             [sys.executable, "-I", "-c", CHECK_SCRIPT, str(snapshot / "backend"), str(request_path)],
             cwd=snapshot, env=env, capture_output=True, text=True,
         )
-    if completed.stdout:
-        print(completed.stdout.strip())
+    output, problems = report(completed.stdout)
+    if output is not None:
+        print(json.dumps(output, ensure_ascii=False))
     if completed.returncode != 0 and completed.stderr:
         print(completed.stderr.strip(), file=sys.stderr)
-    print("PASS" if completed.returncode == 0 else "FAIL")
-    return 0 if completed.returncode == 0 else 1
+    passed = completed.returncode == 0 and output is not None and not problems
+    print("PASS" if passed else "FAIL")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

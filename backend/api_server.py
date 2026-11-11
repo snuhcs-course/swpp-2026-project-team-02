@@ -11,7 +11,8 @@ from urllib.parse import parse_qs, urlparse
 
 from api_service import (adjust_schedule, create_study_plan, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
-from assessment_service import get_public_certifications, get_public_questions
+from assessment_service import (AssessmentConfigurationError, get_public_certifications,
+                                get_public_questions)
 from openrouter_client import InferenceConfigurationError, sanitize_diagnostic
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
@@ -33,6 +34,7 @@ UPSTREAM_MESSAGES = {
 }
 DEFAULT_UPSTREAM_MESSAGE = "The upstream service failed. Try again later."
 CONFIGURATION_MESSAGE = "The planning service is not configured on the server."
+ASSESSMENT_CONFIGURATION_MESSAGE = "The assessment questions are not configured correctly on the server."
 
 
 def _is_missing_configuration(error: Exception) -> bool:
@@ -183,6 +185,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                     self._send_csv(safe_filename, content)
                 else:
                     self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
+            except AssessmentConfigurationError as error:
+                self._send_assessment_configuration_error(path, error)
             except PlanNotFoundError as error:
                 self._send_json(404, {"error": {"code": "PLAN_NOT_FOUND", "message": str(error)}})
             except PlanStorageError as error:
@@ -193,6 +197,14 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "Study plan CSV not found"}})
             except ValueError as error:
                 self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": str(error)}})
+            except Exception:
+                LOGGER.exception("Unexpected API failure on %s", path)
+                self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": "Unexpected server error"}})
+
+        def _send_assessment_configuration_error(self, path: str, error: AssessmentConfigurationError) -> None:
+            """Log the internal diagnostic and return a fixed message without paths or traces."""
+            LOGGER.error("Assessment configuration failure on %s: %s", path, error)
+            self._send_json(500, {"error": {"code": "INTERNAL_ERROR", "message": ASSESSMENT_CONFIGURATION_MESSAGE}})
 
         def do_POST(self) -> None:
             """입력 값: HTTP POST 경로 및 JSON 요청 본문
@@ -226,6 +238,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                     self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
                     return
                 self._send_json(200, result)
+            except AssessmentConfigurationError as error:
+                self._send_assessment_configuration_error(path, error)
             except PlanNotFoundError as error:
                 self._send_json(404, {"error": {"code": "PLAN_NOT_FOUND", "message": str(error)}})
             except PlanConflictError as error:

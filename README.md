@@ -1,4 +1,4 @@
-# Team 2 Project
+# License Planner
 
 This repository is organized into separate application areas:
 
@@ -11,9 +11,17 @@ project/
 
 ## Documentation
 
-Start with the [documentation and verification index](docs/README.md) for setup,
-API contracts, deployment, evaluator installation, HE results, and historical
-performance evidence. It identifies the branches and dates behind each result.
+| Guide | Covers |
+| --- | --- |
+| This README | Product scope, quick start, guide index and open decisions |
+| [`backend/README.md`](backend/README.md) | Backend setup and configuration, offline checks and coverage, scenario runners, the fixed-response fixture and live model checks |
+| [`backend/DEVELOPER_GUIDE.md`](backend/DEVELOPER_GUIDE.md) | Internal architecture, validation, scheduling and storage rules, question-bank maintenance |
+| [`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md) | HTTP contract used by the Android app: payloads, errors, deadlines and reload recovery |
+| [`frontend/README.md`](frontend/README.md) | Android build, flavors and signing, app behavior, calendar permissions and verification procedures |
+| [`deploy/README.md`](deploy/README.md) | Server topology, installed-state inspection, updates and backups, release APK and operational checks |
+
+Package READMEs (for example `backend/schedule_adjuster/README.md`) describe
+their own command-line tools.
 
 ## Backend
 
@@ -62,25 +70,40 @@ full commit SHA. Commands and report locations are in
 deployed server, so it does not verify live model planning or the Android UI
 screens.
 
-## Iteration 3 deployment
+## Deployment
 
-The deployed CPU-server topology, systemd and Nginx templates, public API check,
-and fixed device evaluation flow are documented in [`deploy/`](deploy/README.md).
-The current evaluator API is
-`http://swpp26t02.147-46-242-174.sslip.io/api/v1`; release APK installation and
-submission details are in [`ITER3_SUBMISSION.md`](ITER3_SUBMISSION.md).
+The public API is `http://swpp26t02.147-46-242-174.sslip.io/api/v1`, served by
+the shared CPU server through Nginx. Its systemd and Nginx templates, how to
+inspect the installed revision before an update, plan backups, the read-only
+public check and the signed release APK are documented in
+[`deploy/README.md`](deploy/README.md). This checkout does not establish which
+revision or configuration the server is running.
 
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently
   plans for the written exam only.
-- **Question bank:** the HE package retains five authored spreadsheet questions.
-  Computer-general questions are absent; replacement or expansion remains a later
-  decision. See the [question review](docs/iter3-HE/01_question_review.md).
+- **Question bank:** onboarding presents a configured selection of 18 authored
+  example questions, nine each for 컴퓨터 일반 and 스프레드시트 일반, sampling
+  every major section of the KCCI 2024–2026 written syllabus with one to four
+  items per section. The stored collection may grow beyond that selection
+  without changing onboarding; it currently holds exactly those 18 items. They
+  are not an official or validated assessment. Their internal `reviewed` flags
+  were prepared for PR review; the second (teammate) content review is still
+  pending. The official comparison with the 2027–2029 syllabus is done: the bank
+  stays mapped to 2024–2026 (`syllabus_version: "2024-2026"`, IDs 1–18
+  unchanged), and updating it is planned as a separate change in 2027. Carried
+  forward are the Windows 10 basis of IDs 6/8 (their prompts are now
+  version-neutral, without newer-cycle remapping), the section rename for IDs
+  9–12, the remapping of ID 10, and missing AI basics, AI ethics and ICT
+  convergence items. From 2027-01-01 the bank is behind the current syllabus
+  until that update lands. Deeper coverage, routine check-ins, practical
+  workbook tasks and timed mock exams remain later decisions. See
+  [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
-- **Deployment:** authentication and per-user storage remain open; the current
-  Iteration 3 server and APK use the shared HTTP endpoint documented above.
+- **Deployment:** authentication, per-user storage and plan retention remain
+  open; the public server and release APK use the shared HTTP endpoint above.

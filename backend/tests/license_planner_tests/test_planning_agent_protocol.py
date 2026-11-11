@@ -154,6 +154,30 @@ class PlanningProtocolTests(unittest.TestCase):
         self.assertTrue(json.loads(rejected["output"])["result"].startswith("SCHEDULE_ERROR"))
         self.assertEqual(len(tools.schedule), 1)
 
+    def test_mixed_request_rejects_a_reviewed_remap_and_accepts_the_corrected_mapping(self):
+        from assessment_service import get_public_questions
+
+        reviewed = get_public_questions("computer_specialist_level_2")["questions"][3]
+        payload = copy.deepcopy(PAYLOAD)
+        payload["assessment_results"]["results"].append({
+            "problem_id": reviewed["id"], "question": reviewed["prompt"], "choices": reviewed["choices"],
+            "correct_answer": reviewed["correct_answer"], "user_answer": reviewed["correct_answer"],
+            "is_correct": True, "possible_score": reviewed["possible_score"]})
+        remap = ("analyze_exam_results", {"problem_topics": [
+            *ANALYSIS[1]["problem_topics"], {"problem_id": reviewed["id"], "topics": [{"topic": CHARTS, "weight": 1}]}]})
+        provider, agent, (tools, _) = self.run_agent([
+            reply(call("call_1", *remap)), reply(call("call_2", *ANALYSIS)), reply(call("call_3", *BUILD))],
+            payload=payload)
+
+        rejected = json.loads(provider.bodies[1]["input"][-1]["output"])["result"]
+        self.assertRegex(rejected, f"^INVALID_TOOL_CALL: problem_id {reviewed['id']} already has a reviewed topic")
+        metadata = json.loads(provider.bodies[0]["input"][0]["content"].split("Input metadata: ", 1)[1])
+        self.assertEqual([row["problem_id"] for row in metadata["assessment_results"]], [1])
+        self.assertEqual((metadata["submitted_question_count"], metadata["reviewed_question_count"]), (2, 1))
+        statistics, = tools.topic_statistics
+        self.assertEqual((statistics.topic, statistics.possible_score, statistics.earned_score), (CHARTS, 2, 1))
+        self.assertEqual((agent.api_request_count, len(tools.schedule)), (3, 1))
+
     def test_invalid_replies_fail_as_upstream_errors_without_running_the_call(self):
         cases = {
             "invalid JSON arguments": [reply({**call("c1", *ANALYSIS), "arguments": "{\"problem_topics\": "})],

@@ -8,9 +8,11 @@ Criteria and thresholds are fixed in README.md and must not be changed after a r
 """
 import argparse
 import csv
+import hashlib
 import json
 import math
 import statistics
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -128,7 +130,7 @@ def check_plan(case, rows, topics):
     start, exam = dt(req["preparation_start"]), dt(req["exam_date"])
     study, external = split_rows(rows)
     iv = []
-    hard = {"H1": True, "H2": True, "H3": True, "H4": True, "H5": True}
+    hard = {"H1": bool(study), "H2": bool(study), "H3": True, "H4": True, "H5": True}
     for r in study:
         try:
             a, b = dt(r["start_date"]), dt(r["end_date"])
@@ -219,8 +221,9 @@ def classify(expected, resp):
         return "TIMEOUT"
     if resp["status"] is None:
         return "CONNECTION"
-    code = ((resp["json"] or {}).get("error") or {}).get("code", "")
-    message = ((resp["json"] or {}).get("error") or {}).get("message", "")
+    payload = resp["json"] if isinstance(resp["json"], dict) else {}
+    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    code, message = error.get("code", ""), error.get("message", "")
     if resp["status"] >= 500:
         return "HTTP_5XX"
     if expected == "200":
@@ -333,23 +336,41 @@ def write_outputs(out, runs, summary, meta):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", required=True)
-    ap.add_argument("--cases", default="cases.json")
+    ap.add_argument("--cases", default=str(Path(__file__).with_name("cases.json")))
     ap.add_argument("--server-commit", default="unknown")
     ap.add_argument("--model", default="unknown")
+    ap.add_argument("--output-dir", type=Path, default=Path(__file__).parent / "results")
+    ap.add_argument("--inference-config", help="JSON file recording provider, decoding settings and prompt/tool hashes")
     ap.add_argument("--only", nargs="*", help="run only these case_ids (for a dry run)")
     ap.add_argument("--reps", type=int, help="override repetitions (dry run only)")
     args = ap.parse_args()
+    if args.reps is not None and args.reps < 1:
+        ap.error("--reps must be positive")
 
     doc = json.loads(Path(args.cases).read_text(encoding="utf-8"))
     topics, cases = doc["topics"], doc["cases"]
     if args.only:
+        unknown = set(args.only) - {c["case_id"] for c in cases}
+        if unknown:
+            ap.error("Unknown case IDs: " + ", ".join(sorted(unknown)))
         cases = [c for c in cases if c["case_id"] in args.only]
     by_id = {c["case_id"]: c for c in cases}
     base = args.base_url.rstrip("/")
     started = datetime.now().strftime("%Y%m%dT%H%M%S")
     meta = {"started_at": started, "base_url": base, "server_commit": args.server_commit,
             "model": args.model, "cases_version": doc["version"], "dry_run": bool(args.only or args.reps)}
-    out = Path("results") / started
+    meta.update(cases_sha256=hashlib.sha256(Path(args.cases).read_bytes()).hexdigest(),
+                runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                bank_sha256=doc.get("bank_sha256"),
+                runner_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, text=True).strip(),
+                inference_config=json.loads(Path(args.inference_config).read_text(encoding="utf-8")) if args.inference_config else "not recorded")
+    out = args.output_dir / (started + f"_{time.time_ns() % 1000000000:09d}")
+    out.mkdir(parents=True)
+
+    def record_exchange(case_id, rep, kind, body, response):
+        with (out / "exchanges.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"case_id": case_id, "rep": rep, "kind": kind,
+                                     "request": body, "response": response}, ensure_ascii=False) + "\n")
     runs, consecutive_5xx = [], 0
     total = sum((args.reps or c["repetitions"]) for c in cases)
     n = 0
@@ -357,21 +378,26 @@ def main():
         for rep in range(1, (args.reps or c["repetitions"]) + 1):
             n += 1
             resp = post(base + "/study-plans", c["request"])
+            record_exchange(c["case_id"], rep, "generate", c["request"], resp)
             outcome = classify(c["expected_status"], resp)
             run = {"case_id": c["case_id"], "rep": rep, "kind": "generate", "status": resp["status"],
                    "outcome": outcome, "seconds": resp["seconds"], "error": resp["error"],
                    "hard": {}, "quality": {}, "metrics": {}}
-            if resp["status"] == 200 and resp["json"]:
+            if resp["status"] == 200 and isinstance(resp["json"], dict):
                 run["hard"], run["quality"], run["metrics"] = check_plan(c, resp["json"].get("schedules", []), topics)
                 if not all(run["hard"].values()):
                     run["outcome"] = "HARD_VIOLATION"
-            elif resp["json"]:
+            elif resp["status"] == 200:
+                run["hard"] = {"H1": False}
+                run["outcome"] = "HARD_VIOLATION"
+                run["error"] = "Invalid API JSON object"
+            elif isinstance(resp["json"], dict):
                 run["error"] = json.dumps(resp["json"].get("error"), ensure_ascii=False)
             runs.append(run)
             print(f"[{n}/{total}] {c['case_id']} #{rep} {resp['status']} {run['outcome']} {resp['seconds']}s", flush=True)
             consecutive_5xx = consecutive_5xx + 1 if run["outcome"] == "HTTP_5XX" else 0
 
-            if c.get("adjust") and resp["status"] == 200 and resp["json"]:
+            if c.get("adjust") and resp["status"] == 200 and isinstance(resp["json"], dict):
                 time.sleep(PAUSE_S)
                 study, _ = split_rows(resp["json"].get("schedules", []))
                 if study:
@@ -381,6 +407,7 @@ def main():
                             "weekly_availability": c["request"]["weekly_availability"],
                             "exam_date": c["request"]["exam_date"]}
                     aresp = post(base + "/schedules/adjust", body)
+                    record_exchange(c["case_id"], rep, "adjust", body, aresp)
                     aout = classify("200", aresp)
                     arun = {"case_id": c["case_id"], "rep": rep, "kind": "adjust", "status": aresp["status"],
                             "outcome": aout, "seconds": aresp["seconds"], "error": aresp["error"],

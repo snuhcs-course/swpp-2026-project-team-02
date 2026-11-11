@@ -67,6 +67,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python -m unittest discover -s ../scripts/tests -v
 
+      - name: AI evaluation runner offline tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s ../docs/iter3-ai-eval -p 'test_*.py' -v
+
       - name: Validate coverage reports
         run: python ../scripts/verify_test_evidence.py --repo-root .. --scope backend
 
@@ -192,6 +196,13 @@ jobs:
           done
           cat "$log_file"
           exit 1
+
+      - name: Enable KVM permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
 
       - name: Run Android live E2E on emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0

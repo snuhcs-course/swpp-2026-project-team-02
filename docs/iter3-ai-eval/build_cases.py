@@ -5,6 +5,7 @@ Standard library only. Run from this folder:
 The question bank is read so that assessment payloads match what the app sends.
 """
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -37,8 +38,45 @@ PATTERNS = {
     "one_function_miss":   ["B", "A", "A", "A", "C"],
 }
 
+WEAK = {
+    "weak_charts": {"차트와 분석"},
+    "weak_functions": {"함수와 데이터 관리"},
+    "weak_basics": {"스프레드시트 기본"},
+    "weak_functions_charts": {"함수와 데이터 관리", "차트와 분석"},
+    "weak_basics_charts": {"스프레드시트 기본", "차트와 분석"},
+    "weak_basics_functions": {"스프레드시트 기본", "함수와 데이터 관리"},
+}
+
+
+def configure(bank):
+    """Use the selected, reviewed bank, never silently truncate to five answers."""
+    global TOPICS, TOPIC_MAP
+    by_id = {q["id"]: q for q in bank["questions"]}
+    selected = [by_id[i] for i in bank["onboarding_question_ids"]]
+    if not selected or any(q.get("review_status") != "reviewed" for q in selected):
+        raise ValueError("Evaluation requires nonempty, reviewed onboarding questions")
+    bank = {**bank, "questions": selected}
+    TOPICS = list(dict.fromkeys(q["topic"] for q in selected))
+    TOPIC_MAP = {str(q["id"]): q["topic"] for q in selected}
+    patterns = {**WEAK, **{"weak_topic_" + str(i): {t} for i, t in enumerate(TOPICS)}}
+    for name in list(PATTERNS) + list(patterns):
+        answers = []
+        for q in selected:
+            wrong = next(k for k in q["choices"] if k != q["correct_answer"])
+            miss = name == "all_wrong" or q["topic"] in patterns.get(name, set())
+            if name == "one_function_miss":
+                miss = q["id"] == 2
+            answer = wrong if miss else q["correct_answer"]
+            if name == "he_case" and q["id"] in (3, 4):
+                answer = "UNKNOWN" if q["id"] == 3 else wrong
+            answers.append(answer)
+        PATTERNS[name] = answers
+    return bank
+
 
 def assessment(bank, answers):
+    if len(bank["questions"]) != len(answers):
+        raise ValueError("Every selected question must have an answer")
     results = []
     for q, answer in zip(bank["questions"], answers):
         choices = dict(q["choices"])
@@ -71,7 +109,7 @@ def expectations(answers, bank):
 def request(bank, pattern="he_case", availability=STD, busy=None, start=START, exam=EXAM,
             self_assessment="기본 기능은 알지만 함수와 차트는 연습이 필요합니다."):
     body = {
-        "certification_id": "computer_specialist_level_2",
+        "certification_id": bank["certification_id"],
         "preparation_start": start, "exam_date": exam,
         "weekly_availability": availability,
         "busy_schedules": busy or [],
@@ -100,6 +138,7 @@ def case(case_id, group, story, purpose, bank, pattern="he_case", expected="200"
 
 
 def build(bank):
+    bank = configure(bank)
     c = []
     # A. Weak-topic allocation (US-B3, P31)
     a_cases = [
@@ -116,6 +155,12 @@ def build(bank):
     ]
     for cid, pattern, purpose in a_cases:
         c.append(case(cid, "A_weak_topic", "US-B3", purpose, bank, pattern))
+    extra_id = 11
+    for i, topic in enumerate(TOPICS):
+        if topic not in {"스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"}:
+            c.append(case(f"A{extra_id:02d}",
+                          "A_weak_topic", "US-B3", topic + "만 약함", bank, "weak_topic_" + str(i)))
+            extra_id += 1
 
     # B. Availability shapes (US-B5)
     every = lambda s, e, days=DAYS: {d: [{"start": s, "end": e}] for d in days}
@@ -193,13 +238,15 @@ def build(bank):
 
 
 def main():
-    bank_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("questions.json")
+    here = Path(__file__).resolve().parent
+    bank_path = Path(sys.argv[1]) if len(sys.argv) > 1 else here.parents[1] / "backend/assessment_questionnaire/questions.json"
     bank = json.loads(bank_path.read_text(encoding="utf-8"))
     cases = build(bank)
     ids = [x["case_id"] for x in cases]
     assert len(ids) == len(set(ids)), "duplicate case_id"
-    out = {"version": "iter3-ai-eval-v1", "topics": TOPICS, "topic_map": TOPIC_MAP, "cases": cases}
-    Path("cases.json").write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out = {"version": "p10-written-18q-8topics-v2", "bank_sha256": hashlib.sha256(bank_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
+           "topics": TOPICS, "topic_map": TOPIC_MAP, "cases": cases}
+    (here / "cases.json").write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"wrote cases.json with {len(cases)} cases")
 
 

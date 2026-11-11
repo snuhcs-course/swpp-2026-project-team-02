@@ -10,6 +10,7 @@ import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.AdjustmentState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** The adjustment screen's offered actions follow the stored recovery before the transient outcome. */
@@ -54,5 +55,24 @@ class AdjustmentModeTest {
         assertEquals(AdjustmentMode.NoIdentity, adjustmentMode(live.copy(scheduleCsvFile = null), AdjustmentState.Idle))
         val externalOnly = live.copy(current = live.current.copy(schedules = rows.drop(1)))
         assertEquals(AdjustmentMode.NoStudy, adjustmentMode(externalOnly, AdjustmentState.Reloaded))
+    }
+
+    @Test
+    fun reopenedPlanShowsItsSavedSummaryBeforeAnyAdjustment() {
+        val summarized = live.copy(current = live.current.copy(agentSummary = "8개 학습 주제를 배치했습니다."))
+        assertEquals("8개 학습 주제를 배치했습니다.", shownSummary(summarized, AdjustmentState.Idle))
+        assertEquals("8개 학습 주제를 배치했습니다.", shownSummary(summarized, AdjustmentState.Success("study-1")))
+    }
+
+    @Test
+    fun summaryStaysHiddenWhenAbsentOrReplacedByOtherGuidance() {
+        assertNull(shownSummary(live, AdjustmentState.Idle))
+        assertNull(shownSummary(live.copy(current = live.current.copy(agentSummary = " ")), AdjustmentState.Idle))
+        val summarized = live.copy(current = live.current.copy(agentSummary = "요약"))
+        for (state in listOf(AdjustmentState.Loading, AdjustmentState.Failure(ApiError.Connection), AdjustmentState.DemoNoSlot)) {
+            assertNull(shownSummary(summarized, state))
+        }
+        assertNull(shownSummary(summarized.copy(recovery = PlanRecovery.ReloadRequired), AdjustmentState.Idle))
+        assertNull(shownSummary(summarized.copy(recovery = PlanRecovery.Missing), AdjustmentState.Idle))
     }
 }

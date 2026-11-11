@@ -1,154 +1,101 @@
-# Iteration 3 AI 평가 계획 (P11, 남경민)
+# P10 AI evaluation — written examination
 
-이 문서는 AI 평가를 **실행하기 전에** 평가셋, 통과 기준, 반복 횟수, 실패·시간 초과 집계 기준을 고정합니다. 실행 결과는 이 기준을 바꾸지 않고 별도 결과 문서에 기록합니다.
+Restored from `6d8af7f` for the current selected 18-question, eight-topic bank.
+The [original benchmark and failed results](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-ai-eval)
+remain in history. This is a new dataset version, not a rerun of that three-topic
+benchmark. No new model-quality results are claimed by this restoration.
 
-## 1. 평가 대상
+## Dataset
 
-| 항목 | 값 |
-| --- | --- |
-| 대상 API | `http://swpp26t02.147-46-242-174.sslip.io/api/v1` (HE 배포 서버) |
-| 계획 생성 | `POST /study-plans` |
-| 일정 조정 | `POST /schedules/adjust` |
-| 기준 코드 | PR #8이 반영된 `main` (실행 시 서버 배포 commit을 결과에 기록) |
-| 모델 | OpenRouter (실행 시 서버 설정의 모델 이름을 결과에 기록) |
-| 토픽 | 스프레드시트 기본, 함수와 데이터 관리, 차트와 분석 |
+`build_cases.py` reads the reviewed onboarding selection in
+`backend/assessment_questionnaire/questions.json`. Every request includes all
+18 selected answers. Expected scores use reviewed topic tags independently of
+the scheduler. `cases.json` records the UTF-8 bank SHA-256 after normalizing
+line endings to LF so Windows and Linux checkouts match.
 
-## 2. 평가셋
+42 cases: 15 weak-topic allocation, eight availability, six busy-calendar,
+six capacity/input, five adjustment and two self-assessment cases. Five new
+allocation cases individually weaken computer-system use, internet use, system
+protection, printing and macros. Existing weak-topic patterns now miss all
+questions in those topics; A10 misses only question 2. The HE pattern retains
+UNKNOWN for question 3 and a wrong answer for question 4.
 
-`cases.json`에 37개 사례가 있습니다. `build_cases.py`로 다시 만들 수 있으며, 진단 답안은 앱이 보내는 형식(‘모르겠음’ 포함)과 같습니다. 기본 준비 기간은 2026-11-09(월) ~ 2026-11-30 09:00이고, 기본 공부 시간은 HE 사례와 같은 월·수·금 19:00~20:30, 토 10:00~12:00입니다.
+Fixed default dates: 2026-11-09 through 2026-11-30 09:00. Boundary cases have
+explicit dates. These are reproducible benchmark inputs, not today's dates.
+Default availability: Mon/Wed/Fri 19:00–20:30, Sat 10:00–12:00.
 
-| 그룹 | 개수 | UAT | 확인하는 것 |
-| --- | --- | --- | --- |
-| A. 취약 토픽 배분 | 10 | US-B3 | 진단 답안 패턴 10가지(전부 정답, 전부 오답, 토픽별 약점 조합, HE 답안)에서 약한 토픽에 시간이 더 가는지 |
-| B. 공부 가능 시간 | 8 | US-B5 | 주말만, 매일 30분, 하루 두 구간, 자정 직전, 새벽 등 다양한 가용 시간에서 시간 안에 겹침 없이 배치되는지 |
-| C. 기존 약속 | 6 | US-C9 | `busy_schedules`의 약속과 겹치지 않는지 (부분 겹침, 하루 전체 차단, 여러 날, 15분 틈 등) |
-| D. 용량·입력 경계 | 6 | US-B7 | 가용 0분, 2분, 3일, 8주, 날짜 순서 오류에서 기대한 응답이 오는지 |
-| E. 일정 조정 | 5 | US-C3·C4 | 생성한 계획의 첫·중간·마지막 공부 일정을 옮겼을 때 규칙대로 이동하는지 |
-| F. 자기 평가 문장 | 2 | US-B3 | 자기 평가 문장이 없거나 진단과 반대일 때도 진단 점수를 따르는지 |
+## Run and compare
 
-기대 응답:
-
-| 기대값 | 사례 | 의미 |
-| --- | --- | --- |
-| `200` | 33개 | 유효한 계획(조정 사례는 조정 결과까지)을 돌려줘야 함 |
-| `422_NOT_ENOUGH_TIME` | D01, D02 | 가용 0분이므로 모델 호출 전에 `NOT_ENOUGH_TIME`으로 거절 |
-| `422_INVALID_INPUT` | D06 | 시험일이 준비 시작일보다 빠르므로 입력 오류 |
-| `200_or_422_NOT_ENOUGH_TIME` | D03 | 유효한 계획 또는 `NOT_ENOUGH_TIME` 모두 정상. 5xx·시간 초과만 실패 |
-
-D01, D02, D06의 기대 응답은 PR #8 백엔드의 사전 검사(`check_initial_capacity`, 날짜 검증)를 로컬에서 실행해 미리 확인했습니다.
-
-## 3. 반복 횟수와 실행 규칙
-
-- 모델을 호출하는 사례는 **3회**, 결정적으로 거절되는 사례(D01, D02, D06)는 **1회** 실행합니다.
-- 조정 사례(E)는 매 회 새로 계획을 생성한 뒤 조정합니다.
-- 조정 요청에는 생성 응답의 `schedule_csv_file`·`schedules`, 사례의 `weekly_availability`와 함께 사례 원래 요청의 `exam_date`를 그대로 보냅니다. 저장된 계획은 서버가 저장한 시험일을 쓰므로 생략해도 되지만, 평가 요청은 같은 시험일을 명시적으로 반복합니다. 평가 기준과 기존 결과(`results_20261104T141642/`, `RESULTS.md`)는 이 필드를 보내기 전 스크립트로 만든 기록이며 바꾸지 않습니다.
-- 총 호출 수: 생성 105회 + 조정 15회 = **120회**
-- 요청은 하나씩 순서대로 보내고, 요청 사이에 3초 쉽니다. 실패해도 자동으로 다시 보내지 않습니다(첫 시도만 집계).
-- 5xx가 5회 연속 나오면 모델 제공자 장애로 보고 실행을 멈추고, 시각과 응답을 기록합니다. 멈춘 지점부터 다시 실행하고, 장애 구간의 실패도 결과에 그대로 남깁니다.
-- 평가는 HE 배포 서버에 계획 파일을 남기므로, 실행 전후 팀에 알립니다.
-
-## 4. 실패와 시간 초과 집계
-
-| 분류 | 기준 |
-| --- | --- |
-| `TIMEOUT` | 응답이 **120초**(앱의 요청 제한 시간)를 넘음 |
-| `HTTP_5XX` | 500, 502, 503 응답 (모델·Agent 실패 포함) |
-| `UNEXPECTED_STATUS` | 기대와 다른 4xx·2xx 응답 |
-| `HARD_VIOLATION` | 200 응답이지만 아래 H 검사 중 하나라도 위반 |
-| `QUALITY_MISS` | 200이고 H 검사는 통과했지만 Q 검사 미달 (실패율이 아니라 품질 지표로 집계) |
-
-## 5. 검사 항목
-
-### 계획 생성: 반드시 지켜야 하는 조건 (H)
-
-| 코드 | 검사 |
-| --- | --- |
-| H1 | 모든 공부 일정이 해당 요일의 공부 가능 시간 안에 있음 |
-| H2 | 모든 공부 일정이 준비 시작 이후, 시험 시각 이전에 있음 |
-| H3 | 공부 일정끼리, 그리고 약속(`busy_schedules`)과 겹치지 않음 |
-| H4 | 토픽이 자격증 토픽 3개 중 하나임 |
-| H5 | 요청한 약속 행이 응답에 그대로 남아 있음 |
-
-### 계획 생성: 품질 (Q)
-
-토픽 점수는 고정 매핑(1·5번 스프레드시트 기본, 2·3번 함수와 데이터 관리, 4번 차트와 분석)으로 계산합니다.
-
-| 코드 | 검사 | 적용 사례 |
-| --- | --- | --- |
-| Q1 | 가장 약한 토픽(동점이면 그중 하나)이 가장 많은 공부 시간을 받음 | 토픽 점수에 차이가 있는 사례 |
-| Q2 | 토픽 점수와 배정 시간의 피어슨 상관계수 ≤ −0.5 (Iteration 2 `score_minutes_pearson`) | Q1과 같음 |
-| Q3 | 3개 토픽이 모두 1회 이상 배정됨 | D03 제외 |
-| Q4 | 활용률 = 배정한 공부 시간 ÷ (가용 시간 − 약속 시간) | 모든 200 응답 (보고용) |
-| Q5 | 15분 미만 공부 일정의 비율 | 모든 200 응답 (보고용) |
-| Q6 | 같은 사례 3회의 토픽별 시간 비율 차이(최대 − 최소) | 3회 실행 사례 (보고용) |
-| L | 응답 시간 p50, p95, 최대 | 모든 요청 |
-
-### 일정 조정 (E 그룹)
-
-| 코드 | 검사 |
-| --- | --- |
-| J1 | 200 응답, `action`이 `rescheduled_study` |
-| J2 | 대상 일정의 시작 시각이 바뀜 |
-| J3 | 대상 일정의 토픽과 길이가 그대로임 |
-| J4 | 대상이 아닌 일정은 모두 그대로임 |
-| J5 | 옮긴 일정이 공부 가능 시간 안에 있고 다른 일정과 겹치지 않음 |
-| J6 | 옮긴 일정이 시험 시각 이후로 밀렸는지 (보고용) |
-
-## 6. 통과 기준
-
-아래 T1~T8을 모두 만족하면 이번 평가를 **통과**로 판정합니다. 기준은 실행 전에 고정하며, 결과를 본 뒤 바꾸지 않습니다.
-
-| 코드 | 기준 | 근거 |
-| --- | --- | --- |
-| T1 | 기대 응답이 `200`인 생성 실행 중 **90% 이상**이 200 + H 검사 전부 통과 | Iteration 2 성공률 90.6% 이상 유지 |
-| T2 | 200 응답 중 H 검사 위반 **0건** | 사용자가 지킬 수 없는 일정은 허용하지 않음 |
-| T3 | 422 기대 사례(D01, D02, D06)는 **100%** 기대 코드로 응답, D03은 5xx·시간 초과 0건 | 모델 호출 전 검증은 결정적이어야 함 |
-| T4 | `TIMEOUT` **0건**, 응답 시간 p95 **90초 이하** | 앱 제한 시간 120초 안에서 여유 확보 |
-| T5 | Q1 적용 실행의 **80% 이상** 통과 | 취약 토픽 우선 배분 (US-B3) |
-| T6 | Q2 적용 실행의 **80% 이상** 통과 | 점수가 낮을수록 시간이 많아야 함 |
-| T7 | Q3 적용 실행의 **90% 이상** 통과 | 진단한 모든 토픽을 공부해야 함 |
-| T8 | 조정 실행의 **90% 이상**이 J1 통과, J1 통과 실행은 J2~J5 **100%** 통과 | 놓친 공부 이어가기 (US-C3·C4) |
-
-보고용 목표(통과 판정에는 넣지 않고 P31 개선 근거로 사용):
-
-- Q4 활용률 중앙값 50% 이상 (10/31 실기기 검증에서 41~62% 관찰)
-- Q5 15분 미만 일정 비율 10% 이하 (10/31 실기기 검증에서 매일 5분 일정 관찰)
-- Q6 토픽 비율 차이 0.15 이하
-
-## 7. 결과에 기록할 것
-
-- 실행 날짜와 시각, 서버 배포 commit, 모델 이름, 앱 APK 버전(해당 시)
-- 사례·회차별 응답 코드, 응답 시간, 실패 분류, H·Q·J 검사 결과
-- T1~T8 판정과 보고용 지표
-- 반복되는 실패의 원인 분석(failure analysis)과 P31로 넘길 개선점
-
-## 8. 실행 방법
-
-Python 3.10 이상, 표준 라이브러리만 사용합니다.
+Python 3.10+, standard library only. From the repository root:
 
 ```bash
-cd docs/iter3-ai-eval
-# 1회 점검 (결과 집계에는 쓰지 않음)
-python run_eval.py --base-url http://swpp26t02.147-46-242-174.sslip.io/api/v1 --only A09 --reps 1
-# 본 실행 (120회 호출)
-python run_eval.py --base-url http://swpp26t02.147-46-242-174.sslip.io/api/v1 --server-commit <서버 배포 commit> --model <모델 이름>
+python docs/iter3-ai-eval/build_cases.py
+python -m unittest discover -s docs/iter3-ai-eval -p "test_*.py" -v
+# Live smoke test: DOES call the backend/model.
+python docs/iter3-ai-eval/run_eval.py --base-url http://127.0.0.1:8000/api/v1 --only A09 --reps 1
+# Full run against an isolated backend configured with the actual model.
+python docs/iter3-ai-eval/run_eval.py --base-url http://127.0.0.1:8000/api/v1 --server-commit ACTUAL_DEPLOYED_COMMIT --model ACTUAL_MODEL --inference-config run-config.json --output-dir outputs/p10-before
 ```
 
-결과는 `results/<실행 시각>/`에 `runs.jsonl`, `runs.csv`, `summary.json`, `summary.md`로 저장되며, 실행 중에도 매 회 갱신됩니다. 판정 스크립트는 로컬 모의 서버로 모든 사례를 1회씩 실행해 검사 로직을 확인했습니다.
+Use backend/README.md for server setup and an isolated `APP_STUDY_PLAN_DIR`.
+The shared server's retention limit can prune other users' plans. Fixed-response
+servers verify integration only and cannot establish AI quality.
 
-## 9. 파일
+Before running, prepare `run-config.json` containing actual provider/model,
+temperature/decoding settings (explicitly state omitted/provider defaults),
+reasoning effort, token/step limits and prompt/tool-schema hashes. Include APK
+version if paired with Android validation. Pass the actual deployed commit.
+Never put API keys in this configuration.
 
-| 파일 | 내용 |
+For P10 before/after comparison, freeze this runner, dataset, model and inference
+settings. Run against baseline and improved deployments with their actual commit
+IDs and separate output directories. Compare Q1/Q2, per-topic minutes and shares,
+Q6 variation, utilization and latency. Do not compare old three-topic results
+directly with this eight-topic version.
+
+Model cases run three times; D01/D02/D06 once: 120 generation requests and up to
+15 adjustments, 135 total. Requests are sequential with three-second pauses,
+a 120-second timeout and no automatic retries. Five consecutive 5xx stop the run;
+partial results are retained. Subset, overridden-repetition and interrupted runs
+are not full acceptance results.
+
+## Fixed checks and thresholds
+
+Original thresholds are retained, applied to all eight topics. Freeze this
+dataset/criteria before collecting the P10 baseline; do not tune after results.
+
+| Check | Meaning |
 | --- | --- |
-| `README.md` | 이 문서 (평가 계획과 통과 기준) |
-| `cases.json` | 평가셋 37개 |
-| `build_cases.py` | 평가셋 생성 스크립트 (`python build_cases.py ../../backend/assessment_questionnaire/questions.json`) |
-| `run_eval.py` | 평가 실행·판정 스크립트 |
+| H1–H5 | Nonempty study plan; within availability and preparation/exam bounds; no study/busy overlaps; valid topics; busy intervals retained |
+| Q1 | At least one weakest topic receives the largest minute allocation |
+| Q2 | Pearson correlation between topic scores and minutes ≤ −0.5 |
+| Q3 | Every topic receives positive minutes (except D03) |
+| Q4/Q5/Q6 | Utilization / share of sessions under 15 minutes / repeated-run topic-share range |
+| J1–J5 | Successful rescheduling; target moved; topic/duration preserved; other rows unchanged; available and conflict-free |
+| J6 | Movement beyond the exam reported separately, as in the original evaluator |
 
-## 10. 재현성 기록 보완 (2026-11-06)
+Q1/Q2 apply when scores differ. Inspect per-topic scores/minutes too: Q1 alone
+does not prove complete weak-topic ordering.
 
-11월 4일 실행의 서버 commit은 미확인, 모델은 `unknown`이며 temperature·decoding 설정·배포 prompt 버전도 기록되지 않았습니다. 현재 소스의 기본값으로 과거 실행 값을 채울 수 없습니다. 기존 FAIL 판정과 원본 결과는 그대로 보존합니다.
+| Criterion | Threshold |
+| --- | --- |
+| T1 | ≥90% of expected-200 generations return 200 and pass H |
+| T2 | Zero H violations |
+| T3 | D01/D02: 422 NOT_ENOUGH_TIME; D06: 422 INVALID_INPUT; D03: no 5xx/timeouts (200 or 422 NOT_ENOUGH_TIME accepted) |
+| T4 | Zero timeouts; latency p95 ≤90 seconds |
+| T5/T6 | Q1 and Q2 each pass ≥80% of applicable successful plans |
+| T7 | Q3 passes ≥90% of applicable successful plans |
+| T8 | ≥90% adjustment success; all successful adjustments pass J2–J5 |
 
-사전 등록은 PR #10의 원래 commit `0f38942da605780ee6e3d8eafbf7035255ae0020` (11월 4일 14:12:58 KST)의 `docs/iter3-ai-eval/cases.json`과 README 기준이며, run directory 시작은 14:16:42 KST입니다. squash commit `dbf31ef`에는 계획과 결과가 함께 들어 있으므로 사전 등록 시각은 원래 PR commit을 사용합니다.
+Report-only goals: median utilization ≥50%, short-session share ≤10%,
+maximum topic-share range ≤0.15. Connection errors, HTTP 5xx, unexpected status,
+hard violations and timeouts remain in recorded outcomes.
 
-다음 실행 전 manifest에 서버 commit, 평가 runner/cases commit·hash, 실제 model/provider, temperature 및 decoding 필드(생략 시 provider default임을 명시), reasoning effort, 출력 token/agent step 한도, prompt·tool schema 버전 또는 hash, 실행 시각과 API 주소를 기록합니다. 원본 요청·응답과 회차별 결과를 함께 남깁니다. 공유 서버에는 계획 100개 보관 제한이 있으므로 별도 평가 저장 공간을 사용하거나 담당자와 보존 대상을 합의한 뒤 실행합니다. 이 문서 보완은 새 실호출이나 과거 설정 복원을 의미하지 않습니다.
+## Outputs
+
+Timestamped directories contain `exchanges.jsonl` (API requests/responses),
+`runs.jsonl`, `runs.csv`, `summary.json` and `summary.md`. Metadata records the
+supplied deployment/model/configuration, runner commit and runner/dataset/bank
+hashes. File hashes identify uncommitted runner changes; commit alone does not.
+Keep raw outputs local and redact personal data/secrets before sharing.
+Historical result folders are not restored as current results.

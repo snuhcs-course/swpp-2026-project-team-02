@@ -20,8 +20,12 @@ def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool)
     usable = available_minutes(request)
     if usable >= topic_count:
         return
-    topics = (f"진단된 학습 주제 {topic_count}개에 주제마다 최소 1분씩" if exact
-              else "학습 주제 1개에도 최소 1분을")
+    if exact:
+        topics = f"진단된 학습 주제 {topic_count}개에 주제마다 최소 1분씩"
+    elif topic_count > 1:
+        topics = f"이미 확인된 학습 주제 {topic_count}개에 주제마다 최소 1분씩"
+    else:
+        topics = "학습 주제 1개에도 최소 1분을"
     raise InsufficientCapacityError(
         f"NOT_ENOUGH_TIME: 준비 시작부터 시험일까지 공부할 수 있는 시간이 {usable}분이라 "
         f"{topics} 배정할 수 없습니다. "
@@ -40,16 +44,38 @@ def usable_date_minutes(request: PlanRequest) -> dict[str, int] | None:
             for day, minutes in usable_minutes_by_date(request).items() if minutes > 0}
 
 
+def check_result_partitions(request: PlanRequest) -> None:
+    """입력 값: 일정 요청
+    출력 값: 없음
+    기능: 토픽이 확정된 결과와 분류할 문항이 같은 문제 ID를 공유하면 거부합니다.
+    """
+    overlap = ({item.problem_id for item in request.problem_results}
+               & {item.problem_id for item in request.assessment_items})
+    if overlap:
+        raise ValueError(f"problem IDs cannot be both topic-resolved and unresolved: {sorted(overlap)}")
+
+
+def submitted_question_count(request: PlanRequest) -> int:
+    """입력 값: 일정 요청
+    출력 값: 토픽 확정 결과와 미분류 문항을 합친 서로 다른 문제 ID 수
+    기능: 가중치 행을 문항으로 중복 계산하지 않습니다.
+    """
+    return len({item.problem_id for item in request.problem_results}
+               | {item.problem_id for item in request.assessment_items})
+
+
 def check_initial_capacity(request: PlanRequest) -> None:
     """입력 값: 일정 요청
     출력 값: 없음
     기능: 모델 호출 전에 알 수 있는 필수 토픽 수로 최소 가용 시간을 확인합니다.
     """
+    check_result_partitions(request)
+    known_topics = {item.topic for item in request.problem_results}
     if request.assessment_items:
-        # 문항-토픽 분류는 모델이 정하므로 분류 전에는 최소 1개 토픽만 확정됩니다.
-        check_topic_capacity(request, 1, exact=False)
+        # 미분류 문항은 이미 확인된 토픽과 겹칠 수 있으므로 확인된 토픽 수(없으면 1개)가 하한입니다.
+        check_topic_capacity(request, max(1, len(known_topics)), exact=False)
     elif request.problem_results:
-        check_topic_capacity(request, len({item.topic for item in request.problem_results}), exact=True)
+        check_topic_capacity(request, len(known_topics), exact=True)
     else:
         check_topic_capacity(request, len(get_certification(request.certification_id).topics), exact=True)
 
@@ -83,14 +109,15 @@ class PlannerTools:
                 "topics": list(cert.topics)}
 
     def analyze_exam_results(self, problem_topics: list[dict[str, Any]] | None = None) -> dict[str, Any] | str:
-        """입력 값: 없음 (요청 객체의 문제별 결과를 사용)
+        """입력 값: 미분류 문항의 토픽 배정(미분류 문항이 없으면 생략)
         출력 값: 전체 점수와 토픽별 배점/획득 점수/점수율 통계
-        기능: 문제 주제 이름을 그대로 사용해 토픽별 취약도를 분석합니다.
+        기능: 토픽이 확정된 결과에 미분류 문항의 배정 결과를 더해 토픽별 취약도를 분석합니다.
         """
         results = self.request.problem_results
+        fixed_ids = {item.problem_id for item in results}
         if self.request.assessment_items:
             if not isinstance(problem_topics, list):
-                return "INVALID_TOOL_CALL: problem_topics must classify every assessment question."
+                return "INVALID_TOOL_CALL: problem_topics must classify every unresolved assessment question."
             try:
                 cert = get_certification(self.request.certification_id)
                 assignments: dict[int, list[tuple[str, float]]] = {}
@@ -100,6 +127,9 @@ class PlannerTools:
                     problem_id, topics = assignment.get("problem_id"), assignment.get("topics")
                     if not isinstance(problem_id, int) or isinstance(problem_id, bool):
                         raise ValueError("problem_id must be an integer")
+                    if problem_id in fixed_ids:
+                        raise ValueError(f"problem_id {problem_id} already has a reviewed topic; "
+                                         "classify only the unresolved assessment questions")
                     if problem_id in assignments:
                         raise ValueError(f"duplicate topic mapping for problem_id: {problem_id}")
                     if not isinstance(topics, list) or not topics:
@@ -121,8 +151,10 @@ class PlannerTools:
                     assignments[problem_id] = mapped
                 expected = {item.problem_id for item in self.request.assessment_items}
                 if set(assignments) != expected:
-                    raise ValueError("problem_topics must map every assessment problem exactly once")
-                results = tuple(
+                    missing, extra = sorted(expected - set(assignments)), sorted(set(assignments) - expected)
+                    raise ValueError("problem_topics must map every unresolved assessment problem exactly once; "
+                                     f"missing={missing}, extra={extra}")
+                results = results + tuple(
                     ProblemResult(item.problem_id, topic, item.possible_score * weight,
                                   item.possible_score * weight if item.is_correct else 0.0, weight)
                     for item in self.request.assessment_items
@@ -131,7 +163,8 @@ class PlannerTools:
             except ValueError as error:
                 return f"INVALID_TOOL_CALL: {error}"
         elif problem_topics is not None:
-            return "INVALID_TOOL_CALL: problem_topics is only used with assessment_results."
+            return ("INVALID_TOOL_CALL: every question already has a reviewed topic; "
+                    "call analyze_exam_results without problem_topics.")
         self.topic_statistics = summarize_topic_results(results)
         self.results_analyzed = True
         self._check_required_capacity()
@@ -248,7 +281,7 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
     return [
         {"name": "get_certification_profile", "description": "Look up the official local plan template for one supported certification.",
          "parameters": {"type": "object", "properties": {"certification_id": {"type": "string", "enum": sorted(CERTIFICATIONS)}}, "required": ["certification_id"]}},
-        {"name": "analyze_exam_results", "description": "For assessment_results, examine each question, correct answer, user answer, and locally calculated correctness. Map every question to one or more of this certification's fixed topics and assign contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Do not infer an answer or correctness. For legacy rows, omit problem_topics. Then aggregate weighted earned/possible points per topic.",
+        {"name": "analyze_exam_results", "description": "Questions listed in assessment_results are unresolved: examine each question, correct answer, user answer, and validated local correctness. Map every unresolved question, and no other question, to one or more of this certification's fixed topics with contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Questions counted in reviewed_question_count already have fixed topics; never include their IDs. When no question is unresolved, omit problem_topics. Do not infer an answer or correctness. The tool combines reviewed and mapped results into weighted earned/possible points per topic.",
          "parameters": {"type": "object", "properties": {"problem_topics": {"type": "array", "items": {"type": "object", "properties": {"problem_id": {"type": "integer"}, "topics": {"type": "array", "items": {"type": "object", "properties": {"topic": {"type": "string", "enum": known_topics}, "weight": {"type": "number"}}, "required": ["topic", "weight"]}}}, "required": ["problem_id", "topics"]}}}, "required": []}},
         {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
          "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": build_date, "topic": build_topic, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},

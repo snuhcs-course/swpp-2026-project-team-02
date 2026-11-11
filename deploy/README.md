@@ -1,16 +1,15 @@
-# Iteration 3 CPU Server Deployment
+# CPU Server Deployment
 
-This directory records the deployed Team 2 CPU B configuration and contains no credentials.
-Server installation and maintenance require `ssh swpp-b` from the school network. Public API
-verification works from any network.
+This directory holds the checked-in deployment templates for the Team 2 CPU B server and contains
+no credentials. Server installation and maintenance require `ssh swpp-b` from the school network.
+Public API verification works from any network.
 
-## Recorded deployment (2026-10-30)
+## Topology
 
-These settings and results describe the deployment recorded on 2026-10-30;
-they were not rechecked against the running server during the 2026-11-01
-documentation pass. Deployment documentation was merged by [PR #6](https://github.com/snuhcs-course/swpp-2026-project-team-02/pull/6)
-into `iteration-3-pr4-base`, not `main`. Branch and verification scope are
-summarized in the [documentation index](../docs/README.md).
+The templates in `nginx/` and `systemd/` describe the intended setup below. They are not proof of
+what is installed: the running server may use another revision, branch, unit or Nginx
+configuration. Inspect the installed state (see [Before an update](#before-an-update)) before
+relying on it or changing it.
 
 - SSH alias: `swpp-b`
 - Public host: `swpp26t02.147-46-242-174.sslip.io`
@@ -42,8 +41,10 @@ as shown below. Until then, the server keeps its previously installed configurat
 
 ## Install or reconcile from the school network
 
-The checked-in unit matches the current server. If another account or path is used later, update
-the unit before installing it rather than editing an installed copy only.
+The checked-in unit expects the service account and repository path listed above. If another
+account or path is used, update the unit in the repository before installing it rather than editing
+an installed copy only. Compare an existing installation with the templates first (see
+[Before an update](#before-an-update)).
 
 ```bash
 ssh swpp-b
@@ -63,18 +64,90 @@ sudo systemctl enable --now licenseplanner.service
 sudo systemctl reload nginx
 ```
 
-The deployed checkout currently follows `iteration-3-pr4-base`. Update it without deleting the
-directory because generated plans are stored inside the checkout. Backends that store exam
-deadlines write a `.meta.json` file beside each newly generated plan CSV; back up and preserve
-every `.csv`/`.meta.json` pair in the configured plan directory, and never delete sidecars during
-an update or rollback. This repository has not established which backend revision is deployed.
+### Before an update
+
+This repository does not record which revision or configuration is deployed. Check it on the
+server before every update, and record what you find with the change:
 
 ```bash
-sudo -u swpp26-45 git -C /home/swpp26-45/apps/swpp-2026-project-team-02 fetch origin
-sudo -u swpp26-45 git -C /home/swpp26-45/apps/swpp-2026-project-team-02 switch iteration-3-pr4-base
-sudo -u swpp26-45 git -C /home/swpp26-45/apps/swpp-2026-project-team-02 pull --ff-only
+REPO=/home/swpp26-45/apps/swpp-2026-project-team-02
+sudo -u swpp26-45 git -C "$REPO" rev-parse HEAD
+sudo -u swpp26-45 git -C "$REPO" status --short --branch
+systemctl cat licenseplanner.service
+diff "$REPO/deploy/systemd/license-planner.service" /etc/systemd/system/licenseplanner.service
+diff "$REPO/deploy/nginx/license-planner.conf" /etc/nginx/sites-available/licenseplanner
+```
+
+The backend stores generated plans in `APP_STUDY_PLAN_DIR` when its process environment sets it
+(through the unit's `Environment=`, a drop-in, or its `EnvironmentFile`), and otherwise in
+`backend/license_planner/output/` inside the checkout. A relative value is resolved against the
+service's working directory. Update the checkout in place and never replace it with a clean copy.
+Backends that store exam deadlines write a `.meta.json` file beside each newly generated plan CSV.
+
+Establish the directory the installed service actually uses before backing it up. Run this block
+in bash. It prints only `APP_STUDY_PLAN_DIR` assignments and non-secret metadata (the working
+directory and environment-file paths), never a whole environment or environment file. It prints
+`STOP` and exits non-zero whenever a lookup fails:
+
+```bash
+(
+  UNIT=licenseplanner.service KEY=APP_STUDY_PLAN_DIR
+  stop() { echo "STOP: $*. Do not assume the default directory." >&2; exit 1; }
+  PID=$(systemctl show -p MainPID --value "$UNIT") || stop "cannot query $UNIT"
+  [ "$PID" -gt 0 ] 2>/dev/null || stop "$UNIT is not running (MainPID=$PID)"
+  sudo test -r "/proc/$PID/environ" || stop "cannot read the process environment"
+  CWD=$(sudo readlink "/proc/$PID/cwd") || stop "cannot read the process working directory"
+  echo "working directory: $CWD"
+  sudo grep -az "^$KEY=" "/proc/$PID/environ" | tr '\0' '\n' | sed 's/^/running process: /'
+  case ${PIPESTATUS[0]} in
+    0) ;; 1) echo "running process: $KEY not set" ;; *) stop "cannot read the process environment" ;;
+  esac
+  UNIT_ENV=$(systemctl show -p Environment --value "$UNIT") || stop "cannot read the unit environment"
+  MATCH=$(tr ' ' '\n' <<<"$UNIT_ENV" | grep "^$KEY=") && echo "unit Environment: $MATCH" \
+    || echo "unit Environment: $KEY not set"
+  FILES=$(systemctl show -p EnvironmentFiles --value "$UNIT") || stop "cannot list environment files"
+  while read -r FILE _; do
+    [ -n "$FILE" ] || continue
+    sudo grep -H "^$KEY=" "$FILE"
+    case $? in 0) ;; 1) echo "$FILE: $KEY not set" ;; *) stop "cannot read $FILE" ;; esac
+  done <<<"$FILES"
+)
+```
+
+Conclude that no override is set only when the block exits with status 0 and reports the key as
+not set for the running process, the unit `Environment` and every environment file. A `STOP`
+line, including one for a stopped service, gives no conclusion: do not use the default directory.
+Confirm the directory with the owner and set `PLAN_DIR` to that explicit path instead. Resolve a
+relative value against the printed working directory. If the running value differs from a
+configured one, a restart would switch directories: stop and resolve this with the owner before
+updating.
+
+Set `PLAN_DIR` to that explicit absolute path, back up the whole directory, and check that the
+archive holds every plan file. The two counts must match. Keep every `.csv`/`.meta.json` pair
+together, and never delete sidecars during an update or rollback:
+
+```bash
+PLAN_DIR=/absolute/plan/directory   # "$REPO/backend/license_planner/output" only when not overridden
+test -d "${PLAN_DIR:?}"
+BACKUP="/home/swpp26-45/plan-backup-$(date +%Y%m%d%H%M%S).tgz"
+sudo -u swpp26-45 tar -C "$PLAN_DIR" -czf "$BACKUP" .
+sudo -u swpp26-45 find "$PLAN_DIR" -maxdepth 1 -type f \( -name '*.csv' -o -name '*.meta.json' \) | wc -l
+sudo -u swpp26-45 tar -tzf "$BACKUP" | grep -cE '\.(csv|meta\.json)$'
+```
+
+### Update
+
+With `REPO` set as above, choose the branch to deploy explicitly, then fast-forward and restart:
+
+```bash
+sudo -u swpp26-45 git -C "$REPO" fetch origin
+sudo -u swpp26-45 git -C "$REPO" switch <branch>
+sudo -u swpp26-45 git -C "$REPO" pull --ff-only
+sudo -u swpp26-45 git -C "$REPO" rev-parse HEAD
 sudo systemctl restart licenseplanner.service
 ```
+
+Production updates, configuration changes and restarts need the owner's agreement.
 
 ## Server-only model configuration
 
@@ -114,20 +187,38 @@ From a non-campus network:
 python deploy/verify_public_api.py
 ```
 
-The verifier is read-only. Actual model verification must separately create, query, and adjust a
-plan. After a service restart or server reboot, query the same `schedule_csv_file` again to verify
-persistence. On 2026-10-30, both service restart and full reboot recovery were verified, followed
-by a successful off-campus generation, lookup, adjustment, CSV download, and retained-plan check.
-These results were reported in the team chat on 2026-10-30 by Junwoo Cho (16:16 KST: service
-restart with the saved CSV and plan lookup retained) and Hunil Son (17:32 KST: service restart,
-full reboot and the off-campus flow). The 2026-10-30–31 device run did not repeat these restarts.
+The verifier is read-only (it checks `/health`, the certification list and the public question
+fields). Passing it does not
+verify model generation, adjustment or persistence. Those writes need a separate, agreed check:
 
-## Evaluator APK
+1. Create a plan through the app or `POST /api/v1/study-plans` and note its `schedule_csv_file`.
+2. Restart `licenseplanner.service` (or reboot the server) from the school network.
+3. Read the plan back with `GET /api/v1/study-plans?schedule_csv_file=<URL-encoded identifier>`
+   and confirm the same rows; download it from its `schedule_csv_url`.
+4. Adjust one of its study sessions to confirm its stored exam deadline survived the restart.
+   A plan created before the server stored deadlines answers HTTP 422 asking for a new plan.
 
-Use the signed `app-live-release.apk` artifact produced by `.github/workflows/prod-apk.yml`. The
-artifact URL, signature fingerprint, installation steps, and known limitations are recorded in
-[`../ITER3_SUBMISSION.md`](../ITER3_SUBMISSION.md). Use [HE_EVALUATION.md](HE_EVALUATION.md) for
-the fixed device flow.
+Record the server revision from [Before an update](#before-an-update), the times, and the
+identifier used. Earlier restart, reboot and off-campus results are kept in the
+[archived deployment verification records](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/deploy/README.md#verification); they do not establish the current state.
+The Android-side procedure is in
+[`../frontend/README.md`](../frontend/README.md#manual-live-check).
+
+## Release APK
+
+The signed live release APK is built by the manually dispatched `Prod APK` workflow
+(`.github/workflows/prod-apk.yml`). It verifies the signature with `apksigner` and uploads
+`app-live-release.apk` as the artifact `live-release-apk-<commit SHA>`, kept for 30 days; downloading
+it needs GitHub access. Record the workflow run and source commit with every result that uses it.
+Before installing, check the certificate with
+`apksigner verify --print-certs app-live-release.apk`; the fingerprint identifies the signer, not
+the APK contents.
+
+Installing it outside an app store may require allowing installs from that source and dismissing a
+Play Protect warning. A release APK updates an existing installation only when both use the same
+signing key; otherwise uninstall the old app first, which deletes its device-local plans. Debug
+builds use a different certificate (see
+[`../frontend/README.md`](../frontend/README.md#physical-device-against-the-public-server)).
 
 The workflow's API URL (the `api_base_url` input, otherwise `LIVE_API_BASE_URL`) must be
 `http://swpp26t02.147-46-242-174.sslip.io/api/v1` or an HTTPS URL. Gradle rejects any other HTTP
@@ -135,9 +226,10 @@ host before packaging because the release network policy would block it on the d
 
 ## Limitations
 
-- The [device report](../docs/iter3-HE/03_device_verification.md) records intermittent
-  HTTP 307 adjustment failures on 2026-10-30–31. The cause is unresolved;
-  successful retries or a later failure to reproduce do not establish a fix.
+- Intermittent HTTP 307 adjustment failures were observed on the deployed server (see the
+  [2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md)). The backend sends no 307; an Nginx or
+  network redirect is only a hypothesis. The cause is unresolved, and successful retries or a later
+  failure to reproduce do not establish a fix.
 - The assigned public endpoint is HTTP, not HTTPS.
 - The API has no authentication or per-user server storage.
 - Generated plans are retained as CSV files under `backend/license_planner/output/`, up to the

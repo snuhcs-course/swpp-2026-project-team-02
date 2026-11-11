@@ -45,7 +45,7 @@ class LiveQuestionRepositoryTest {
         assertEquals("GET", recorded.method)
         assertEquals("/api/v1/certifications/computer_specialist_level_2/questions", recorded.path)
         assertEquals(0L, recorded.bodySize)
-        assertEquals(listOf(1, 2, 3, 4, 5), outcome.questions.map { it.id })
+        assertEquals((1..18).toList(), outcome.questions.map { it.id })
         assertEquals(TestFixtures.publicQuestions(), outcome.questions)
     }
 
@@ -59,7 +59,7 @@ class LiveQuestionRepositoryTest {
     @Test
     fun unknownFieldsAndMatchingReservedUnknownAreTolerated() {
         val body = """{"certification_id":"$CERTIFICATION_ID","extra":{"x":1},"questions":[
-            {"id":7,"prompt":"p","choices":{"A":"가","UNKNOWN":"모르겠음"},"correct_answer":"A","possible_score":1.5,"hint":"h"}]}"""
+            {"id":7,"prompt":"p","choices":{"A":"가","B":"나","UNKNOWN":"모르겠음"},"correct_answer":"A","possible_score":1.5,"hint":"h"}]}"""
         val outcome = load(body) as QuestionOutcome.Loaded
         assertEquals(1.5, outcome.questions.single().possibleScore, 0.0)
     }
@@ -83,7 +83,11 @@ class LiveQuestionRepositoryTest {
         assertInvalid(bank(q(score = "0")))
         assertInvalid(bank(q(score = "-1")))
         assertInvalid(bank(q(choices = """{"A":"가","UNKNOWN":"잘 모름"}""", correct = "\"A\"")))
-        assertInvalid(bank(q(choices = """{"A":"가","UNKNOWN":"모르겠음"}""", correct = "\"UNKNOWN\"")))
+        assertInvalid(bank(q(choices = """{"A":"가","B":"나","UNKNOWN":"모르겠음"}""", correct = "\"UNKNOWN\"")))
+        assertInvalid(bank(q(choices = """{"A":"가"}""", correct = "\"A\"")))
+        assertInvalid(bank(q(choices = """{"A":"가","UNKNOWN":"모르겠음"}""", correct = "\"A\"")))
+        assertInvalid(bank("""{"id":1,"prompt":"질문","choices":{"A":"가","B":"나"},"correct_answer":"B"}"""))
+        assertInvalid(bank(q(score = "1e308") + "," + q(id = "2", score = "1e308")))
         assertInvalid("{not json")
         assertInvalid("""{"certification_id":"$CERTIFICATION_ID"}""")
     }

@@ -41,17 +41,33 @@ class ScoringTest {
         assertEquals("함수와 데이터 관리", LocalTopics.labelFor(3))
         assertEquals("차트와 분석", LocalTopics.labelFor(4))
         assertEquals("스프레드시트 기본", LocalTopics.labelFor(5))
+        assertEquals("컴퓨터 시스템 활용", LocalTopics.labelFor(6))
+        assertEquals("인터넷 자료 활용", LocalTopics.labelFor(9))
+        assertEquals("컴퓨터 시스템 보호", LocalTopics.labelFor(13))
+        assertEquals("스프레드시트 기본", LocalTopics.labelFor(15))
+        assertEquals("페이지 설정과 인쇄", LocalTopics.labelFor(17))
+        assertEquals("매크로 활용", LocalTopics.labelFor(18))
+        assertEquals("미분류 예시 문항", LocalTopics.labelFor(19))
         assertEquals("미분류 예시 문항", LocalTopics.labelFor(42))
     }
 
     @Test
-    fun topicTotalsForPinnedBank() {
-        // Scenario: 1 of 2 points in 함수와 데이터 관리.
-        val answers = mapOf(1 to "B", 2 to "B", 3 to UNKNOWN_KEY, 4 to "B", 5 to "C")
-        val scores = Scoring.topicScores(questions, answers).associateBy { it.topic }
-        assertEquals(TopicScore("스프레드시트 기본", 2.0, 2.0), scores["스프레드시트 기본"])
-        assertEquals(TopicScore("함수와 데이터 관리", 1.0, 2.0), scores["함수와 데이터 관리"])
-        assertEquals(TopicScore("차트와 분석", 0.0, 1.0), scores["차트와 분석"])
+    fun topicTotalsForBundledBank() {
+        // 컴퓨터 일반 answered UNKNOWN; 1 of 2 points in 함수와 데이터 관리 and a wrong chart answer.
+        val answers = questions.associate { it.id to it.correctAnswer } +
+            (6..14).associateWith { UNKNOWN_KEY } + mapOf(3 to UNKNOWN_KEY, 4 to "B")
+        val scores = Scoring.topicScores(questions, answers)
+        assertEquals(LocalTopics.catalogOrder.dropLast(1), scores.map { it.topic })
+        val byTopic = scores.associateBy { it.topic }
+        assertEquals(TopicScore("컴퓨터 시스템 활용", 0.0, 3.0), byTopic["컴퓨터 시스템 활용"])
+        assertEquals(TopicScore("인터넷 자료 활용", 0.0, 4.0), byTopic["인터넷 자료 활용"])
+        assertEquals(TopicScore("컴퓨터 시스템 보호", 0.0, 2.0), byTopic["컴퓨터 시스템 보호"])
+        assertEquals(TopicScore("스프레드시트 기본", 4.0, 4.0), byTopic["스프레드시트 기본"])
+        assertEquals(TopicScore("함수와 데이터 관리", 1.0, 2.0), byTopic["함수와 데이터 관리"])
+        assertEquals(TopicScore("차트와 분석", 0.0, 1.0), byTopic["차트와 분석"])
+        assertEquals(TopicScore("페이지 설정과 인쇄", 1.0, 1.0), byTopic["페이지 설정과 인쇄"])
+        assertEquals(TopicScore("매크로 활용", 1.0, 1.0), byTopic["매크로 활용"])
+        assertEquals(18.0, scores.sumOf { it.possible }, 0.0)
     }
 
     @Test
@@ -76,8 +92,9 @@ class ScoringTest {
     fun allAnsweredRequiresAValidKeyForEveryQuestion() {
         val partial = questions.dropLast(1).associate { it.id to it.correctAnswer }
         assertFalse(Scoring.allAnswered(questions, partial))
-        assertFalse(Scoring.allAnswered(questions, partial + (5 to "Z")))
-        assertTrue(Scoring.allAnswered(questions, partial + (5 to UNKNOWN_KEY)))
+        val lastId = questions.last().id
+        assertFalse(Scoring.allAnswered(questions, partial + (lastId to "Z")))
+        assertTrue(Scoring.allAnswered(questions, partial + (lastId to UNKNOWN_KEY)))
         assertFalse(Scoring.allAnswered(emptyList(), emptyMap()))
     }
 }
