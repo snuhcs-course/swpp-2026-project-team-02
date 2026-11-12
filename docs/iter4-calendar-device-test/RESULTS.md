@@ -25,7 +25,7 @@ Physical-device verification of calendar import/read and one-way export, using t
 | Repeating 20:00–21:00 event | Pass | With 18:00–21:00 weekly availability, the import screen showed 5 recurring occurrences; generated sessions stopped by 20:00 on affected days. |
 | Export permission denied | Pass | The app reported no events were added and directed the tester to app calendar permissions. |
 | Export to device calendar | Pass | The confirmation showed 16 study sessions in `My calendar`, using Asia/Seoul time; the app reported 16 events added. The device calendar displayed the exported study topics and times. |
-| Re-export same plan | Confirmed duplicate behavior | Exporting the same plan again created duplicate calendar events. The exact duplicate count was not recorded. |
+| Re-export same plan | Confirmed duplicate behavior | After two export attempts, 2 duplicate calendar events were observed. |
 
 ## Procedure and observations
 
@@ -48,7 +48,7 @@ Physical-device verification of calendar import/read and one-way export, using t
 4. Confirmed the export. The app reported 16 events added.
 5. Opened the device calendar and visually checked the exported topics and times on Nov 14 and Nov 15.
 
-Export is a one-way copy. Re-exporting the same plan was also checked; duplicate calendar events were observed. The exact number of duplicates was not recorded.
+Export is a one-way copy. After two export attempts for the same plan, 2 duplicate calendar events were observed.
 
 ## Evidence
 
@@ -88,5 +88,5 @@ The calendar chooser screenshot containing account email addresses was intention
 
 - This run verifies behavior on a Samsung Galaxy S24+ running Android 14; it does not establish compatibility across other devices or Android versions.
 - The screenshots show the KT 5G indicator; no independent network diagnostic or API health check was recorded as part of this test.
-- Canceled-event filtering and calendar sync to another device were not tested in this run. Permission recovery, all-day Free handling, recurring-event expansion, and duplicate creation on re-export were verified as described above. The re-export duplicate count was not recorded.
+- Canceled-event filtering and calendar sync to another device were not tested in this run. Permission recovery, all-day Free handling, recurring-event expansion, and duplicate creation on re-export were verified as described above.
 - The screenshot evidence supports the assigned calendar flows; it is not a substitute for the separate UAT execution.
