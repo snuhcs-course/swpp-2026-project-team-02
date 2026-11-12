@@ -88,5 +88,5 @@ The calendar chooser screenshot containing account email addresses was intention
 
 - This run verifies behavior on a Samsung Galaxy S24+ running Android 14; it does not establish compatibility across other devices or Android versions.
 - The screenshots show the KT 5G indicator; no independent network diagnostic or API health check was recorded as part of this test.
-- Canceled-event filtering and calendar sync to another device were not tested in this run. Permission recovery, all-day Free handling, recurring-event expansion, and duplicate creation on re-export were verified as described above.
+- Canceled-event filtering was excluded from physical-device verification: sending the Google Calendar cancellation email removed the event from Google Calendar immediately, leaving no stable canceled event for the app to read. The filtering rule is covered by the repository test. Calendar sync to another device was also not tested. Permission recovery, all-day Free handling, recurring-event expansion, and duplicate creation on re-export were verified as described above.
 - The screenshot evidence supports the assigned calendar flows; it is not a substitute for the separate UAT execution.
