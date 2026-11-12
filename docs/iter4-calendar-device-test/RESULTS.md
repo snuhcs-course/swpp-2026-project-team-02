@@ -19,7 +19,10 @@ Physical-device verification of calendar import/read and one-way export, using t
 |---|---|---|
 | Read permission denied | Pass | The app reported that calendar data was not applied and offered permission retry / app settings guidance. |
 | Read permission granted | Pass | The app showed 2 reflected events and 1 all-day event. |
-| Planner respects imported events | Pass | The plan showed the all-day external event on Nov 13 and the timed event on Nov 14, 20:00–21:00; study sessions did not overlap them. |
+| App-settings permission recovery | Pass | After permission was denied, calendar access was re-enabled in app settings; returning to the app and retrying the import succeeded. |
+| Existing timed event | Pass | The 20:00–21:00 event appeared as an external event, and study sessions ended by 20:00. |
+| All-day Free event | Pass | The Free all-day event did not block the full date; study sessions were scheduled on that date. |
+| Repeating 20:00–21:00 event | Pass | With 18:00–21:00 weekly availability, the import screen showed 5 recurring occurrences; generated sessions stopped by 20:00 on affected days. |
 | Export permission denied | Pass | The app reported no events were added and directed the tester to app calendar permissions. |
 | Export to device calendar | Pass | The confirmation showed 16 study sessions in `My calendar`, using Asia/Seoul time; the app reported 16 events added. The device calendar displayed the exported study topics and times. |
 
@@ -32,7 +35,9 @@ Physical-device verification of calendar import/read and one-way export, using t
 3. Confirmed the app showed the permission-denied guidance, including retry and app-settings actions.
 4. Opened app settings from the denied-permission guidance, re-enabled calendar access, returned to the app, and retried the import.
 5. Confirmed the screen reported **반영한 일정 2개** and **종일 일정 1개**.
-6. Generated a plan and compared the imported busy events with the plan. The plan displayed an all-day external event on Nov 13 and a timed external event on Nov 14 from 20:00 to 21:00. Study blocks on Nov 14 ended by 20:00, so they did not overlap the timed event; no study block appeared on the all-day date.
+6. Checked the existing timed event scenario. The 20:00–21:00 event was shown as an external event, and study sessions did not overlap it.
+7. Checked an all-day event marked Free. The planner scheduled study sessions on that date instead of blocking the whole day.
+8. Checked a repeating 20:00–21:00 event against 18:00–21:00 weekly availability. The import summary showed 5 recurring occurrences, and generated study sessions stopped by 20:00 on affected days.
 
 ### Calendar export
 
@@ -54,6 +59,15 @@ The calendar chooser screenshot containing account email addresses was intention
 ![Calendar read permission prompt](evidence/02-calendar-read-permission-prompt.png)
 ![Calendar read denied guidance](evidence/03-calendar-read-denied-guidance.png)
 ![Imported calendar counts](evidence/04-calendar-read-counts.png)
+![Recurring event import count](evidence/13-recurring-event-import-count.png)
+
+### Calendar scenario outcomes
+
+![Existing timed event plan example](evidence/14-existing-event-plan-nov-15.png)
+![Existing timed event plan across two dates](evidence/15-existing-event-plan-nov-14-15.png)
+![Plan with an all-day Free event](evidence/16-free-all-day-plan.png)
+![All-day and evening event plan example](evidence/17-all-day-plan-with-evening-event.png)
+![Source recurring event in device calendar](evidence/18-recurring-test-source-event.png)
 
 ### Plan and export
 
@@ -71,7 +85,7 @@ The calendar chooser screenshot containing account email addresses was intention
 
 ## Limitations
 
-- The device model and Android version were not captured, so broad device compatibility is not established by this run.
+- This run verifies behavior on a Samsung Galaxy S24+ running Android 14; it does not establish compatibility across other devices or Android versions.
 - The screenshots show the KT 5G indicator; no independent network diagnostic or API health check was recorded as part of this test.
-- Recurring-event expansion, free/canceled event filtering, calendar sync to another device, and repeated-export duplication were not tested in this run. Permission recovery through app settings and retry was verified as described above.
+- Canceled-event filtering, calendar sync to another device, and repeated-export duplication were not tested in this run. Permission recovery, all-day Free handling, and recurring-event expansion were verified as described above.
 - The screenshot evidence supports the assigned calendar flows; it is not a substitute for the separate UAT execution.
