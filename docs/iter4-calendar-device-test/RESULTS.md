@@ -6,7 +6,7 @@
 **Source:** `main` at `e1f5cc3`
 **APK:** `team2-iter4-live-release-e1f5cc3.apk`, version `0.1.0`
 **APK SHA-256:** `3CD17B13F8D872B2BC3B3E8372C2AC16E8D41DFDE912ED35F95AFE249E9C0A41`
-**Device / Android version:** Not captured
+**Device / Android version:** Samsung Galaxy S24+ / Android 14  
 **Network:** KT 5G (status-bar indicator)
 
 ## Scope
@@ -30,7 +30,7 @@ Physical-device verification of calendar import/read and one-way export, using t
 1. Started a new plan and opened the study-time screen.
 2. Tapped **캘린더 일정 불러오기** and denied `READ_CALENDAR` once.
 3. Confirmed the app showed the permission-denied guidance, including retry and app-settings actions.
-4. Granted calendar read permission and imported the test calendar data.
+4. Opened app settings from the denied-permission guidance, re-enabled calendar access, returned to the app, and retried the import.
 5. Confirmed the screen reported **반영한 일정 2개** and **종일 일정 1개**.
 6. Generated a plan and compared the imported busy events with the plan. The plan displayed an all-day external event on Nov 13 and a timed external event on Nov 14 from 20:00 to 21:00. Study blocks on Nov 14 ended by 20:00, so they did not overlap the timed event; no study block appeared on the all-day date.
 
@@ -73,5 +73,5 @@ The calendar chooser screenshot containing account email addresses was intention
 
 - The device model and Android version were not captured, so broad device compatibility is not established by this run.
 - The screenshots show the KT 5G indicator; no independent network diagnostic or API health check was recorded as part of this test.
-- Recurring-event expansion, free/canceled event filtering, calendar sync to another device, and repeated-export duplication were not tested in this run.
+- Recurring-event expansion, free/canceled event filtering, calendar sync to another device, and repeated-export duplication were not tested in this run. Permission recovery through app settings and retry was verified as described above.
 - The screenshot evidence supports the assigned calendar flows; it is not a substitute for the separate UAT execution.
