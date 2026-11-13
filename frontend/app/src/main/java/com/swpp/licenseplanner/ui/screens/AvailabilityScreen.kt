@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -369,7 +370,7 @@ private fun DayRow(
             InputBox(
                 if (entry.enabled) "${entry.durationMinutes}분" else "0분",
                 onEditDuration,
-                Modifier.width(92.dp),
+                Modifier.width(92.dp).testTag("study-duration-${day.key}"),
             )
             StepperButton(
                 R.drawable.ic_plus,

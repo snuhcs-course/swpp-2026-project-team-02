@@ -157,7 +157,7 @@ jobs:
           retention-days: 7
 
   android-live-e2e:
-    name: Android live E2E
+    name: Android UI and live E2E
     # Boot the emulator only after the quicker backend and Android checks succeed.
     needs: [backend, android]
     runs-on: ubuntu-24.04
@@ -204,7 +204,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           test -r /dev/kvm && test -w /dev/kvm
 
-      - name: Run Android live E2E on emulator
+      - name: Run demo UI and live E2E on emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           # API 35 is recognized as a compatible device by this project's
@@ -218,19 +218,22 @@ jobs:
             # through 10.0.2.2. Map its loopback port to the fixture explicitly.
             adb -s emulator-5554 reverse tcp:8000 tcp:8000
             adb -s emulator-5554 reverse --list
-            bash -lc 'cd frontend && bash ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1'
+            bash -lc 'cd frontend || exit 1; result=0; export ANDROID_SERIAL=emulator-5554; bash ./gradlew --no-daemon :app:connectedDemoDebugAndroidTest --console=plain -Pandroid.testInstrumentationRunnerArguments.class=com.swpp.licenseplanner.ui.MainFlowUiTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || result=1; mkdir -p app/build/compose-ui-diagnostics; adb -s emulator-5554 exec-out run-as com.swpp.licenseplanner.demo tar -C files/compose-ui-diagnostics -cf - . | tar -xf - -C app/build/compose-ui-diagnostics || true; bash ./gradlew --no-daemon :app:connectedLiveDebugAndroidTest --console=plain -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1 || result=1; exit "$result"'
 
       - name: Print fixed live-backend fixture log
         if: always()
         shell: bash
         run: cat "$GITHUB_WORKSPACE/backend/fixed-live-e2e.log"
 
-      - name: Upload Android live E2E evidence
+      - name: Upload Android UI and live E2E evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-live-e2e-evidence
           path: |
+            frontend/app/build/outputs/androidTest-results/connected/debug/flavors/demo/
+            frontend/app/build/reports/androidTests/connected/debug/flavors/demo/
+            frontend/app/build/compose-ui-diagnostics/
             frontend/app/build/outputs/androidTest-results/connected/debug/flavors/live/
             frontend/app/build/reports/androidTests/connected/debug/flavors/live/
             backend/fixed-live-e2e.log

@@ -62,13 +62,16 @@ offline backend unit suites in `backend/tests/` with coverage (not the scenario
 runners in `backend/scenarios/`) plus unit tests for the evidence validator in
 `scripts/tests/`, and the Android unit tests, request contract check, coverage,
 debug APK builds, and lint. Only after both of those jobs succeed, a third job
-starts the fixed-response backend fixture and runs the live-flavor
-instrumentation test on an API 35 emulator, using an emulator action pinned to a
-full commit SHA. Commands and report locations are in
+starts the fixed-response backend fixture and runs the demo Compose UI suite
+and the live API instrumentation suite on one API 35 emulator, using an emulator
+action pinned to a full commit SHA. Both suites are attempted and either failure
+fails the job; separate reports and UI diagnostics are retained. Commands and
+report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
 [`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key or
-deployed server, so it does not verify live model planning or the Android UI
-screens.
+deployed server. Demo UI tests cover screen interactions with local demo
+behavior; live instrumentation covers controlled API integration. Neither
+verifies live model planning, production activity wiring or physical devices.
 
 ## Deployment
 

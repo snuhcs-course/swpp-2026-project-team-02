@@ -83,12 +83,76 @@ the job succeeds; both are kept 7 days. No minimum coverage is enforced.
 Gradle may report test tasks as `UP-TO-DATE` and skip them when nothing
 changed; CI starts from a fresh checkout, so its tests always run.
 
+### Demo Compose UI tests
+
+`app/src/androidTestDemo/.../ui/MainFlowUiTest.kt` mounts the real navigation,
+screens and ViewModel in a standard Compose test activity, using production demo
+repositories and the AtomicFile store in a fresh test-owned directory. Four cases cover:
+
+- Creation through all 18 loaded questions, unknown-answer scores, authored-example
+  disclosure, weekday minutes entry, written/demo plan rows, week bounds and home count.
+- Disabled progression for missing certification, equal/reversed dates, an unanswered
+  question and empty availability; ordinary valid corrections enable progression.
+- Replacing a normal answer with unknown and retaining that sole selection through
+  forward navigation and the activity's system Back dispatcher.
+- Generating, restoring from saved bytes with fresh navigation/ViewModel/store,
+  selecting and automatically adjusting a row, and reopening the saved new time.
+  Saved-row comparisons confirm only the target times changed; restoration does not
+  replay adjustment or retain a transient success marker.
+
+No backend, model, calendar permissions, account or events are needed. Fixed input
+dates and host locale/timezone make the cases repeatable. Each test removes only
+its own plan directory after disposing navigation and clearing its ViewModel owner.
+This injected host bypasses `MainActivity.Factory`; it does not verify production
+activity wiring, process death, live Compose behavior or physical-device behavior.
+
+Before installing or running connected tests, use `adb devices -l` and confirm
+exactly one attached, disposable API 35 AVD (the CI baseline). The current
+Espresso dependency fails input-injection initialization on the local API 37 image.
+Extra, offline, unauthorized or physical devices block this procedure. Connected tasks may replace/uninstall packages;
+never use a device containing a user's app installation. Then run from `frontend/`:
+
+```bash
+export ANDROID_SERIAL=<disposable-emulator-serial>
+bash ./gradlew --no-daemon :app:connectedDemoDebugAndroidTest --console=plain \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.swpp.licenseplanner.ui.MainFlowUiTest \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+```
+
+The leave-installed option retains only these disposable test packages so private
+diagnostics can be pulled after Gradle finishes; stop/delete the throwaway AVD after
+collecting evidence. Do not enable it on a user device.
+
+For one case, append `#<methodName>` to the class filter. In Android Studio select
+`demoDebug` and run this class under `app/src/androidTestDemo` as instrumented tests
+on the disposable AVD. The class is absent from live instrumentation. The shared
+`CalendarProviderIntegrationTest` remains separate; the class filter above excludes
+it and avoids its real provider operations.
+
+Demo XML results are under `app/build/outputs/androidTest-results/connected/debug/flavors/demo/`
+and HTML reports under `app/build/reports/androidTests/connected/debug/flavors/demo/`.
+On assertion failure, the test writes a semantics tree and screenshot to the demo
+app's private `files/compose-ui-diagnostics/<method>/failure.{txt,png}`. Creation and
+adjustment also save representative screenshots there for visual inspection. Pull
+only this test-owned directory before any uninstall, from `frontend/`:
+
+```bash
+mkdir -p app/build/compose-ui-diagnostics
+adb -s "$ANDROID_SERIAL" exec-out run-as com.swpp.licenseplanner.demo \
+  tar -C files/compose-ui-diagnostics -cf - . | tar -xf - -C app/build/compose-ui-diagnostics
+```
+
+The existing gated `android-live-e2e` job runs this filtered demo suite and the live
+suite on the same API 35 emulator, attempts both despite assertion failures, and
+fails if either fails. Its always-run evidence upload preserves separate reports,
+explicitly pulled UI diagnostics and fixture logs for seven days. A local pass
+does not establish a hosted run; hosted execution remains unverified until observed.
+
 ### Live instrumentation test
 
-`app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` is the only
-instrumentation test. It sits in the live flavor's source set, so only
-`connectedLiveDebugAndroidTest` runs it; demo instrumentation has no tests and
-contacts no server. It loads the 18 onboarding questions, submits all of them
+`app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` sits in the live flavor's
+source set, so only `connectedLiveDebugAndroidTest` discovers this API test;
+demo instrumentation contacts no server. It loads the 18 onboarding questions, submits all of them
 (some answered 모르겠음), checks that the plan covers the topics of both written
 subjects, adjusts one study session, checks that the whole moved session ends
 by the plan's exam date and that no other row changed, and reads the plan back
@@ -108,9 +172,8 @@ fails rather than skipping. Use a disposable emulator:
 python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
 # in another terminal
 adb -s <test-device> reverse tcp:8000 tcp:8000
-# from frontend/: live only, or the aggregate (demo has no instrumentation tests)
+# from frontend/: live API test (shared provider tests require their own device setup)
 bash ./gradlew --no-daemon connectedLiveDebugAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
-bash ./gradlew --no-daemon connectedAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 ```
 
 For manual controlled-live checks on a disposable emulator (current dates,
@@ -132,9 +195,10 @@ adb -s <test-device> reverse tcp:8000 tcp:8000
 bash ./gradlew --no-daemon assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 ```
 
-CI's `android-live-e2e` job runs the live command the same way on an API 35
-emulator. This is controlled integration evidence, not evidence about the
-model or the deployed server.
+CI's `android-live-e2e` job preserves the `connectedLiveDebugAndroidTest` command above alongside the filtered demo
+UI suite on an API 35 emulator. The live suite exercises repositories/API rather
+than Compose screens. It supplies controlled integration evidence, not evidence
+about the model or the deployed server.
 
 ## Flavors
 
@@ -898,11 +962,11 @@ These checks show how the app handles the scripted responses. They are not
 evidence about the real backend or model.
 
 Passing CI's unit tests, contract check, coverage, build, and lint is offline
-evidence only. CI's separate live E2E job runs the
-[live instrumentation test](#live-instrumentation-test) on an emulator against
-the fixed-response backend fixture; it does not run live model planning, the
-deployed server, or the UI screens. Those still need the manual live and
-emulator checks above.
+evidence only. CI's separate gated emulator job runs the backend-free
+[demo Compose UI tests](#demo-compose-ui-tests) and the
+[live instrumentation test](#live-instrumentation-test) against the fixed-response
+backend fixture. Live model planning, the deployed server and live UI/device
+behavior still need the manual live and emulator checks above.
 
 ## Evaluation inputs
 
