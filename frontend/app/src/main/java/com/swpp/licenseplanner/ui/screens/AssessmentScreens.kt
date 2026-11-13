@@ -132,7 +132,7 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
         onNav = onBack,
         footer = { PrimaryButton("공부 시간 정하기", onContinue) },
     ) {
-        Heading("로컬 예시 문항 점수", "${questions.size}문항 중 ${correct}문항 정답. ‘모르겠음’은 0점이에요.")
+        Heading("예시 문항 결과", "${questions.size}문항 중 ${correct}문항 정답. ‘모르겠음’은 0점이에요.")
         OutlinedCard {
             for (score in Scoring.topicScores(questions, form.answers)) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -144,9 +144,6 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
                 }
             }
         }
-        Note(
-            "앱 안에서 예시 문항 번호로 나눈 단원과 점수예요. 서버의 통계가 아니며, " +
-                "계획을 만드는 플래너는 주제를 다르게 분류할 수 있어요.",
-        )
+        Note("단원별 예시 문항 점수예요. 공부 계획의 단원 구분은 이 결과와 다를 수 있어요.")
     }
 }
