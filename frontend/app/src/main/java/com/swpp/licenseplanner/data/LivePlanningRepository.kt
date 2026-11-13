@@ -28,11 +28,11 @@ class LivePlanningRepository(
             .build()
         return when (val outcome = client.executeApi(httpRequest, io)) {
             is HttpOutcome.Failed -> PlanOutcome.Failure(outcome.error)
-            is HttpOutcome.Ok -> parse(outcome.body)
+            is HttpOutcome.Ok -> parse(outcome.body, request)
         }
     }
 
-    private fun parse(body: String): PlanOutcome {
+    private fun parse(body: String, request: StudyPlanRequest): PlanOutcome {
         val response = try {
             ApiJson.decodeFromString(StudyPlanResponse.serializer(), body)
         } catch (error: Exception) {
@@ -44,6 +44,11 @@ class LivePlanningRepository(
             start == null || end == null || !end.isAfter(start)
         }
         if (badRow != null) return PlanOutcome.Failure(ApiError.InvalidResponse("invalid schedule row ${badRow.scheduleId}"))
+        // A returned context must be exactly the submitted one; an older server may omit it.
+        val snapshot = response.availabilitySnapshot
+        if (snapshot != null && AvailabilityWire.context(snapshot).let { it == null || it != AvailabilityWire.context(request) }) {
+            return PlanOutcome.Failure(ApiError.InvalidResponse("availability snapshot does not match the request"))
+        }
         return PlanOutcome.Success(response, isDemo = false)
     }
 

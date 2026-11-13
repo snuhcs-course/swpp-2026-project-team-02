@@ -82,15 +82,15 @@ class LiveAdjustmentRepositoryTest {
               {"schedule_id":"study-1","start_date":"2026/10/05/18/00","end_date":"2026/10/05/19/00","topic":"함수와 데이터 관리"},
               {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
               {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
-             "exam_date":"${originalA.examDate}"}
+             "weekly_availability":{"monday":[{"start":"18:00","duration_minutes":120}]},
+             "exam_date":"${originalA.examDate}","availability_overrides":{}}
         """).jsonObject
         assertEquals(expected, sent)
         // A's windows and exam date, not the edited form's.
         assertTrue(formB.weeklyAvailability != originalA.weeklyAvailability)
         assertEquals("2026/11/16/00/00", originalA.examDate)
         assertTrue(formB.examDate != originalA.examDate)
-        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
+        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date", "availability_overrides"), sent.keys)
     }
 
     @Test
@@ -481,5 +481,74 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
         reload(null)
         assertEquals(listOf("GET", "GET", "GET"), List(server.requestCount) { server.takeRequest().method })
+    }
+
+    // --- Manual mode ---
+
+    private val chosen = java.time.LocalDateTime.of(2026, 10, 13, 14, 0)
+    private val manualInput = input.copy(manualMove = ManualMove(chosen, confirmOutsideAvailability = true))
+    private val movedRow = """{"schedule_id":"study-1","start_date":"2026/10/13/14/00","end_date":"2026/10/13/15/00","topic":"함수와 데이터 관리"}"""
+    private val otherRows = """
+        {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
+        {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}
+    """.trimIndent()
+
+    @Test
+    fun manualMoveSendsTheReviewedDestinationOnceAndAcceptsOnlyThatResult() {
+        server.enqueue(MockResponse().setBody(body("$movedRow,$otherRows", extra = ""","tool_calls":[]""")))
+        val success = adjust(with = manualInput) as AdjustmentOutcome.Success
+        assertEquals("2026/10/13/15/00", success.response.schedules.single { it.scheduleId == "study-1" }.endDate)
+        val sent = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("manual", sent["mode"]!!.toString().trim('"'))
+        assertEquals("2026/10/13/14/00", sent["new_start_date"]!!.toString().trim('"'))
+        assertEquals("true", sent["confirm_outside_availability"].toString())
+        assertEquals(originalA.preparationStart, sent["preparation_start"]!!.toString().trim('"'))
+        assertEquals(1, server.requestCount)
+        // The automatic request carries none of the manual fields.
+        server.enqueue(MockResponse().setBody(body()))
+        adjust()
+        val automatic = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(listOf("mode", "new_start_date", "confirm_outside_availability", "preparation_start").none { it in automatic })
+    }
+
+    @Test
+    fun manualSuccessThatDiffersFromTheReviewedActionIsUncertain() {
+        val otherDestination = movedRow.replace("13/14/00", "13/16/00").replace("13/15/00", "13/17/00")
+        val longer = movedRow.replace("2026/10/13/15/00", "2026/10/13/15/30")
+        val otherTopic = movedRow.replace("함수와 데이터 관리", "다른 주제")
+        val otherRowMoved = otherRows.replace("2026/10/07/18/00", "2026/10/07/20/00").replace("2026/10/07/19/00", "2026/10/07/21/00")
+        val cases = listOf(
+            "$otherDestination,$otherRows", "$longer,$otherRows", "$otherTopic,$otherRows",
+            "$movedRow,$otherRowMoved", movedRow,
+        )
+        for (rowsJson in cases) {
+            server.enqueue(MockResponse().setBody(body(rowsJson)))
+            val error = (adjust(with = manualInput) as AdjustmentOutcome.Failure).error
+            assertTrue(rowsJson, error is ApiError.InvalidResponse)
+            assertTrue(error.requiresReload())
+        }
+    }
+
+    @Test
+    fun manualRejectionCodesStayDistinctAndOnlyExactPairsAreTyped() {
+        for (reason in com.swpp.licenseplanner.domain.ManualMoveRejection.entries) {
+            server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"${reason.code}","message":"x"}}"""))
+            val error = (adjust(with = manualInput) as AdjustmentOutcome.Failure).error
+            assertEquals(ApiError.ManualMoveRejected(reason), error)
+            assertFalse(error.requiresReload())
+        }
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"bad"}}"""))
+        assertEquals(ApiError.InvalidInput("bad"), (adjust(with = manualInput) as AdjustmentOutcome.Failure).error)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"OUTSIDE_STUDY_WINDOWS","message":"x"}}"""))
+        assertEquals(ApiError.ServerFailure(409), (adjust(with = manualInput) as AdjustmentOutcome.Failure).error)
+    }
+
+    @Test
+    fun returnedSnapshotMustBeThePlansOriginalContext() {
+        val original = """"availability_snapshot":{"weekly_availability":{"monday":[{"start":"18:00","duration_minutes":120,"end":"20:00"}]},"availability_overrides":{}}"""
+        server.enqueue(MockResponse().setBody(body(extra = ",$original")))
+        assertTrue(adjust() is AdjustmentOutcome.Success)
+        server.enqueue(MockResponse().setBody(body(extra = ",${original.replace("\"duration_minutes\":120,\"end\":\"20:00\"", "\"duration_minutes\":60,\"end\":\"19:00\"")}")))
+        assertTrue((adjust() as AdjustmentOutcome.Failure).error is ApiError.InvalidResponse)
     }
 }

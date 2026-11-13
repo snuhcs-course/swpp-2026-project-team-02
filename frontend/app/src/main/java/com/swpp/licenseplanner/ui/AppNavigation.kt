@@ -21,6 +21,7 @@ import com.swpp.licenseplanner.data.CalendarAccess
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
+import com.swpp.licenseplanner.ui.screens.AvailabilityActions
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
@@ -31,6 +32,7 @@ import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
+import com.swpp.licenseplanner.ui.screens.ProfileActions
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
@@ -174,6 +176,12 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
+                    onManual = { viewModel.startManualMove() },
+                    onManualPick = viewModel::setManualStart,
+                    onManualSubmit = { viewModel.submitManualMove() },
+                    onManualConfirm = { viewModel.confirmOutsideAvailability() },
+                    onManualRevise = viewModel::reviseManualMove,
+                    onManualCancel = viewModel::cancelManualMove,
                 )
             }
         }
@@ -208,14 +216,31 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
         composable(Routes.AVAILABILITY) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
+            val availabilityWeek by viewModel.availabilityWeek.collectAsStateWithLifecycle()
+            val profile by viewModel.profile.collectAsStateWithLifecycle()
             AvailabilityScreen(
                 form = form,
+                selectedWeek = availabilityWeek,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
                 calendarRead = calendarRead,
-                onEnable = viewModel::setDayEnabled,
-                onStep = viewModel::stepDuration,
-                onStart = viewModel::setDayStart,
+                profile = profile.takeIf { viewModel.profileAvailable },
+                actions = AvailabilityActions(
+                    onEnable = viewModel::setDayEnabled,
+                    onStep = viewModel::stepDuration,
+                    onStart = viewModel::setDayStart,
+                    onDuration = { day, minutes, week -> viewModel.setDuration(day, minutes, week) },
+                    onShowWeek = { viewModel.showAvailabilityWeek(it) },
+                    onReplaceWeek = { viewModel.replaceWeek(it) },
+                    onClearWeek = { viewModel.clearWeek(it) },
+                    onResetWeek = { viewModel.resetWeek(it) },
+                ),
+                profileActions = ProfileActions(
+                    onLoad = { viewModel.loadProfile() },
+                    onSave = { viewModel.saveProfile() },
+                    onAccept = viewModel::acceptProfile,
+                    onDismiss = viewModel::dismissProfile,
+                ),
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
                 onReadCalendar = { viewModel.startCalendarRead() },

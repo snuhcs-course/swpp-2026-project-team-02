@@ -34,6 +34,7 @@ import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.reloadMessage
 import com.swpp.licenseplanner.ui.theme.Ink
+import java.time.LocalDateTime
 
 /**
  * What the adjustment screen offers. Recovery comes from the stored plan, so reopening a plan
@@ -83,6 +84,8 @@ private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
  * Requests wait while the plans are being saved or after a failed save; viewing does not.
  * Plans that can be viewed without a recovery step also offer the calendar export of their
  * [exportCount] study sessions, beside the adjustment actions; [exportBlock] disables it.
+ * The selected session can instead be moved to a chosen time ([onManual]); while that draft is
+ * open its editor replaces this screen, and the shown week is kept for the return.
  */
 @Composable
 fun PlanAdjustmentScreen(
@@ -99,6 +102,12 @@ fun PlanAdjustmentScreen(
     exportCount: Int,
     exportBlock: ExportBlock?,
     onExport: () -> Unit,
+    onManual: () -> Unit,
+    onManualPick: (LocalDateTime) -> Unit,
+    onManualSubmit: () -> Unit,
+    onManualConfirm: () -> Unit,
+    onManualRevise: () -> Unit,
+    onManualCancel: () -> Unit,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
@@ -124,12 +133,33 @@ fun PlanAdjustmentScreen(
             else -> Unit
         }
     }
+    val manualSession = manualSession(plan, selection, mode)
+    if (manualSession != null) {
+        ManualMoveScreen(
+            plan = plan,
+            session = manualSession,
+            selection = selection,
+            storage = storage,
+            onPick = onManualPick,
+            onSubmit = onManualSubmit,
+            onConfirm = onManualConfirm,
+            onRevise = onManualRevise,
+            onRetry = onRetry,
+            onCancel = onManualCancel,
+            onRetrySave = onRetrySave,
+        )
+        return
+    }
     val shownIndex = weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0))
     val week = weeks.getOrNull(shownIndex)
     val summary = shownSummary(plan, state)
     // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
     val exportAction: @Composable () -> Unit = {
         if (exportBlock != ExportBlock.NoStudy) SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
+    }
+    // A separate action on the same selected study session; never offered while a request runs.
+    val manualAction: @Composable () -> Unit = {
+        SecondaryButton("시간 직접 옮기기", onManual, enabled = !loading && selection.failedScheduleId != null && canSend)
     }
 
     AppScreen(
@@ -159,11 +189,13 @@ fun PlanAdjustmentScreen(
                 AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onBack)
                 AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure) {
                     PrimaryButton("다시 시도", onRetry, enabled = canSend)
+                    manualAction()
                     exportAction()
                     SecondaryButton("목록으로", onBack)
                 } else if (state == AdjustmentState.DemoNoSlot) {
                     // The same selection would give the same result; another session or a new plan can.
                     PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
+                    manualAction()
                     exportAction()
                     SecondaryButton("목록으로", onBack)
                     SecondaryButton("새 계획 만들기", onCreate)
@@ -174,6 +206,7 @@ fun PlanAdjustmentScreen(
                         enabled = !loading && selection.failedScheduleId != null && canSend,
                         subtitle = if (!loading && selection.failedScheduleId == null) "놓친 공부 일정을 하나 골라 주세요" else null,
                     )
+                    manualAction()
                     exportAction()
                 }
             }

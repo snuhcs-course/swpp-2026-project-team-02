@@ -1,5 +1,12 @@
 package com.swpp.licenseplanner.ui
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import com.swpp.licenseplanner.data.RequestMapper
+import com.swpp.licenseplanner.data.PlanSnapshotCodec
+import com.swpp.licenseplanner.data.MappingResult
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -24,6 +31,7 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.Weekday
@@ -50,6 +58,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 /**
  * Saving and restoring the plan collection. A restart is a new view model over the same
@@ -124,8 +133,8 @@ class PlanPersistenceViewModelTest {
         }
     }
 
-    private val mondayWindows = mapOf("monday" to listOf(TimeWindow("18:00", "20:00")))
-    private val wednesdayWindows = mapOf("wednesday" to listOf(TimeWindow("18:00", "19:00")))
+    private val mondayWindows = mapOf("monday" to listOf(TimeWindow("18:00", durationMinutes = 120)))
+    private val wednesdayWindows = mapOf("wednesday" to listOf(TimeWindow("18:00", durationMinutes = 60)))
     private val fileA = "license_planner/output/study_plan_a.csv"
     private val fileB = "license_planner/output/study_plan_b.csv"
     private val rowsA = listOf(
@@ -237,6 +246,34 @@ class PlanPersistenceViewModelTest {
 
         val (third, _) = open()
         assertEquals(second.plans.value, third.plans.value)
+    }
+
+    @Test fun versionOneCollectionIsRestoredUnchangedAndUpgradedOnlyByTheNextSave() = runTest(dispatcher) {
+        // Two plans as an earlier build saved them: version 1 with same-day start/end windows.
+        val legacyA = TestFixtures.completeState().let { (RequestMapper.map(it) as MappingResult.Ready).request }
+            .copy(weeklyAvailability = mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))))
+        val legacyB = legacyA.copy(weeklyAvailability = mapOf("wednesday" to listOf(TimeWindow("18:00", "19:00"))))
+        val plans = PlanSnapshot(listOf(SessionPlan.register(1, legacyA, planA, false), SessionPlan.register(2, legacyB, planB, false)))
+        val v2 = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(plans, liveScope)).jsonObject
+        val v1 = JsonObject(v2 + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(v2.getValue("entries").jsonArray.map { entry ->
+            val original = entry.jsonObject.getValue("original").jsonObject
+            JsonObject(entry.jsonObject + ("original" to JsonObject(original - "availability_overrides")))
+        })))
+        val legacyBytes = v1.toString().encodeToByteArray()
+        disk.committed = legacyBytes.copyOf()
+
+        val (vm, store) = open(FakePlanning(PlanOutcome.Success(planB, false)))
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(plans.plans, vm.plans.value)
+        assertEquals(0, store.saves)
+        assertArrayEquals(legacyBytes, disk.committed)
+
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
+        assertEquals(JsonPrimitive(2), saved["version"])
+        assertEquals(plans.plans + vm.plan(3), restoredNow())
+        assertEquals(mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))), restoredNow()[0].original.weeklyAvailability)
     }
 
     @Test fun restartRestoresAcceptedUpdatesRecoveryAndMissingStates() = runTest(dispatcher) {
@@ -531,7 +568,7 @@ class PlanPersistenceViewModelTest {
                 val sent = ApiJson.parseToJsonElement(requests[1].body.readUtf8()).jsonObject
                 assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])
                 assertEquals(ApiJson.parseToJsonElement(rowsJson(serverRows)), sent["schedules"])
-                assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+                assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","duration_minutes":120}]}"""), sent["weekly_availability"])
                 assertEquals(second.plans.value, restoredNow())
             } finally {
                 server.shutdown()
@@ -716,5 +753,101 @@ class PlanPersistenceViewModelTest {
         assertEquals(PlanRecovery.Ready, second.plan(1).recovery)
         assertTrue(second.plan(1).isDemo)
         assertTrue(open(scope = liveScope.replace("test", "other")).first.plans.value.isEmpty()) // another scope
+    }
+
+    // --- Chosen-time (manual) moves ---
+
+    private val chosen = LocalDateTime.of(2026, 10, 13, 14, 0)
+    private val manualA = rowsA.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/13/14/00", endDate = "2026/10/13/15/00") else it }
+
+    private fun PlanFormViewModel.openManualMove() {
+        select(1, "study-1")
+        assertTrue(startManualMove())
+        setManualStart(chosen)
+    }
+
+    @Test fun failedManualPreSaveSendsNothingAndTheExceptionMustBeConfirmedAgain() = runTest(dispatcher) {
+        val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
+        val adjustment = FakeAdjustment(outside, outside, AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
+        val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        vm.openManualMove()
+        assertTrue(vm.submitManualMove())
+        advanceUntilIdle()
+        val before = vm.plans.value
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+
+        store.failingSaves += store.saves + 1
+        assertTrue(vm.confirmOutsideAvailability())
+        assertFalse(vm.confirmOutsideAvailability())
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(AdjustmentState.Idle, vm.adjustment.value.state)
+        assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
+        assertEquals(before, vm.plans.value)
+        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.submitManualMove())
+        vm.retryAdjustment()
+
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(1, adjustment.inputs.size) // the save retry never submits
+        assertEquals(before, restoredNow())
+
+        assertTrue(vm.submitManualMove())
+        advanceUntilIdle()
+        assertTrue(vm.confirmOutsideAvailability())
+        advanceUntilIdle()
+        assertEquals(listOf(false, false, true), adjustment.inputs.map { it.manualMove!!.confirmOutsideAvailability })
+        assertTrue(adjustment.inputs.all { it.manualMove!!.newStart == chosen })
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(vm.plans.value, restoredNow())
+    }
+
+    @Test fun failedSaveAfterAManualMoveIsRetriedLocallyWithoutResending() = runTest(dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
+            val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), live)
+            generateAB(vm)
+            val planBBefore = vm.plan(2)
+            store.failingSaves += store.saves + 2 // the save after the response
+            server.enqueue(MockResponse().setBody(adjustedJson(manualA, "study-1")))
+
+            vm.openManualMove()
+            assertTrue(vm.submitManualMove())
+            assertFalse(vm.submitManualMove())
+            advanceUntilIdle()
+            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(manualA, vm.plan(1).current.schedules)
+            assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+
+            // A restart now restores the pre-request copy behind a reload gate and replays nothing.
+            val ifRestartedNow = restoredNow()
+            assertEquals(PlanRecovery.ReloadRequired to "study-1", ifRestartedNow[0].recovery to ifRestartedNow[0].recoveryScheduleId)
+            assertEquals(rowsA, ifRestartedNow[0].current.schedules)
+            assertEquals(planBBefore, ifRestartedNow[1])
+            val (restarted, _) = open(adjustment = live)
+            assertTrue(restarted.selectPlan(1))
+            assertFalse(restarted.startManualMove())
+            assertFalse(restarted.submitManualMove())
+
+            assertFalse(vm.startManualMove())
+            vm.retrySave()
+            advanceUntilIdle()
+            assertEquals(PlanStorage.Ready, vm.storage.value)
+            assertEquals(1, server.requestCount)
+            val resolved = restoredNow()
+            assertEquals(vm.plans.value, resolved)
+            assertEquals(PlanRecovery.Ready to null, resolved[0].recovery to resolved[0].recoveryScheduleId)
+            assertEquals(manualA, resolved[0].current.schedules)
+            assertEquals(mondayWindows, resolved[0].original.weeklyAvailability)
+            assertEquals(planBBefore, resolved[1])
+        } finally {
+            server.shutdown()
+        }
     }
 }

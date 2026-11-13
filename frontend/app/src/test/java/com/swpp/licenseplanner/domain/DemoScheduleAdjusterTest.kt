@@ -5,6 +5,7 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.TimeWindow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Local rule. 2026-10-19 is a Monday. */
@@ -129,5 +130,68 @@ class DemoScheduleAdjusterTest {
         val rows = listOf(ScheduleRow("external-1", "2026/10/20/09/00", "2026/10/20/10/00", ""))
         assertEquals(DemoAdjustment.InvalidTarget, DemoScheduleAdjuster.adjust(monWedFri, rows, "external-1"))
         assertEquals(DemoAdjustment.InvalidTarget, DemoScheduleAdjuster.adjust(monWedFri, rows, "study-9"))
+    }
+
+    // --- Effective windows and the manual policy ---
+
+    private fun d(start: String, minutes: Int) = TimeWindow(start, durationMinutes = minutes)
+
+    @Test
+    fun ninetyMinutesFitAFutureOverrideAcrossMidnightWithoutSplitting() {
+        val plan = request(mapOf("wednesday" to listOf(d("19:00", 60))))
+            .copy(availabilityOverrides = mapOf("2026/10/26" to mapOf("monday" to listOf(d("23:00", 90)))))
+        val rows = listOf(ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/19/30", "함수"))
+        assertEquals(
+            ScheduleRow("study-1", "2026/10/26/23/00", "2026/10/27/00/30", "함수"),
+            DemoScheduleAdjuster.adjust(plan, rows, "study-1").row("study-1"),
+        )
+    }
+
+    @Test
+    fun emptyOverrideWeekIsSkippedWithoutBaseFallback() {
+        val base = mapOf("monday" to listOf(d("20:00", 60)))
+        val rows = listOf(ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/19/00", "함수"))
+        assertEquals("2026/10/19/20/00", DemoScheduleAdjuster.adjust(request(base), rows, "study-1").row("study-1").startDate)
+        val emptyWeek = request(base).copy(availabilityOverrides = mapOf("2026/10/19" to emptyMap()))
+        assertEquals("2026/10/26/20/00", DemoScheduleAdjuster.adjust(emptyWeek, rows, "study-1").row("study-1").startDate)
+    }
+
+    private val manualRows = listOf(
+        ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/19/00", "함수"),
+        ScheduleRow("study-2", "2026/10/21/18/00", "2026/10/21/19/00", "함수"),
+        ScheduleRow("external-3", "2026/10/20/12/00", "2026/10/20/13/00", ""),
+    )
+    private val tuesday = request(mapOf("tuesday" to listOf(d("18:00", 60))))
+    private val now = java.time.LocalDateTime.of(2026, 10, 19, 12, 0)
+
+    private fun manual(start: String, confirm: Boolean = false, at: java.time.LocalDateTime = now) =
+        DemoScheduleAdjuster.moveManually(tuesday, manualRows, "study-1", WireDateTime.parseOrNull(start)!!, at, confirm)
+
+    private fun rejection(start: String, confirm: Boolean = false, at: java.time.LocalDateTime = now) =
+        (manual(start, confirm, at) as DemoManualAdjustment.Rejected).reason
+
+    @Test
+    fun manualMoveUsesTheChosenTimeAndKeepsDurationTopicAndOtherRows() {
+        val moved = manual("2026/10/20/18/00") as DemoManualAdjustment.Moved
+        assertEquals(ScheduleRow("study-1", "2026/10/20/18/00", "2026/10/20/19/00", "함수"), moved.schedules[0])
+        assertEquals(manualRows.drop(1), moved.schedules.drop(1))
+    }
+
+    @Test
+    fun manualMoveRejectionsMatchTheServerOrderAndConfirmationWaivesOnlyWindows() {
+        assertEquals(ManualMoveRejection.OutsideStudyWindows, rejection("2026/10/20/14/00"))
+        assertEquals("2026/10/20/14/00", ((manual("2026/10/20/14/00", confirm = true)) as DemoManualAdjustment.Moved).schedules[0].startDate)
+        for (confirm in listOf(false, true)) {
+            assertEquals(ManualMoveRejection.InPast, rejection("2026/10/19/11/59", confirm))
+            assertEquals(ManualMoveRejection.ExamBoundExceeded, rejection("2026/12/13/23/30", confirm))
+            assertEquals(ManualMoveRejection.StudySessionOverlap, rejection("2026/10/21/18/30", confirm))
+            assertEquals(ManualMoveRejection.ExternalEventOverlap, rejection("2026/10/20/12/30", confirm))
+        }
+        assertEquals(ManualMoveRejection.BeforePreparationStart,
+            rejection("2026/10/18/20/00", confirm = true, at = java.time.LocalDateTime.of(2026, 10, 1, 0, 0)))
+        // Adjacent rows, the exam end and the current minute itself are allowed.
+        for (start in listOf("2026/10/20/13/00", "2026/12/13/23/00", "2026/10/19/12/00")) {
+            assertTrue(start, manual(start, confirm = true) is DemoManualAdjustment.Moved)
+        }
     }
 }

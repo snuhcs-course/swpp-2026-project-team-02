@@ -4,6 +4,7 @@ import com.swpp.licenseplanner.data.model.ScheduleAdjustmentRequest
 import com.swpp.licenseplanner.data.model.ScheduleAdjustmentResponse
 import com.swpp.licenseplanner.data.model.StudyPlanListResponse
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -12,6 +13,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
+import java.time.Duration
 
 /**
  * `POST <base>/schedules/adjust` with the stored creation windows and exam time, and
@@ -32,7 +34,12 @@ class LiveAdjustmentRepository(
             scheduleId = input.scheduleId,
             schedules = input.schedules,
             weeklyAvailability = input.original.weeklyAvailability,
+            availabilityOverrides = input.original.availabilityOverrides,
             examDate = input.original.examDate,
+            mode = input.manualMove?.let { MANUAL },
+            newStartDate = input.manualMove?.let { WireDateTime.format(it.newStart) },
+            confirmOutsideAvailability = input.manualMove?.confirmOutsideAvailability,
+            preparationStart = input.manualMove?.let { input.original.preparationStart },
         )
         val body = OneShotBody(
             ApiJson.encodeToString(ScheduleAdjustmentRequest.serializer(), request)
@@ -44,17 +51,17 @@ class LiveAdjustmentRepository(
             .build()
         return when (val outcome = client.executeApi(httpRequest, io, planErrors = true)) {
             is HttpOutcome.Failed -> AdjustmentOutcome.Failure(outcome.error)
-            is HttpOutcome.Ok -> parse(outcome.body, request)
+            is HttpOutcome.Ok -> parse(outcome.body, request, input)
         }
     }
 
-    private fun parse(body: String, request: ScheduleAdjustmentRequest): AdjustmentOutcome {
+    private fun parse(body: String, request: ScheduleAdjustmentRequest, input: AdjustmentInput): AdjustmentOutcome {
         val response = try {
             ApiJson.decodeFromString(ScheduleAdjustmentResponse.serializer(), body)
         } catch (error: Exception) {
             return AdjustmentOutcome.Failure(ApiError.InvalidResponse(error.message))
         }
-        val problem = problemWith(response, request)
+        val problem = problemWith(response, request) ?: input.manualMove?.let { manualProblem(response, input, it) }
         if (problem != null) return AdjustmentOutcome.Failure(ApiError.InvalidResponse(problem))
         return AdjustmentOutcome.Success(
             StudyPlanResponse(
@@ -75,6 +82,37 @@ class LiveAdjustmentRepository(
         }
         scheduleRowProblem(response.schedules)?.let { return it }
         if (response.schedules.none { it.scheduleId == request.scheduleId }) return "target row ${request.scheduleId} is missing"
+        // A returned snapshot must be the plan's original context, never a rewritten profile.
+        val snapshot = response.availabilitySnapshot
+        if (snapshot != null && AvailabilityWire.context(snapshot).let {
+                it == null || it != AvailabilityWire.context(request.weeklyAvailability, request.availabilityOverrides)
+            }
+        ) {
+            return "availability snapshot does not match the plan's original context"
+        }
+        return null
+    }
+
+    /**
+     * A manual success must be exactly the reviewed action: only the target moved, to the chosen
+     * start, with its topic and duration; every other sent row unchanged and no row added or lost.
+     * Anything else is an uncertain result that requires a reload.
+     */
+    private fun manualProblem(response: ScheduleAdjustmentResponse, input: AdjustmentInput, move: ManualMove): String? {
+        val sent = input.schedules.associateBy { it.scheduleId }
+        val returned = response.schedules.associateBy { it.scheduleId }
+        if (sent.keys != returned.keys) return "manual move changed the set of rows"
+        if (sent.any { (id, row) -> id != input.scheduleId && returned[id] != row }) return "manual move changed another row"
+        val before = sent.getValue(input.scheduleId)
+        val after = returned.getValue(input.scheduleId)
+        val oldStart = WireDateTime.parseOrNull(before.startDate)
+        val oldEnd = WireDateTime.parseOrNull(before.endDate)
+        val expectedEnd = if (oldStart != null && oldEnd != null) move.newStart.plus(Duration.between(oldStart, oldEnd)) else null
+        if (after.topic != before.topic || after.startDate != WireDateTime.format(move.newStart) ||
+            expectedEnd == null || after.endDate != WireDateTime.format(expectedEnd)
+        ) {
+            return "manual move does not match the chosen time"
+        }
         return null
     }
 
@@ -127,6 +165,7 @@ class LiveAdjustmentRepository(
 
     companion object {
         const val RESCHEDULED_STUDY = "rescheduled_study"
+        const val MANUAL = "manual"
         private const val MISSING_IDENTITY = "이 계획에는 서버 계획 파일 정보가 없어 조정할 수 없어요."
     }
 }

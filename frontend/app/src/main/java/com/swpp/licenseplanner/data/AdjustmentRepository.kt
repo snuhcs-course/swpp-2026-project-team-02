@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.data
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import java.time.LocalDateTime
 
 /**
  * One adjustment, captured before sending and reused unchanged on retry.
@@ -14,7 +15,15 @@ data class AdjustmentInput(
     val scheduleCsvFile: String?,
     val schedules: List<ScheduleRow>,
     val scheduleId: String,
+    /** A reviewed chosen time; null for the automatic move. */
+    val manualMove: ManualMove? = null,
 )
+
+/**
+ * A chosen start for the target, reviewed by the learner. [confirmOutsideAvailability] is the
+ * explicit one-time exception for this destination only; it never waives bounds or overlaps.
+ */
+data class ManualMove(val newStart: LocalDateTime, val confirmOutsideAvailability: Boolean = false)
 
 sealed interface AdjustmentOutcome {
     /** The validated updated plan; [response] carries rows, CSV and an optional summary. */

@@ -5,12 +5,10 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.LocalTopics
-import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 import kotlin.math.ceil
 
 sealed interface DemoResult {
@@ -147,17 +145,18 @@ object DemoPlanner {
         busy: List<Pair<LocalDateTime, LocalDateTime>>,
     ): List<Pair<LocalDateTime, LocalDateTime>> {
         val first = WireDateTime.parseOrNull(request.preparationStart)?.toLocalDate() ?: return emptyList()
-        val exam = WireDateTime.parseOrNull(request.examDate)?.toLocalDate() ?: return emptyList()
-        val windows = Weekday.entries.associateWith { day ->
-            request.weeklyAvailability[day.key]?.firstOrNull()
-        }
+        val examAt = WireDateTime.parseOrNull(request.examDate) ?: return emptyList()
+        val exam = examAt.toLocalDate()
+        val context = AvailabilityWire.context(request) ?: return emptyList()
         val result = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
         var date: LocalDate = first
         while (date.isBefore(exam)) {
-            val window = windows[Weekday.entries[date.dayOfWeek.value - 1]]
+            // The date's own week decides its first window, which may run past midnight.
+            val window = context.windowsStarting(date).minByOrNull { it.start }
             if (window != null) {
-                val windowStart = date.atTime(LocalTime.parse(window.start))
-                val windowEnd = date.atTime(LocalTime.parse(window.end))
+                val interval = window.intervalOn(date)
+                val windowStart = interval.start
+                val windowEnd = minOf(interval.end, examAt)
                 val duration = Duration.between(windowStart, minOf(windowStart.plusMinutes(SESSION_MINUTES), windowEnd))
                 if (!duration.isNegative && !duration.isZero) {
                     freeStart(windowStart, windowEnd, duration, busy)?.let { start -> result += start to start.plus(duration) }

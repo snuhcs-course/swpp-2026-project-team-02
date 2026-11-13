@@ -5,9 +5,11 @@ module, minSdk 26, target SDK 36).
 
 **Flow:** home (계획 생성 / 계획 조정). Creation: select 컴퓨터활용능력 2급 →
 enter preparation start and exam dates → choose current level and answer example
-questions → set weekday study windows → generate a plan → browse it by week and
+questions → set weekday study windows (and optional per-week changes; see
+[Study availability](#study-availability)) → generate a plan → browse it by week and
 day. Adjustment: pick a plan saved on this device → mark one missed
-study session → see the updated plan. See [Plan adjustment](#plan-adjustment).
+study session → see the updated plan, or move that session to a time you
+choose (시간 직접 옮기기). See [Plan adjustment](#plan-adjustment).
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
 warning, “시험 일정 바꾸기” opens an editor with only the exam date. Confirming a
@@ -109,6 +111,25 @@ adb -s <test-device> reverse tcp:8000 tcp:8000
 # from frontend/: live only, or the aggregate (demo has no instrumentation tests)
 bash ./gradlew --no-daemon connectedLiveDebugAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 bash ./gradlew --no-daemon connectedAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
+```
+
+For manual controlled-live checks on a disposable emulator (current dates,
+availability load/save, manual moves), start the same fixture with
+`--planning scripted` and the isolation options described in
+`backend/README.md` (Fixed-response API fixture): `--storage-dir`,
+`--profile-seed`, `--now`, `--request-log` and `--test-control`. It never
+touches `backend/config/user_availability.json` or the real plan output, and
+calls no model:
+
+```bash
+# from backend/
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000 --planning scripted \
+  --storage-dir "$RUN/storage" --profile-seed "$RUN/seed.json" --now 2026/11/18/12/00 \
+  --request-log "$RUN/requests.jsonl" --test-control "$RUN/control.json"
+# in another terminal
+adb -s <test-device> reverse tcp:8000 tcp:8000
+# from frontend/
+bash ./gradlew --no-daemon assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 ```
 
 CI's `android-live-e2e` job runs the live command the same way on an API 35
@@ -390,6 +411,58 @@ allows a new attempt, and 목록으로 and 새 계획 만들기 are offered. The
 own windows never change; a new plan can use different study times. Nothing is
 sent to a server; the moved rows are saved on the device like any other change.
 
+**Chosen time (시간 직접 옮기기).** Next to 선택한 일정 조정하기, the
+adjustment screen offers a separate 시간 직접 옮기기 for the selected study
+session. It is enabled only when that plan could also be adjusted
+automatically: a study session (never an external row) is selected, the plan
+is ready (not awaiting reload, not missing, with a live identity), the
+device list is saved, and no request is running. It opens 시간 직접 옮기기
+(top bar 계획 조정) with the session's topic, a 날짜 field and a 시작 시간 field
+that open the existing date and time pickers, the original duration as
+read-only text (기존 공부 시간 · 60분 (그대로 유지)), and a preview of 기존 일정 and
+옮길 일정 as complete intervals (`11월 29일(일) 23:30–다음 날 00:30`). Fields start
+at the session's current time; 이 시간으로 옮기기 stays disabled
+(날짜나 시작 시간을 바꿔 주세요) until another time is chosen. Back or the top-bar
+arrow discards the draft without a request and returns to the same plan,
+week and selection. While the request runs, back and every action are held
+(옮기는 중…), and rotation keeps the draft and the request without sending it
+again, because the draft lives in the ViewModel.
+
+The app first sends the chosen time without the exception. If the time is
+otherwise valid but outside the plan's study windows, the screen asks
+설정한 공부 시간 밖이에요. with the exact interval (… 이번 일정만 옮길까요? 설정한 공부
+시간은 그대로예요.): 이번 한 번만 옮기기 resends that same time once with the
+exception, and 시간 다시 고르기 returns to the fields with the time kept and
+nothing sent (sending the same time again is checked from the start). Any
+change to the date or time clears an earlier question or exception. Other
+refusals are shown under the field they concern, keep the chosen time and
+disable 이 시간으로 옮기기 until the time changes; no refusal can be bypassed:
+
+| Server code | Shown under | Message |
+| --- | --- | --- |
+| `MANUAL_MOVE_IN_PAST` | 날짜 | 이미 지난 시간이에요. 앞으로의 시간을 골라 주세요. |
+| `BEFORE_PREPARATION_START` | 날짜 | 준비 시작일 전이에요. 준비 기간 안에서 날짜를 골라 주세요. |
+| `EXAM_BOUND_EXCEEDED` | 시작 시간 | 공부가 시험일을 넘겨요. 더 이른 시간을 골라 주세요. |
+| `STUDY_SESSION_OVERLAP` | 시작 시간 | 다른 공부 일정과 겹쳐요. 다른 시간을 골라 주세요. |
+| `EXTERNAL_EVENT_OVERLAP` | 시작 시간 | 캘린더에서 가져온 일정과 겹쳐요. 다른 시간을 골라 주세요. |
+| `OUTSIDE_STUDY_WINDOWS` | (question above) | one-time confirmation only |
+
+Every other outcome follows the automatic rules above: a definite failure
+(for example HTTP 500 or 503) keeps the chosen time and offers 다시 시도, which
+resends exactly the reviewed request; 404 `PLAN_NOT_FOUND`, any 409, a lost
+response or timeout, and a 200 that does not show exactly the target at the
+chosen time with the same topic and duration (and every other row unchanged)
+close the editor and require 최신 계획 불러오기, after which a session and time
+must be chosen again; nothing is replayed. The unresolved-request snapshot is
+saved before a live request as for automatic moves, and a failed save sends
+nothing and clears any exception. Success returns to the adjustment screen
+with 계획이 조정됐어요 and the moved session's week. The demo applies the same
+checks locally against the plan's original windows and the device clock and
+labels the editor 로컬 시연 계산. Neither flavor writes the device calendar or the
+shared availability profile. Live requests add `"mode": "manual"`,
+`new_start_date`, `confirm_outside_availability` and the plan's
+`preparation_start` to the fields below.
+
 **Live contract.** The app always sends five fields to
 `POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from
 generation, the chosen `schedule_id`, every current row (external rows
@@ -433,7 +506,8 @@ The app accepts a 200 response only if `action` is `rescheduled_study`,
 `target_schedule_id` matches, rows parse with end after start, IDs are
 nonblank and unique, the target row is present, and any returned
 `schedule_csv_file` equals the one sent. Anything else leaves the plan as it was.
-The app never sends the availability profile (`PUT /availability`).
+Adjustment never reads or writes the shared availability profile; only the
+explicit study-time actions in [Study availability](#study-availability) do.
 
 **Backend dependency** The backend in this checkout (merged from `main` at
 `11c822e`, plus the stored exam deadline described above) updates the selected
@@ -459,6 +533,73 @@ physical-device records cover real OpenRouter generation, viewing, adjustment,
 restart retention, and reload after a lost adjustment response. They do not
 attach the full two-plan same-file/CSV/original-window isolation procedure;
 that detailed gate remains unverified. See [Verification](#verification).
+
+## Study availability
+
+The study-time screen (공부 시간) edits one visible window per weekday: a start
+time (time picker) and a duration in minutes. The steppers change the duration in
+30-minute steps; tapping the minutes box opens 공부 시간 입력, which accepts any
+whole number from 1 to 1439 and shows the derived end before it is applied. A
+window that runs past midnight shows its end as `– 다음 날 00:30` and belongs to
+the weekday it starts on. Lowering a day to 30 minutes or less with − turns that
+day off (0분).
+
+**Retained windows.** A day can hold more windows than this editor shows (for
+example from a loaded profile). The earliest window is the visible one; the rest
+are kept unchanged and counted under the day as 추가 공부 시간 N개 유지. Editing
+or turning off the visible window never removes them, and they are included in
+validation, the generation request, an explicit profile save and the plan's saved
+original context. A full multi-window editor is not part of this screen.
+
+**Weeks.** With valid dates, a Monday-based week picker (`N / M주`) covers the
+weeks from the preparation start to the day before the exam; other weeks cannot be
+shown or changed. Each week is one of:
+
+- 기본 시간 (no change for that week): 이번 주는 기본 시간을 사용해요, and the
+  editor below (매주 기본 시간) changes the recurring base for every such week.
+  이번 주 시간 바꾸기 gives the week its own copy of the base (hidden windows
+  included); 이번 주 공부 안 함 makes it an empty week.
+- Replaced (이번 주 공부 시간): the editor changes only that week. 이번 주 공부 안 함
+  empties it; 기본 시간으로 되돌리기 removes the change so the week follows the
+  base again.
+- Empty (이번 주 공부 안 함): no window starts in that week. A window that starts
+  on the previous Sunday (inside the preparation period) and runs into Monday is
+  still used and shown as 지난주에서 이어지는 시간. 이번 주 시간 바꾸기 and
+  기본 시간으로 되돌리기 are offered.
+
+An empty week is sent as an explicit empty `availability_overrides` entry, while a
+reset week has no entry, so the two are never confused. Changing the dates keeps
+week changes; those outside the new period are kept but not shown. The summary
+box (공부하는 요일, 공부 시간) counts every window of the shown week, hidden ones
+included.
+
+**Conflicts.** Windows that overlap, including a window spilling past midnight
+into the next day's window, a Sunday spill into Monday, or a replaced week's
+boundary with its neighbours, switch the heading to 공부 시간을 확인해 주세요 and
+show which days and times overlap (for example 월요일과 화요일 공부 시간이 겹쳐요 /
+화요일 00:15–00:30이 겹쳐요). Both windows stay as entered, and 계획 만들기 and
+서버에 공부 시간 저장 stay disabled until it is fixed. Ending exactly when the next
+window starts is allowed.
+
+**Server study time (live only).** The live build adds 서버 공부 시간 with the
+notice 서버의 공용 공부 시간이에요. 다른 사용자가 바꿀 수 있고, 이미 만든 계획은
+바뀌지 않아요. The profile is a single shared, unauthenticated record on the
+server; the last successful save wins.
+
+- 저장된 공부 시간 불러오기 sends `GET /availability` and shows a preview
+  (기본 시간, 별도 설정, 추가 공부 시간). The form changes only after 불러온 시간 적용,
+  which replaces the base and all week changes with the loaded ones, hidden windows
+  included. 취소 or Back keeps the current draft.
+- 서버에 공부 시간 저장 sends the complete current base and every week change with
+  `PUT /availability` (an empty override map when there are none). The response
+  must match what was sent.
+- A failed load or save shows 공부 시간을 불러오지/저장하지 못했어요 with the current
+  draft summary; the draft and hidden windows are unchanged. 다시 시도 repeats the
+  action once on tap; 취소 returns to the editor. Nothing is retried automatically.
+
+Generation, navigation, adjustment and restored plans never load or save the
+profile. The demo build has no server study time: these actions are absent and
+study times stay on the device.
 
 ## Calendar import
 

@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.data.model.ApiErrorEnvelope
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,6 +62,8 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
     return when {
         planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
         planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
+        planErrors && status == 422 && ManualMoveRejection.ofCode(error?.code) != null ->
+            ApiError.ManualMoveRejected(ManualMoveRejection.ofCode(error?.code)!!)
         else -> genericError(status, message)
     }
 }

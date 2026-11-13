@@ -430,14 +430,18 @@ fun AlertCard(title: String, body: String) {
     }
 }
 
-/** Bordered input-like box (Figma date field: #8A8A8A 1.5dp, 8dp corners, 48dp). */
+/**
+ * Bordered input-like box (Figma date field: #8A8A8A 1.5dp, 8dp corners, 48dp).
+ * [highlighted] marks the field an error message refers to with a 2dp Ink border.
+ */
 @Composable
-fun InputBox(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun InputBox(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, highlighted: Boolean = false, enabled: Boolean = true) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         shape = MaterialTheme.shapes.small,
         color = Paper,
-        border = BorderStroke(1.5.dp, ControlBorder),
+        border = if (highlighted) BorderStroke(2.dp, Ink) else BorderStroke(1.5.dp, ControlBorder),
         modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
         Box(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {

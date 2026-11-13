@@ -1,9 +1,13 @@
 package com.swpp.licenseplanner.data
 
+import com.swpp.licenseplanner.domain.ManualMoveRejection
+
 /** Live failure kinds. */
 sealed interface ApiError {
     /** HTTP 422: the server's `error.message`, kept as diagnostic detail; the UI shows Korean wording for it. */
     data class InvalidInput(val message: String?) : ApiError
+    /** HTTP 422 with one of the manual-move codes: the chosen time was refused for [reason]. */
+    data class ManualMoveRejected(val reason: ManualMoveRejection) : ApiError
     /** HTTP 404: wrong API URL or route. */
     data object Configuration : ApiError
     /** HTTP 404 `PLAN_NOT_FOUND` from adjustment: the selected server plan no longer exists. */

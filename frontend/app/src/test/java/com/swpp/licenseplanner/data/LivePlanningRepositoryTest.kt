@@ -173,4 +173,30 @@ class LivePlanningRepositoryTest {
         assertEquals(120_000, client.readTimeoutMillis)
         assertEquals(120_000, client.callTimeoutMillis)
     }
+
+    private fun withSnapshot(monday: String, overrides: String = "{}") = successBody.replace(
+        "\"new_field\":true",
+        """"new_field":true,"availability_snapshot":{"weekly_availability":{"monday":[$monday],"tuesday":[],
+        "wednesday":[{"start":"18:00","duration_minutes":60,"end":"19:00"}],"thursday":[],"friday":[],
+        "saturday":[{"start":"10:00","duration_minutes":180,"end":"13:00"}],"sunday":[]},"availability_overrides":$overrides}""",
+    )
+
+    @Test
+    fun returnedSnapshotMustBeTheSubmittedContext() {
+        val matching = """{"start":"18:00","duration_minutes":120,"end":"20:00"}"""
+        server.enqueue(MockResponse().setBody(withSnapshot(matching)))
+        val success = generate() as PlanOutcome.Success
+        assertEquals(120, success.response.availabilitySnapshot!!.weeklyAvailability.getValue("monday").single().durationMinutes)
+
+        val mismatches = listOf(
+            withSnapshot("""{"start":"18:00","duration_minutes":120,"end":"20:30"}"""), // end disagrees with duration
+            withSnapshot("""{"start":"18:00","duration_minutes":90,"end":"19:30"}"""), // a different context
+            withSnapshot(matching, """{"2026/10/12":{}}"""), // a week replacement that was not submitted
+            withSnapshot("""{"start":"18:00","duration_minutes":120},{"start":"19:00","duration_minutes":30}"""), // overlap
+        )
+        for (body in mismatches) {
+            server.enqueue(MockResponse().setBody(body))
+            assertTrue(body, (generate() as PlanOutcome.Failure).error is ApiError.InvalidResponse)
+        }
+    }
 }

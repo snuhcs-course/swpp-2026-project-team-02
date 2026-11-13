@@ -1,12 +1,14 @@
 package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 
 /** User-facing text for the error table in the README. Input advice points to the form's edit action. */
 fun ApiError.userMessage(): String = userMessage(InputAdvice.EditForm)
 
 private fun ApiError.userMessage(advice: InputAdvice): String = when (this) {
     is ApiError.InvalidInput -> invalidInputMessage(message, advice)
+    is ApiError.ManualMoveRejected -> reason.message()
     ApiError.Configuration -> "연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)"
     ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
     ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
@@ -43,6 +45,19 @@ fun ApiError.adjustmentMessage(): String = when {
 fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있어요. " + when (this) {
     ApiError.Configuration -> ROUTE_NOT_FOUND_MESSAGE
     else -> userMessage(InputAdvice.NewPlan)
+}
+
+/**
+ * Korean wording for a refused chosen time; the chosen time stays so the learner can change it.
+ * Only [ManualMoveRejection.OutsideStudyWindows] may lead to the one-time confirmation.
+ */
+fun ManualMoveRejection.message(): String = when (this) {
+    ManualMoveRejection.InPast -> "이미 지난 시간이에요. 앞으로의 시간을 골라 주세요."
+    ManualMoveRejection.BeforePreparationStart -> "준비 시작일 전이에요. 준비 기간 안에서 날짜를 골라 주세요."
+    ManualMoveRejection.ExamBoundExceeded -> "공부가 시험일을 넘겨요. 더 이른 시간을 골라 주세요."
+    ManualMoveRejection.StudySessionOverlap -> "다른 공부 일정과 겹쳐요. 다른 시간을 골라 주세요."
+    ManualMoveRejection.ExternalEventOverlap -> "캘린더에서 가져온 일정과 겹쳐요. 다른 시간을 골라 주세요."
+    ManualMoveRejection.OutsideStudyWindows -> "설정한 공부 시간 밖이에요. 이번 한 번만 이 시간으로 옮길지 확인해 주세요."
 }
 
 /** Where the user can fix rejected input from the current screen. */

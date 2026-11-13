@@ -4,6 +4,11 @@ import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.data.model.ScheduleRow
+import com.swpp.licenseplanner.data.model.TimeWindow
+import com.swpp.licenseplanner.domain.DayAvailability
+import com.swpp.licenseplanner.domain.Weekday
+import com.swpp.licenseplanner.domain.WindowSpec
+import com.swpp.licenseplanner.domain.defaultAvailability
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
@@ -21,7 +26,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 class RequestMapperTest {
     private fun ready(result: MappingResult): StudyPlanRequest = (result as MappingResult.Ready).request
@@ -38,10 +45,66 @@ class RequestMapperTest {
         assertEquals(3, json["study_days_per_week"]!!.jsonPrimitive.int)
         val windows = json["weekly_availability"]!!.jsonObject
         assertEquals(listOf("monday", "wednesday", "saturday"), windows.keys.toList())
-        assertEquals("""[{"start":"18:00","end":"20:00"}]""", windows["monday"].toString())
-        assertEquals("""[{"start":"18:00","end":"19:00"}]""", windows["wednesday"].toString())
-        assertEquals("""[{"start":"10:00","end":"13:00"}]""", windows["saturday"].toString())
+        assertEquals("""[{"start":"18:00","duration_minutes":120}]""", windows["monday"].toString())
+        assertEquals("""[{"start":"18:00","duration_minutes":60}]""", windows["wednesday"].toString())
+        assertEquals("""[{"start":"10:00","duration_minutes":180}]""", windows["saturday"].toString())
         assertEquals(JsonArray(emptyList()), json["busy_schedules"])
+        assertEquals(JsonObject(emptyMap()), json["availability_overrides"])
+    }
+
+    @Test
+    fun hiddenWindowsOvernightWindowsAndWeekReplacementsAreAllSent() {
+        val monday = DayAvailability(true, LocalTime.of(9, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
+        val sunday = DayAvailability(true, LocalTime.of(23, 0), 90)
+        val replaced = mapOf(Weekday.TUESDAY to DayAvailability(true, LocalTime.of(20, 0), 60))
+        val state = TestFixtures.completeState().copy(
+            availability = defaultAvailability() + (Weekday.MONDAY to monday) + (Weekday.SUNDAY to sunday),
+            availabilityOverrides = mapOf(LocalDate.of(2026, 10, 12) to emptyMap(), LocalDate.of(2026, 10, 19) to replaced),
+        )
+        val json = toJson(ready(RequestMapper.map(state)))
+        val windows = json["weekly_availability"]!!.jsonObject
+        assertEquals(listOf("monday", "sunday"), windows.keys.toList())
+        assertEquals(
+            """[{"start":"09:00","duration_minutes":60},{"start":"19:00","duration_minutes":120}]""",
+            windows["monday"].toString(),
+        )
+        assertEquals("""[{"start":"23:00","duration_minutes":90}]""", windows["sunday"].toString())
+        assertEquals(
+            """{"2026/10/12":{},"2026/10/19":{"tuesday":[{"start":"20:00","duration_minutes":60}]}}""",
+            json["availability_overrides"].toString(),
+        )
+        // Monday, Sunday and the replacement week's Tuesday.
+        assertEquals(3, json["study_days_per_week"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun overlappingOrEmptyContextsAreNotMapped() {
+        val spill = TestFixtures.completeState().copy(
+            availability = defaultAvailability() +
+                (Weekday.MONDAY to DayAvailability(true, LocalTime.of(23, 0), 90)) +
+                (Weekday.TUESDAY to DayAvailability(true, LocalTime.of(0, 15), 60)),
+        )
+        assertTrue(RequestMapper.map(spill) is MappingResult.Incomplete)
+        val adjacent = spill.copy(availability = spill.availability + (Weekday.TUESDAY to DayAvailability(true, LocalTime.of(0, 30), 60)))
+        assertTrue(RequestMapper.map(adjacent) is MappingResult.Ready)
+        val empty = spill.copy(availability = defaultAvailability(), availabilityOverrides = mapOf(LocalDate.of(2026, 10, 12) to emptyMap()))
+        assertTrue(RequestMapper.map(empty) is MappingResult.Incomplete)
+    }
+
+    @Test
+    fun wireWindowsAcceptOnlyWhatTheBackendAccepts() {
+        val start = "23:00"
+        assertEquals(WindowSpec(LocalTime.of(23, 0), 90), AvailabilityWire.windowOrNull(TimeWindow(start, durationMinutes = 90)))
+        assertEquals(WindowSpec(LocalTime.of(23, 0), 90), AvailabilityWire.windowOrNull(TimeWindow(start, "00:30", 90)))
+        assertEquals(WindowSpec(LocalTime.of(18, 0), 120), AvailabilityWire.windowOrNull(TimeWindow("18:00", "20:00")))
+        for (invalid in listOf(
+            TimeWindow(start, "00:15", 90), TimeWindow(start, "01:00"), TimeWindow(start, durationMinutes = 0),
+            TimeWindow(start, durationMinutes = 1440), TimeWindow("24:00", durationMinutes = 1), TimeWindow(start),
+        )) {
+            assertNull(invalid.toString(), AvailabilityWire.windowOrNull(invalid))
+        }
+        assertNull(AvailabilityWire.context(mapOf("monday" to listOf(TimeWindow(start, durationMinutes = 90))), mapOf("2026/10/13" to emptyMap())))
+        assertNull(AvailabilityWire.context(mapOf("funday" to emptyList()), emptyMap()))
     }
 
     @Test

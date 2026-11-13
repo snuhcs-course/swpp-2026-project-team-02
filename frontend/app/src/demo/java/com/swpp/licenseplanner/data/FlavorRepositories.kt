@@ -11,4 +11,7 @@ object FlavorRepositories {
     fun questionRepository(): QuestionRepository = DemoQuestionRepository()
     fun planningRepository(): PlanningRepository = DemoPlanningRepository()
     fun adjustmentRepository(): AdjustmentRepository = DemoAdjustmentRepository()
+
+    /** Demo keeps study times on the device only; there is no server profile. */
+    fun availabilityProfileRepository(): AvailabilityProfileRepository? = null
 }

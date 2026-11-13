@@ -10,6 +10,7 @@ import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.AvailabilityProfileRepository
 import com.swpp.licenseplanner.data.AndroidCalendarExportRepository
 import com.swpp.licenseplanner.data.AndroidCalendarReadRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
@@ -24,12 +25,14 @@ import com.swpp.licenseplanner.data.CalendarWriteOutcome
 import com.swpp.licenseplanner.data.ExportNotStarted
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.LocalPlanStore
+import com.swpp.licenseplanner.data.ManualMove
 import com.swpp.licenseplanner.data.MappingResult
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
+import com.swpp.licenseplanner.data.ProfileOutcome
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
@@ -41,10 +44,15 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.StudyAvailability
 import com.swpp.licenseplanner.domain.Weekday
+import com.swpp.licenseplanner.domain.WindowSpec
+import com.swpp.licenseplanner.domain.emptyWeek
+import com.swpp.licenseplanner.domain.toEditorDays
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -54,6 +62,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 /** Example-question loading: loaded once per form flow, retried only after failure. */
@@ -126,7 +135,36 @@ data class AdjustmentSelection(
     val planOrdinal: Int? = null,
     val failedScheduleId: String? = null,
     val state: AdjustmentState = AdjustmentState.Idle,
-)
+    /** An open chosen-time move for [failedScheduleId]; null when none is being edited. */
+    val manual: ManualDraft? = null,
+) {
+    /** Only a refusal for being outside the study windows may be confirmed, and only for that same destination. */
+    val canConfirmOutsideAvailability: Boolean
+        get() = manual?.newStart != null && !manual.confirmOutsideAvailability &&
+            (state as? AdjustmentState.Failure)?.error == ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows)
+
+    /** The server or demo policy refused the current chosen time. */
+    val manualRejected: Boolean
+        get() = (state as? AdjustmentState.Failure)?.error is ApiError.ManualMoveRejected
+}
+
+/**
+ * The chosen start being reviewed. [confirmOutsideAvailability] is the one-time window exception
+ * for this exact destination; choosing another time clears it.
+ */
+data class ManualDraft(val newStart: LocalDateTime? = null, val confirmOutsideAvailability: Boolean = false)
+
+/** Explicit load or save of the server's shared study-time profile (live only). */
+sealed interface ProfileState {
+    data object Idle : ProfileState
+    data object Loading : ProfileState
+    /** A loaded profile waiting for the learner to accept it; the form is unchanged until then. */
+    data class Preview(val availability: StudyAvailability) : ProfileState
+    data object Saving : ProfileState
+    data object Saved : ProfileState
+    /** The draft is kept; [saving] says which explicit action failed. */
+    data class Failure(val error: ApiError, val saving: Boolean) : ProfileState
+}
 
 /**
  * Activity-scoped state for the whole input flow and the generated plans.
@@ -143,6 +181,8 @@ class PlanFormViewModel(
     private val planStore: LocalPlanStore,
     private val calendarExportRepository: CalendarExportRepository = UnavailableCalendarExport,
     private val calendarReadRepository: CalendarReadRepository = UnavailableCalendarRead,
+    /** The shared server profile; null in demo, which keeps study times on the device. */
+    private val availabilityProfileRepository: AvailabilityProfileRepository? = null,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -185,6 +225,17 @@ class PlanFormViewModel(
     private val _calendarExport = MutableStateFlow<CalendarExportState?>(null)
     val calendarExport: StateFlow<CalendarExportState?> = _calendarExport.asStateFlow()
     private var nextExportId = 1
+
+    private val _profile = MutableStateFlow<ProfileState>(ProfileState.Idle)
+    val profile: StateFlow<ProfileState> = _profile.asStateFlow()
+
+    /** Whether this build can load or save the server profile at all. */
+    val profileAvailable: Boolean get() = availabilityProfileRepository != null
+
+    private val _availabilityWeek = MutableStateFlow<LocalDate?>(null)
+
+    /** The week the availability editor last showed; [PlanFormState.shownWeek] resolves it. */
+    val availabilityWeek: StateFlow<LocalDate?> = _availabilityWeek.asStateFlow()
 
     private val _calendarRead = MutableStateFlow<CalendarReadState>(CalendarReadState.Idle)
     val calendarRead: StateFlow<CalendarReadState> = _calendarRead.asStateFlow()
@@ -230,15 +281,109 @@ class PlanFormViewModel(
         else state.copy(answers = state.answers + (questionId to choiceKey))
     }
 
-    fun setDayEnabled(day: Weekday, enabled: Boolean) = editDay(day) { it.copy(enabled = enabled) }
-    fun setDayStart(day: Weekday, start: LocalTime) = editDay(day) { it.copy(start = start) }
+    /*
+     * Day edits change the visible primary window only; unshown windows of that day stay. A null
+     * [week] edits the recurring base; a Monday edits that week's replacement, if it has one.
+     */
+    fun setDayEnabled(day: Weekday, enabled: Boolean, week: LocalDate? = null) = editDay(day, week) { it.copy(enabled = enabled) }
+    fun setDayStart(day: Weekday, start: LocalTime, week: LocalDate? = null) = editDay(day, week) { it.copy(start = start) }
 
     /** Steps the duration by [DayAvailability.STEP_MINUTES] within the allowed range. */
-    fun stepDuration(day: Weekday, steps: Int) = editDay(day) {
+    fun stepDuration(day: Weekday, steps: Int, week: LocalDate? = null) = editDay(day, week) {
         val minutes = (it.durationMinutes + steps * DayAvailability.STEP_MINUTES)
             .coerceIn(DayAvailability.MIN_DURATION_MINUTES, DayAvailability.MAX_DURATION_MINUTES)
         it.copy(durationMinutes = minutes)
     }
+
+    /** Sets an entered duration and turns the day on; a value outside 1–1439 minutes is refused. */
+    fun setDuration(day: Weekday, minutes: Int, week: LocalDate? = null): Boolean {
+        if (generating || !WindowSpec.isValidDuration(minutes)) return false
+        editDay(day, week) { it.copy(enabled = true, durationMinutes = minutes) }
+        return true
+    }
+
+    fun showAvailabilityWeek(monday: LocalDate): Boolean {
+        if (monday !in _form.value.studyWeeks) return false
+        _availabilityWeek.value = monday
+        return true
+    }
+
+    /** Gives the week its own times, starting from a copy of the base week (unshown windows included). */
+    fun replaceWeek(monday: LocalDate): Boolean = editWeek(monday) { it.availability }
+
+    /** Makes the week an explicit no-study week; windows starting the previous day still run into it. */
+    fun clearWeek(monday: LocalDate): Boolean = editWeek(monday) { emptyWeek() }
+
+    /** Removes the week's replacement so it inherits the base again. */
+    fun resetWeek(monday: LocalDate): Boolean = editWeek(monday) { null }
+
+    private fun editWeek(monday: LocalDate, days: (PlanFormState) -> Map<Weekday, DayAvailability>?): Boolean {
+        if (generating || monday !in _form.value.studyWeeks) return false
+        edit { state ->
+            val replacement = days(state)
+            state.copy(
+                availabilityOverrides = if (replacement == null) state.availabilityOverrides - monday
+                else state.availabilityOverrides + (monday to replacement),
+            )
+        }
+        _availabilityWeek.value = monday
+        return true
+    }
+
+    /**
+     * Reads the server profile on explicit request and shows it as a preview; the form changes only
+     * after [acceptProfile]. Returns whether a request was sent.
+     */
+    fun loadProfile(): Boolean {
+        val repository = availabilityProfileRepository ?: return false
+        if (generating || profileBusy) return false
+        _profile.value = ProfileState.Loading
+        viewModelScope.launch {
+            _profile.value = when (val outcome = repository.load()) {
+                is ProfileOutcome.Loaded -> ProfileState.Preview(outcome.availability)
+                is ProfileOutcome.Failure -> ProfileState.Failure(outcome.error, saving = false)
+            }
+        }
+        return true
+    }
+
+    /** Replaces the form's base week and week replacements with the previewed profile, unshown windows included. */
+    fun acceptProfile() {
+        val preview = _profile.value as? ProfileState.Preview ?: return
+        if (generating) return
+        edit { state ->
+            state.copy(
+                availability = preview.availability.base.toEditorDays(),
+                availabilityOverrides = preview.availability.overrides.mapValues { it.value.toEditorDays() },
+            )
+        }
+        _profile.value = ProfileState.Idle
+    }
+
+    /** Closes a preview, failure or saved notice without touching the form. */
+    fun dismissProfile() {
+        if (!profileBusy) _profile.value = ProfileState.Idle
+    }
+
+    /**
+     * Saves the complete current context (every window, shown or not, and every week replacement)
+     * as the shared profile on explicit request. Nothing is sent while the context is invalid.
+     */
+    fun saveProfile(): Boolean {
+        val repository = availabilityProfileRepository ?: return false
+        val form = _form.value
+        if (generating || profileBusy || form.availabilityError != null) return false
+        _profile.value = ProfileState.Saving
+        viewModelScope.launch {
+            _profile.value = when (val outcome = repository.save(form.studyAvailability)) {
+                is ProfileOutcome.Loaded -> ProfileState.Saved
+                is ProfileOutcome.Failure -> ProfileState.Failure(outcome.error, saving = true)
+            }
+        }
+        return true
+    }
+
+    private val profileBusy get() = _profile.value == ProfileState.Loading || _profile.value == ProfileState.Saving
 
     /** Starts an explicit device-calendar import. No calendar is read before this action. */
     fun startCalendarRead(): Boolean {
@@ -394,8 +539,70 @@ class PlanFormViewModel(
         if (busy || selection.failedScheduleId == scheduleId) return
         val plan = selectedPlan() ?: return
         if (plan.recovery != PlanRecovery.Ready || !plan.isStudy(scheduleId)) return
-        _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle)
+        _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle, manual = null)
         pendingAdjustment = null
+    }
+
+    /** Opens a chosen-time move for the selected study row. Nothing is sent until [submitManualMove]. */
+    fun startManualMove(): Boolean {
+        if (generating || busy || !storageReady) return false
+        val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
+        _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
+        _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = ManualDraft()) }
+        pendingAdjustment = null
+        return true
+    }
+
+    /** Chooses the destination start; any earlier outside-window confirmation no longer applies. */
+    fun setManualStart(start: LocalDateTime) {
+        if (busy) return
+        val draft = _adjustment.value.manual ?: return
+        if (draft.newStart == start) return
+        _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = ManualDraft(start)) }
+        pendingAdjustment = null
+    }
+
+    /** Discards the draft without sending anything. */
+    fun cancelManualMove() {
+        if (busy) return
+        _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = null) }
+    }
+
+    /**
+     * Declines the one-time window exception and returns to editing with the chosen time kept.
+     * Nothing is sent; sending the same time again is checked by the server from the start.
+     */
+    fun reviseManualMove() {
+        if (busy || !_adjustment.value.canConfirmOutsideAvailability) return
+        _adjustment.update { it.copy(state = AdjustmentState.Idle) }
+        pendingAdjustment = null
+    }
+
+    /**
+     * Sends the reviewed destination once. Returns whether a request was sent. A destination the
+     * server refused is not sent again; choosing another time makes it sendable.
+     */
+    fun submitManualMove(): Boolean =
+        !_adjustment.value.manualRejected && sendManual(confirmOutsideAvailability = false)
+
+    /**
+     * After an outside-study-windows refusal of this exact destination, sends it again with the
+     * one-time exception. Bounds and overlaps are still checked by the server.
+     */
+    fun confirmOutsideAvailability(): Boolean =
+        _adjustment.value.canConfirmOutsideAvailability && sendManual(confirmOutsideAvailability = true)
+
+    private fun sendManual(confirmOutsideAvailability: Boolean): Boolean {
+        if (generating || busy || !storageReady) return false
+        val start = _adjustment.value.manual?.newStart ?: return false
+        val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
+        val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
+        _adjustment.update { it.copy(manual = ManualDraft(start, confirmOutsideAvailability)) }
+        sendAdjustment(
+            plan.ordinal,
+            AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target, ManualMove(start, confirmOutsideAvailability)),
+        )
+        return true
     }
 
     /**
@@ -417,6 +624,7 @@ class PlanFormViewModel(
      */
     fun retryAdjustment() {
         if (_adjustment.value.state !is AdjustmentState.Failure || generating || exporting || !storageReady) return
+        if (_adjustment.value.manualRejected) return
         val (ordinal, input) = pendingAdjustment ?: return
         if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
         sendAdjustment(ordinal, input)
@@ -567,7 +775,8 @@ class PlanFormViewModel(
             val live = input.scheduleCsvFile != null
             if (live && !commit(unresolved(ordinal, input.scheduleId), inFlightAdjustment = ordinal)) {
                 pendingAdjustment = null
-                _adjustment.update { it.copy(state = AdjustmentState.Idle) }
+                // Nothing was sent; a chosen time keeps its draft but must be confirmed again if needed.
+                _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = it.manual?.copy(confirmOutsideAvailability = false)) }
                 return@launch
             }
             when (val outcome = adjustmentRepository.adjust(input)) {
@@ -575,7 +784,7 @@ class PlanFormViewModel(
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
                     pendingAdjustment = null
-                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
+                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId), manual = null) }
                     commit(_plans.value)
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
@@ -587,7 +796,10 @@ class PlanFormViewModel(
                         val target = input.scheduleId.takeIf { recovery == PlanRecovery.ReloadRequired }
                         updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = target) }
                     }
-                    _adjustment.update { it.copy(state = AdjustmentState.Failure(outcome.error)) }
+                    // An uncertain or gone plan needs a fresh reviewed choice after reload, never a replay.
+                    _adjustment.update {
+                        it.copy(state = AdjustmentState.Failure(outcome.error), manual = it.manual.takeIf { recovery == PlanRecovery.Ready })
+                    }
                     // Replaces the unresolved snapshot with the confirmed state.
                     if (live) commit(_plans.value)
                 }
@@ -652,6 +864,8 @@ class PlanFormViewModel(
         val before = _form.value
         _form.update(transform)
         if (_form.value != before) {
+            // A saved notice describes the earlier draft.
+            if (_profile.value == ProfileState.Saved) _profile.value = ProfileState.Idle
             _generation.value = GenerationState.Idle
             _generatedPlan.value = null
             lastRequest = null
@@ -668,9 +882,15 @@ class PlanFormViewModel(
         _calendarRead.value = CalendarReadState.Idle
     }
 
-    private fun editDay(day: Weekday, transform: (DayAvailability) -> DayAvailability) = edit { state ->
-        val current = state.availability[day] ?: DayAvailability()
-        state.copy(availability = state.availability + (day to transform(current)))
+    private fun editDay(day: Weekday, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) = edit { state ->
+        if (week == null) {
+            val current = state.availability[day] ?: DayAvailability()
+            state.copy(availability = state.availability + (day to transform(current)))
+        } else {
+            val days = state.availabilityOverrides[week]?.takeIf { week in state.studyWeeks } ?: return@edit state
+            val current = days[day] ?: DayAvailability()
+            state.copy(availabilityOverrides = state.availabilityOverrides + (week to days + (day to transform(current))))
+        }
     }
 
     companion object {
@@ -688,6 +908,7 @@ class PlanFormViewModel(
                     ),
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
                     calendarReadRepository = AndroidCalendarReadRepository.create(application),
+                    availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                 )
             }
         }

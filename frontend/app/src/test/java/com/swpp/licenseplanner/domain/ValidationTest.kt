@@ -32,12 +32,21 @@ class ValidationTest {
     }
 
     @Test
-    fun windowsReachingOrCrossingMidnightAreRejected() {
-        assertNull(Validation.window(day("23:00", 120)))
-        assertNull(Validation.window(day("22:00", 120))) // would end at 24:00
-        assertNotNull(Validation.windowError(day("22:00", 120)))
+    fun windowsReachingOrCrossingMidnightEndOnTheNextDay() {
+        assertEquals(StudyWindow(LocalTime.of(23, 0), LocalTime.of(1, 0), endsNextDay = true), Validation.window(day("23:00", 120)))
+        assertEquals(StudyWindow(LocalTime.of(22, 0), LocalTime.MIDNIGHT, endsNextDay = true), Validation.window(day("22:00", 120)))
+        assertNull(Validation.windowError(day("22:00", 120)))
         val availability = defaultAvailability() + (Weekday.MONDAY to day("23:00", 120))
-        assertNotNull(Validation.availabilityError(availability))
+        assertNull(Validation.availabilityError(availability))
+    }
+
+    @Test
+    fun durationsOutsideOneTo1439MinutesAreRejected() {
+        assertNotNull(Validation.window(day("00:00", 1)))
+        assertNotNull(Validation.window(day("00:00", 1439)))
+        assertNull(Validation.window(day("00:00", 0)))
+        assertNull(Validation.window(day("00:00", 1440)))
+        assertNotNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to day("18:00", 1440))))
     }
 
     @Test
@@ -51,5 +60,34 @@ class ValidationTest {
     @Test
     fun noEnabledDaysIsRejected() {
         assertNotNull(Validation.availabilityError(defaultAvailability()))
+    }
+
+    @Test
+    fun nextDayAndWeekBoundarySpillsCannotOverlap() {
+        val monday = Weekday.MONDAY to day("23:00", 90)
+        val overlapping = defaultAvailability() + monday + (Weekday.TUESDAY to day("00:15", 60))
+        assertNotNull(Validation.availabilityError(overlapping))
+        assertNull(Validation.availabilityError(defaultAvailability() + monday + (Weekday.TUESDAY to day("00:30", 60))))
+        val sundaySpill = defaultAvailability() + (Weekday.SUNDAY to day("23:00", 90))
+        val nextWeek = mapOf(LocalDate.of(2026, 11, 30) to mapOf(Weekday.MONDAY to day("00:15", 45)))
+        assertNotNull(Validation.availabilityError(sundaySpill, nextWeek))
+        assertNull(Validation.availabilityError(sundaySpill, mapOf(LocalDate.of(2026, 11, 30) to emptyMap())))
+    }
+
+    @Test
+    fun hiddenWindowsCountAndConflict() {
+        val hidden = DayAvailability(false, LocalTime.of(8, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
+        // The visible primary is disabled but the hidden window keeps the day usable.
+        assertNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to hidden)))
+        val clash = hidden.copy(enabled = true, start = LocalTime.of(18, 30))
+        assertNotNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to clash)))
+        assertEquals(listOf(WindowSpec(LocalTime.of(18, 30), 60), WindowSpec(LocalTime.of(19, 0), 120)), clash.windows())
+    }
+
+    @Test
+    fun overrideOnlyContextIsUsableButAnEmptyContextIsNot() {
+        val overrides = mapOf(LocalDate.of(2026, 11, 30) to mapOf(Weekday.TUESDAY to day("20:00", 60)))
+        assertNull(Validation.availabilityError(defaultAvailability(), overrides))
+        assertNotNull(Validation.availabilityError(defaultAvailability(), mapOf(LocalDate.of(2026, 11, 30) to emptyMap())))
     }
 }

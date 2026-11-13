@@ -4,7 +4,6 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
-import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -13,10 +12,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.time.format.ResolverStyle
 
 /**
  * The generated-plan collection as saved on the device, oldest first.
@@ -49,11 +44,16 @@ object PlanStorageScope {
 }
 
 /**
- * Version-1 JSON form of a [PlanSnapshot]. Decoding checks the version, the scope and every entry;
- * anything it cannot trust is a failure, never an empty or repaired collection.
+ * JSON form of a [PlanSnapshot]. Saving always writes version 2, whose creation requests may carry
+ * `start` + `duration_minutes` windows and week replacements. Version 1 (same-day `start` + `end`
+ * windows, no replacements) is still read, without rewriting the file; each creation request is
+ * kept exactly as it was accepted. Decoding checks the
+ * version, the scope and every entry; anything it cannot trust is a failure, never an empty or
+ * repaired collection.
  */
 internal object PlanSnapshotCodec {
-    const val VERSION = 1
+    const val VERSION = 2
+    const val LEGACY_VERSION = 1
 
     // Unlike the API JSON, unknown keys are rejected: this file is only ever written by this codec.
     private val json = Json {
@@ -61,8 +61,6 @@ internal object PlanSnapshotCodec {
         explicitNulls = false
     }
 
-    private val windowTime = DateTimeFormatter.ofPattern("HH:mm").withResolverStyle(ResolverStyle.STRICT)
-    private val weekdayKeys = Weekday.entries.map { it.key }.toSet()
 
     fun encode(snapshot: PlanSnapshot, scope: String): String = json.encodeToString(
         Envelope.serializer(),
@@ -93,7 +91,7 @@ internal object PlanSnapshotCodec {
         val envelope = try {
             val root = json.parseToJsonElement(text).jsonObject
             val version = root["version"]?.jsonPrimitive?.intOrNull ?: return PlanStoreLoad.Failed(PlanLoadFailure.Malformed)
-            if (version != VERSION) return PlanStoreLoad.Failed(PlanLoadFailure.Unsupported)
+            if (version != VERSION && version != LEGACY_VERSION) return PlanStoreLoad.Failed(PlanLoadFailure.Unsupported)
             json.decodeFromJsonElement(Envelope.serializer(), root)
         } catch (_: IllegalArgumentException) {
             // SerializationException is an IllegalArgumentException; so is a non-object root.
@@ -112,38 +110,32 @@ internal object PlanSnapshotCodec {
         val ordinals = entries.map { it.ordinal }
         if (ordinals.any { it <= 0 } || ordinals.toSet().size != ordinals.size) return false
         val demo = scope == PlanStorageScope.DEMO
-        if (entries.any { it.isDemo != demo || !it.isValid() }) return false
+        if (entries.any { it.isDemo != demo || !it.isValid(version) }) return false
         val unresolved = inFlightAdjustmentOrdinal ?: return true
         val entry = entries.firstOrNull { it.ordinal == unresolved } ?: return false
         return !entry.isDemo && entry.scheduleCsvFile != null
     }
 
-    private fun Entry.isValid(): Boolean {
+    private fun Entry.isValid(version: Int): Boolean {
         val identityOk = if (isDemo) {
             scheduleCsvFile == null && recovery == StoredRecovery.Ready
         } else {
             scheduleCsvFile?.isNotBlank() ?: (recovery == StoredRecovery.Ready)
         }
-        return identityOk && scheduleRowProblem(current.schedules) == null && original.isValid()
+        val legacyShapeOk = version != LEGACY_VERSION || (
+            original.availabilityOverrides.isEmpty() && current.availabilitySnapshot == null &&
+                original.weeklyAvailability.values.flatten().all { it.durationMinutes == null && it.end != null }
+            )
+        return identityOk && legacyShapeOk && scheduleRowProblem(current.schedules) == null && original.isValid()
     }
 
-    /** Dates and windows of an accepted creation request, which later adjustments resend. */
+    /** Dates and the complete availability context of an accepted creation request, which later adjustments resend. */
     private fun StudyPlanRequest.isValid(): Boolean {
         val start = WireDateTime.parseOrNull(preparationStart) ?: return false
         val exam = WireDateTime.parseOrNull(examDate) ?: return false
-        if (!exam.isAfter(start) || weeklyAvailability.keys.any { it !in weekdayKeys }) return false
-        val windows = weeklyAvailability.values.flatten()
-        return windows.isNotEmpty() && windows.all { window ->
-            val from = parseTime(window.start) ?: return false
-            val to = parseTime(window.end) ?: return false
-            to.isAfter(from)
-        }
-    }
-
-    private fun parseTime(value: String): LocalTime? = try {
-        LocalTime.parse(value, windowTime)
-    } catch (_: DateTimeParseException) {
-        null
+        if (!exam.isAfter(start)) return false
+        val context = AvailabilityWire.context(this) ?: return false
+        return context.hasWindows()
     }
 
     @Serializable

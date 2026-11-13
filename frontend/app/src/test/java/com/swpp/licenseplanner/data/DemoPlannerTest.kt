@@ -346,4 +346,22 @@ class DemoPlannerTest {
         assertEquals("2026/10/05/18/00", result.response.schedules.first().startDate)
         assertEquals(sessions(plain), study(result).size)
     }
+
+    @Test
+    fun overnightWindowsAndReplacementWeeksDecideEachDatesSession() {
+        val sunday = mapOf(Weekday.SUNDAY to DayAvailability(true, LocalTime.of(23, 30), 60))
+        val base = request(allCorrect, CurrentLevel.ADVANCED, defaultAvailability() + sunday)
+        // 2026-10-11 is the first Sunday; its session runs past midnight with the window's full length.
+        val first = study(DemoPlanner.plan(base)).first()
+        assertEquals("2026/10/11/23/30" to "2026/10/12/00/30", first.startDate to first.endDate)
+
+        // Sunday 2026-10-11 belongs to the week of Monday 2026-10-05; emptying that week skips it.
+        val emptyFirstWeek = base.copy(availabilityOverrides = mapOf("2026/10/05" to emptyMap()))
+        val shifted = study(DemoPlanner.plan(emptyFirstWeek)).first()
+        assertEquals("2026/10/18/23/30" to "2026/10/19/00/30", shifted.startDate to shifted.endDate)
+
+        // An exam at Monday 00:00 clips the spilling window to the 30 minutes before it.
+        val clipped = study(DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, defaultAvailability() + sunday, LocalDate.of(2026, 10, 26))))
+        assertEquals("2026/10/25/23/30" to "2026/10/26/00/00", times(clipped).last())
+    }
 }
