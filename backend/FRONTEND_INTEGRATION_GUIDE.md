@@ -87,8 +87,9 @@ results. Dates use `YYYY/MM/DD/HH/MM` and availability times use `HH:MM`.
   "self_assessment": "엑셀을 처음 공부하는 초보입니다.",
   "study_days_per_week": 1,
   "weekly_availability": {
-    "monday": [{"start": "18:00", "end": "21:00"}]
+    "monday": [{"start": "18:00", "duration_minutes": 180}]
   },
+  "availability_overrides": {},
   "busy_schedules": [],
   "assessment_results": {
     "certification_id": "computer_specialist_level_2",
@@ -118,6 +119,50 @@ server checks that `is_correct` equals that comparison, with `UNKNOWN` always
 incorrect, and that the total possible score is finite. Any violation returns
 `422` / `INVALID_INPUT` before a model call or saved plan; inconsistent flags
 are rejected, never rewritten.
+
+### Study windows and week overrides
+
+A window is `{"start":"HH:MM","duration_minutes":N}` with an integer duration
+from 1 to 1439. It belongs to the weekday it starts on and may end on the next
+day, so `{"start":"23:00","duration_minutes":90}` on Monday runs until Tuesday
+00:30. The older same-day `{"start","end"}` form (start before end) is still
+accepted, and a window may send all three keys when `end` equals start plus
+duration modulo one day. Booleans, fractions, null, 0 and 1440 durations,
+unknown keys and non-`HH:MM` times return `422 INVALID_INPUT`. Effective windows
+must not overlap, including a next-day spill (Monday 23:00/90 with Tuesday
+00:15) and the Sunday-to-Monday spill; touching windows (Tuesday 00:30) are
+valid.
+
+`availability_overrides` maps a real Monday date, written `YYYY/MM/DD`, to a
+whole replacement week in the same weekday shape. Within that week the
+replacement is used instead of `weekly_availability`; `{}` is an explicit week
+with no study windows, while a missing key means the week uses the base. A
+window always follows the week of the date it starts on, so a Sunday 23:00
+window keeps running past midnight into an empty override week. A null override
+map, a non-Monday key or a non-object week returns `422 INVALID_INPUT`.
+
+Context selection, for generation and adjustment alike:
+
+- A non-null `weekly_availability` replaces the inherited context completely;
+  inherited week overrides are not mixed in unless `availability_overrides` is
+  sent with it.
+- A supplied `availability_overrides` replaces the whole inherited override map
+  for this request, and keeps the selected base.
+- Without request availability, generation reads the shared profile
+  (`weekly_availability: null` also does). Adjustment uses the selected plan's
+  retained context, then the shared profile; explicit null is `422` there.
+- Request availability is never saved to the profile or the plan.
+
+A context with no window anywhere is invalid; a valid context whose relevant
+weeks are all empty has zero usable time and follows `NOT_ENOUGH_TIME`.
+Generation counts usable minutes per civil date: Monday 23:00/90 gives 60
+minutes on Monday and 30 on Tuesday, clipped to the preparation start, exam
+date and busy items. Generated rows may therefore split at midnight.
+
+The successful response adds `availability_snapshot`, the accepted base and
+full override map, with `start`, `duration_minutes` and a derived `end` (which
+wraps past midnight) on every window. The plan keeps that context for later
+adjustment even if the shared profile changes.
 
 ### Busy schedules
 
@@ -194,13 +239,23 @@ instead of sending every question to the model. Passing the
 check does not mean the time is enough to prepare. Invalid model allocations,
 repeated tool failures and provider errors stay `502`/`503`; they never become
 `NOT_ENOUGH_TIME`. On success, `agent_summary` is a short server-written summary
-of the accepted schedule. No response fields were added.
+of the accepted schedule. Apart from `availability_snapshot`, described above,
+no response fields were added.
 
 ## Other backend endpoints
 
-The API also exposes availability profile read/write for other clients. Android
-does not call the profile endpoints; it sends availability with generation and
-uses the selected plan's original windows for adjustment. Android calls the
+`GET /api/v1/availability` and `PUT /api/v1/availability` read and replace the
+single shared, unauthenticated profile. Both return
+`{"weekly_availability": {...}, "availability_overrides": {...}}` with all seven
+weekdays and `start`, `duration_minutes` and derived `end` on every window; a
+missing profile returns empty lists and `{}`. PUT accepts that wrapper or a
+direct weekday map. When PUT omits `availability_overrides`, stored overrides are
+kept; an explicit `{}` removes them. The file is written atomically in duration
+form (no `end`) only on a successful PUT; reads never rewrite an older start/end
+file, and a rejected PUT leaves the file byte-identical. Whoever saves last
+wins; existing plans keep their own snapshots. The Android app sends availability
+with generation, uses the selected plan's original context for adjustment, and
+reads or saves the profile only when the learner asks to. Android calls the
 adjustment endpoint and explicitly reloads a retained plan through the plan-list
 endpoint as described below; it does not import the server's plans into its list.
 
@@ -219,8 +274,10 @@ remains unverified against a real server.
 ### Select a plan
 
 `GET /api/v1/study-plans` returns `{"plans": [...]}`, newest modification first.
-Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`.
-An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
+Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`, and
+`availability_snapshot` when the plan was generated with retained context (it is
+omitted for older plans and when that plan's metadata cannot be read, so the CSV
+stays listable). An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
 an unreadable or malformed plan produces `500 STORAGE_ERROR`.
 
 To read back one retained plan, add the optional query
@@ -257,12 +314,14 @@ field and uses it unchanged for adjustment and exact-identity reload.
 ### Adjust the selected plan
 
 `POST /api/v1/schedules/adjust` retains the existing request fields and accepts
-three additional fields:
+these additional fields:
 
 | Field | Behavior |
 | --- | --- |
 | `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
-| `weekly_availability` | Optional request override; otherwise read the saved profile. An explicit null or empty profile is invalid |
+| `weekly_availability` | Optional request context under the selection rules above; otherwise the plan's retained context, then the shared profile. An explicit null or a context with no window is invalid |
+| `availability_overrides` | Optional; replaces the inherited override map for this request only. Null is invalid |
+| `mode` | Omitted or `"automatic"`: the agent-based move. `"manual"`: the deterministic move described below. Anything else returns `422 INVALID_INPUT` |
 | `exam_date` | Saved plan (`schedule_csv_file` present): optional. The server uses the exam timestamp stored when the plan was generated; a supplied value must equal it exactly, and explicit null or a malformed value is rejected. Without `schedule_csv_file`: a valid `YYYY/MM/DD/HH/MM` value is required when moving a `study-N` row; missing, null or malformed returns `422 INVALID_INPUT` before any model call. Never needed for `external-N` removal. |
 
 Always send the complete schedule currently displayed, not only the failed row.
@@ -274,8 +333,17 @@ topics and session durations are preserved for study-session movement. An
 
 Each plan generated by `POST /study-plans` stores its validated `exam_date`
 beside the CSV, in a sidecar named after the CSV with `.meta.json` instead of
-`.csv`. The CSV identity, download format and response fields do not change, and
-there is no metadata route. Moving a study session of a saved plan always uses
+`.csv`. New plans write version 2 of that sidecar, which also keeps
+`preparation_start` and the accepted `availability_snapshot` in duration form:
+
+```json
+{"version":2,"exam_date":"2026/12/07/00/00","preparation_start":"2026/11/16/00/00",
+ "availability_snapshot":{"weekly_availability":{"monday":[{"start":"23:00","duration_minutes":90}],"tuesday":[],"wednesday":[],"thursday":[],"friday":[],"saturday":[],"sunday":[]},"availability_overrides":{}}}
+```
+
+Older exam-only sidecars are still read as before and are never rewritten or
+backfilled. The CSV identity and download format do not change, and there is no
+metadata route. Moving a study session of a saved plan always uses
 that stored timestamp, also after a server restart:
 
 - `exam_date` omitted: the stored deadline is used. Earlier Android releases that
@@ -291,8 +359,9 @@ that stored timestamp, also after a server restart:
   A supplied `exam_date` does not bypass this or create metadata. These plans
   stay listable, downloadable and viewable, and their `external-N` rows can still
   be removed. To adjust study sessions, generate a new plan.
-- Present but damaged or unreadable metadata returns `500 STORAGE_ERROR`; the
-  request date is never used as a substitute.
+- Present but damaged or unreadable metadata, including an invalid retained
+  context, returns `500 STORAGE_ERROR`; the request date or availability is never
+  used as a substitute.
 
 Stale rows (409) and a missing plan (404) are reported before any deadline
 check. Without `schedule_csv_file`, the non-persistent mode bounds the move by
@@ -341,15 +410,72 @@ Illustrative success response; summary and trace depend on the agent:
 ```
 
 A persistent request returns 200 only after replacing the selected file. Its
-identifier, download URL and stored exam timestamp remain unchanged. Replace FE's entire displayed
+identifier, download URL and stored metadata remain unchanged. When the plan has
+a retained context, the response adds that original `availability_snapshot`,
+never the request's one-time availability. Replace FE's entire displayed
 schedule with the response rows. Non-persistent responses keep their previous
 shape and omit the two file fields.
+
+#### Manual move
+
+`"mode": "manual"` moves one study row of a saved plan to a chosen start without
+any model request. It requires `schedule_csv_file`, the full current
+`schedules`, a `study-N` `schedule_id` and `new_start_date`
+(`YYYY/MM/DD/HH/MM`). Optional: `confirm_outside_availability` (boolean, default
+false), `exam_date` (same stored-deadline rule as above), request availability
+(same selection rules) and `preparation_start`. A plan with retained context uses
+its stored preparation start, and a supplied value must equal it. An exam-only
+plan requires a valid `preparation_start` before its exam; it is only a
+client-supplied lower bound for this request and is not stored. A plan without a
+sidecar returns the no-stored-exam-date error above.
+
+```json
+{
+  "mode": "manual",
+  "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedule_id": "study-1",
+  "schedules": [{"schedule_id": "study-1", "start_date": "2026/11/23/23/00",
+                 "end_date": "2026/11/24/00/00", "topic": "함수와 데이터 관리"}],
+  "new_start_date": "2026/11/24/14/00",
+  "confirm_outside_availability": false
+}
+```
+
+The row keeps its ID, topic and duration; other rows are unchanged. The move
+ignores the automatic after-original/same-topic order, so an earlier free future
+time is allowed. Checks run after request parsing, stale-row (409), missing-plan
+(404) and stored-metadata checks, in this order:
+
+| Status / code | Meaning |
+| --- | --- |
+| 422 / `MANUAL_MOVE_IN_PAST` | Starts before the server's current Asia/Seoul minute |
+| 422 / `BEFORE_PREPARATION_START` | Starts before the preparation start |
+| 422 / `EXAM_BOUND_EXCEEDED` | Would end after the stored exam timestamp (ending exactly at it is allowed) |
+| 422 / `STUDY_SESSION_OVERLAP` | Overlaps another `study-N` row |
+| 422 / `EXTERNAL_EVENT_OVERLAP` | Overlaps an `external-N` row |
+| 422 / `OUTSIDE_STUDY_WINDOWS` | Does not fit inside one effective study window (an overnight window counts whole); message: `The chosen time is outside the study windows. Confirm this one-time exception.` |
+
+Only `OUTSIDE_STUDY_WINDOWS` is waived by `confirm_outside_availability: true`;
+the other codes apply whatever its value, and a context with no study window
+always needs that confirmation. Touching rows are not overlaps. A missing
+destination or identity, an `external-N` target, a non-boolean confirmation or a
+mismatching `exam_date`/`preparation_start` returns `422 INVALID_INPUT`. Every
+rejection leaves the plan, its metadata and the profile unchanged. A confirmed
+resubmission is validated again from scratch.
+
+Success uses the normal response: `schedules`, `schedule_csv`, the same file
+identity and URL, `action` `rescheduled_study`, the requested
+`target_schedule_id`, a server-written Korean `agent_summary`, `tool_calls: []`,
+and the retained `availability_snapshot` when the plan has one. It uses the same
+digest-checked same-file replacement as automatic moves, so a lost response has
+no rollback or exactly-once guarantee: reload before choosing again.
 
 ### Error handling and limits
 
 | Status / code | FE handling |
 | --- | --- |
 | 422 / `INVALID_INPUT` | Correct invalid fields, duplicate IDs, missing target, or unusable availability; for the fixed no-stored-exam-date message, create a new plan |
+| 422 / manual-move codes | See the manual move table above; keep the chosen time and ask for another one, or confirm only `OUTSIDE_STUDY_WINDOWS` |
 | 404 / `PLAN_NOT_FOUND` | Refresh the plan list; the file may have been pruned |
 | 409 / `PLAN_CONFLICT` | Reload the plan before resubmitting; never overwrite with stale rows |
 | 500 / `STORAGE_ERROR` | Report storage failure |
@@ -371,8 +497,8 @@ requests cannot silently overwrite one another within one server process.
 Cross-process locking is not provided.
 
 Availability in a generation or adjustment request is not saved automatically.
-If neither an override nor a saved profile exists, adjustment uses the legacy
-conflict-only rule. The current Android app retains the original creation
+If no request context, retained plan context or saved profile exists, automatic
+adjustment uses the legacy conflict-only rule. The current Android app retains the original creation
 request and therefore resends its plan-specific availability and exam timestamp
 (five fields); the server checks that timestamp against the stored one. A study
 session with no slot ending by the effective exam timestamp returns `422

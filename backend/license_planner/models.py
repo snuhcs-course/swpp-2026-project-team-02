@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime
 from typing import Optional
+
+from study_availability import AvailabilityContext, AvailabilityWindow, WeeklyAvailability
+
 from .settings import DEFAULT_CERTIFICATION_ID, DEFAULT_STUDY_DAYS_PER_WEEK
 
 
@@ -59,28 +62,6 @@ class TopicStatistics:
 
 
 @dataclass(frozen=True)
-class AvailabilityWindow:
-    """사용자가 특정 요일에 공부할 수 있는 하루 내 시간 구간입니다."""
-    # 구간 시작/종료 시각이며 종료는 포함하지 않습니다.
-    start_time: time
-    end_time: time
-
-
-@dataclass(frozen=True)
-class WeeklyAvailability:
-    """월요일부터 일요일까지의 사용자별 주간 공부 가능 시간입니다."""
-    # weekday_windows[index]는 월요일=0 ... 일요일=6의 시간 구간 목록입니다.
-    weekday_windows: tuple[tuple[AvailabilityWindow, ...], ...]
-
-    def for_weekday(self, weekday: int) -> tuple[AvailabilityWindow, ...]:
-        """입력 값: 월요일 0부터 일요일 6까지의 요일 번호
-        출력 값: 해당 요일의 시간 구간 튜플
-        기능: 주간 가능 시간에서 요청된 요일 구간을 반환합니다.
-        """
-        return self.weekday_windows[weekday]
-
-
-@dataclass(frozen=True)
 class PlanRequest:
     """앱에서 전달하는 사용자 입력을 묶은 요청 객체입니다."""
     # 수준에 대한 문장형 자기평가와 문제별 진단 결과입니다.
@@ -94,8 +75,8 @@ class PlanRequest:
     busy_periods: tuple[BusyPeriod, ...] = ()
     certification_id: str = DEFAULT_CERTIFICATION_ID
     study_days_per_week: int = DEFAULT_STUDY_DAYS_PER_WEEK
-    # 저장된 개인용 반복 주간 가능 시간입니다.
-    weekly_availability: Optional[WeeklyAvailability] = None
+    # 선택된 가능 시간 문맥(반복 주간 시간과 주별 교체 시간)입니다.
+    weekly_availability: Optional[AvailabilityContext | WeeklyAvailability] = None
 
 
 @dataclass(frozen=True)

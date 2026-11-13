@@ -14,6 +14,7 @@ from api_service import (adjust_schedule, create_study_plan, read_availability,
 from assessment_service import (AssessmentConfigurationError, get_public_certifications,
                                 get_public_questions)
 from openrouter_client import InferenceConfigurationError, sanitize_diagnostic
+from schedule_adjuster.schedule_logic import ManualMoveError
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError
 
 # API 서버 기본 설정은 JSON 파일에 두며 환경 변수로도 덮어쓸 수 있습니다.
@@ -160,7 +161,7 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 if path == f"{API_PREFIX}/health":
                     self._send_json(200, {"status": "ok"})
                 elif path == f"{API_PREFIX}/availability":
-                    self._send_json(200, {"weekly_availability": read_availability()})
+                    self._send_json(200, read_availability())
                 elif path == f"{API_PREFIX}/certifications":
                     self._send_json(200, get_public_certifications())
                 elif path.startswith(f"{API_PREFIX}/certifications/") and path.endswith("/questions"):
@@ -233,7 +234,7 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 elif method == "POST" and path == f"{API_PREFIX}/schedules/adjust":
                     result = adjust_schedule(payload)
                 elif method == "PUT" and path == f"{API_PREFIX}/availability":
-                    result = {"weekly_availability": write_availability(payload)}
+                    result = write_availability(payload)
                 else:
                     self._send_json(404, {"error": {"code": "NOT_FOUND", "message": "API route not found"}})
                     return
@@ -246,6 +247,8 @@ def make_handler(config: dict[str, Any]) -> type[BaseHTTPRequestHandler]:
                 self._send_json(409, {"error": {"code": "PLAN_CONFLICT", "message": str(error)}})
             except PlanStorageError as error:
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
+            except ManualMoveError as error:
+                self._send_json(422, {"error": {"code": error.code, "message": str(error)}})
             except ValueError as error:
                 self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:

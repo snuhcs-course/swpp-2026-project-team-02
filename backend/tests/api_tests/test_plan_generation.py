@@ -121,6 +121,19 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assert_infeasible(status, body, "학습 주제 1개에도")
         self.assertEqual(self.model_requests, 0)
 
+    def test_every_preparation_week_replaced_with_an_empty_week_is_not_enough_time(self):
+        payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
+        payload.update({"preparation_start": "2026/11/16/00/00", "exam_date": "2026/11/29/23/00",
+                        "weekly_availability": {"wednesday": [{"start": "19:00", "duration_minutes": 60}]},
+                        "availability_overrides": {"2026/11/16": {}, "2026/11/23": {}}})
+
+        status, body = self.post(payload)
+
+        self.assert_infeasible(status, body, "학습 주제 1개에도")
+        self.assertIn("0분", body["error"]["message"])
+        self.assertEqual(self.model_requests, 0)
+        self.assertEqual(self.saved_files(), [])
+
     def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
         recorded = RECORDED["one_minute_with_three_assessed_topics"]
         self.script(recorded)
@@ -151,14 +164,51 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 csv_name = Path(body["schedule_csv_file"]).name
                 metadata_name = Path(csv_name).stem + ".meta.json"
                 self.assertEqual(self.saved_files(), sorted([csv_name, metadata_name]))
-                self.assertEqual(json.loads((self.store / metadata_name).read_text(encoding="utf-8")),
-                                 {"exam_date": recorded["request"]["exam_date"]})
+                metadata = json.loads((self.store / metadata_name).read_text(encoding="utf-8"))
+                self.assertEqual({key: metadata[key] for key in ("version", "exam_date", "preparation_start")},
+                                 {"version": 2, "exam_date": recorded["request"]["exam_date"],
+                                  "preparation_start": recorded["request"]["preparation_start"]})
+                stored_context = metadata["availability_snapshot"]
+                returned_context = body["availability_snapshot"]
+                for week in (stored_context["weekly_availability"],
+                             *stored_context["availability_overrides"].values()):
+                    self.assertTrue(all(set(window) == {"start", "duration_minutes"}
+                                        for windows in week.values() for window in windows))
+                self.assertEqual(returned_context["weekly_availability"].keys(),
+                                 stored_context["weekly_availability"].keys())
+                for day, windows in returned_context["weekly_availability"].items():
+                    self.assertEqual([{k: w[k] for k in ("start", "duration_minutes")} for w in windows],
+                                     stored_context["weekly_availability"][day])
                 stored = (self.store / csv_name).read_text(encoding="utf-8")
                 self.assertEqual(stored, body["schedule_csv"])
                 self.assertEqual(list(csv.DictReader(io.StringIO(stored))), body["schedules"])
                 external = {f"external-{row['schedule_id']}" for row in recorded["request"]["busy_schedules"]}
                 self.assertEqual({row["schedule_id"] for row in body["schedules"]
                                   if row["schedule_id"].startswith("external-")}, external)
+
+    def test_shared_profile_context_is_captured_and_survives_later_profile_edits(self):
+        from license_planner.user_availability import load_personal_availability, save_personal_availability
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        profile = Path(self.temp.name) / "profile.json"
+        future_week = {"2027/01/04": {"friday": [{"start": "07:00", "duration_minutes": 30}]}}
+        save_personal_availability({"weekly_availability": recorded["request"]["weekly_availability"],
+                                    "availability_overrides": future_week}, profile)
+        payload = copy.deepcopy(recorded["request"])
+        del payload["weekly_availability"]
+        self.script(recorded)
+        with patch.object(api_service, "load_personal_availability", lambda: load_personal_availability(profile)):
+            status, body = self.post(payload)
+        self.assertEqual(status, 200, body)
+        captured = body["availability_snapshot"]
+        self.assertEqual(captured["availability_overrides"]["2027/01/04"]["friday"],
+                         [{"start": "07:00", "duration_minutes": 30, "end": "07:30"}])
+
+        save_personal_availability({"weekly_availability": {"sunday": [{"start": "10:00", "duration_minutes": 60}]},
+                                    "availability_overrides": {}}, profile)
+        status, listing = self.get("/study-plans")
+        self.assertEqual(status, 200)
+        listed = next(plan for plan in listing["plans"] if plan["schedule_csv_file"] == body["schedule_csv_file"])
+        self.assertEqual(listed["availability_snapshot"], captured)
 
     def test_busy_schedule_is_excluded_from_study_blocks_over_http(self):
         """The JSON busy_schedules contract reaches the scheduler, not just the model prompt."""

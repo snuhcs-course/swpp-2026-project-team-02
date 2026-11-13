@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import quote
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 import license_planner.agent
+import license_planner.user_availability
 import schedule_adjuster.agent
+import schedule_adjuster.settings
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from study_plan_store import StudyPlanStore
 from test_support.fixed_live_e2e_server import (
@@ -269,6 +273,181 @@ class CompatibilityE2EServerTests(unittest.TestCase):
         self.assertEqual([item["problem_id"] for item in mapping], [501])
         self.assertEqual(len(case["request"]["assessment_results"]["results"]), 3)
         self.assertEqual({row["topic"] for row in plan["schedules"] if row["topic"]}, {"컴퓨터 시스템 보호"})
+
+
+def _hour_window(start: str, minutes: int) -> list[dict]:
+    return [{"start": start, "duration_minutes": minutes}]
+
+
+def _empty_week() -> dict[str, list]:
+    return {day: [] for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")}
+
+
+class IsolatedScriptedServerTests(unittest.TestCase):
+    """Scripted planning, isolated profile and plan storage, frozen manual clock and request log."""
+
+    REAL_CONFIG = Path(license_planner.user_availability.__file__).resolve().parents[1] / "config"
+
+    def setUp(self):
+        self.storage = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        days_to_monday = 7 - date.today().weekday()
+        self.monday = date.today() + timedelta(days=days_to_monday + 7)
+        self.real_profile = license_planner.user_availability.USER_AVAILABILITY_PATH
+        self.real_config = {path.name: path.read_bytes() for path in sorted(self.REAL_CONFIG.iterdir())
+                            if path.is_file()}
+        self.addCleanup(self.assert_real_configuration_untouched)
+
+    def assert_real_configuration_untouched(self):
+        self.assertEqual({path.name: path.read_bytes() for path in sorted(self.REAL_CONFIG.iterdir())
+                          if path.is_file()}, self.real_config)
+        self.assertEqual(license_planner.user_availability.USER_AVAILABILITY_PATH, self.real_profile)
+        self.assertEqual(schedule_adjuster.settings.USER_AVAILABILITY_PATH, self.real_profile)
+
+    def wire(self, day: date, hour: int, minute: int = 0) -> str:
+        return datetime(day.year, day.month, day.day, hour, minute).strftime(WIRE)
+
+    def plan_request(self) -> dict:
+        request = copy.deepcopy(load_cases()[DEFAULT_CASE_ID]["request"])
+        weekly = _empty_week()
+        for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday"):
+            weekly[day] = _hour_window("18:00", 120)
+        weekly["sunday"] = _hour_window("23:00", 90)
+        override = _empty_week()
+        override["tuesday"] = [{"start": "20:00", "duration_minutes": 60}, {"start": "22:00", "duration_minutes": 30}]
+        request.update({
+            "preparation_start": self.wire(self.monday, 0),
+            "exam_date": self.wire(self.monday + timedelta(days=28), 18),
+            "weekly_availability": weekly,
+            "availability_overrides": {(self.monday + timedelta(days=7)).strftime("%Y/%m/%d"): override},
+        })
+        return request
+
+    def generate(self, server) -> dict:
+        status, plan = request_json(f"{server.api_base_url}/study-plans", "POST", self.plan_request())
+        self.assertEqual(status, 200, plan)
+        return plan
+
+    def manual_move(self, server, plan: dict, schedule_id: str, new_start: str) -> tuple[int, dict]:
+        return request_json(f"{server.api_base_url}/schedules/adjust", "POST", {
+            "mode": "manual", "schedule_csv_file": plan["schedule_csv_file"], "schedule_id": schedule_id,
+            "schedules": plan["schedules"], "new_start_date": new_start})
+
+    def test_availability_profile_is_seeded_saved_and_read_back_only_in_storage(self):
+        seed = self.storage / "seed.json"
+        seed.write_text(json.dumps({"weekly_availability": {"monday": _hour_window("21:00", 30)}}), encoding="utf-8")
+        storage = self.storage / "server"
+        changed = {"weekly_availability": {**_empty_week(), "sunday": _hour_window("23:00", 90)},
+                   "availability_overrides": {self.monday.strftime("%Y/%m/%d"): _empty_week()}}
+
+        with running_server(planning="scripted", storage_dir=storage, profile_seed=seed) as server:
+            self.assertEqual(server.profile_path, storage.resolve() / "user_availability.json")
+            status, loaded = request_json(f"{server.api_base_url}/availability")
+            self.assertEqual(status, 200, loaded)
+            self.assertEqual(loaded["weekly_availability"]["monday"][0]["duration_minutes"], 30)
+            status, saved = request_json(f"{server.api_base_url}/availability", "PUT", changed)
+            self.assertEqual(status, 200, saved)
+            stored = json.loads(server.profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["weekly_availability"]["sunday"][0]["duration_minutes"], 90)
+            plan = self.generate(server)
+
+        with running_server(planning="scripted", storage_dir=storage, profile_seed=seed) as restarted:
+            status, loaded = request_json(f"{restarted.api_base_url}/availability")
+            self.assertEqual(status, 200, loaded)
+            self.assertEqual(loaded["weekly_availability"]["sunday"][0]["duration_minutes"], 90)
+            self.assertEqual(loaded["weekly_availability"]["monday"], [])
+            status, listing = request_json(f"{restarted.api_base_url}/study-plans?schedule_csv_file="
+                                           f"{quote(plan['schedule_csv_file'], safe='')}")
+            self.assertEqual(status, 200, listing)
+            self.assertEqual(listing["plans"][0]["schedules"], plan["schedules"])
+
+    def test_scripted_planning_uses_the_request_period_overrides_and_overnight_windows(self):
+        with running_server(planning="scripted", storage_dir=self.storage) as server:
+            plan = self.generate(server)
+
+        self.assertEqual([call["tool"] for call in plan["tool_calls"]],
+                         ["analyze_exam_results", "build_study_schedule"])
+        studies = [row for row in plan["schedules"] if row["topic"]]
+        self.assertTrue(studies)
+        self.assertEqual({row["topic"] for row in studies}, LEVEL_2_TOPICS)
+        starts = [datetime.strptime(row["start_date"], WIRE) for row in studies]
+        override_week = {self.monday + timedelta(days=7 + offset) for offset in range(7)}
+        self.assertEqual({start.date() for start in starts} & override_week, {self.monday + timedelta(days=8)})
+        self.assertEqual({start.strftime("%H:%M") for start in starts if start.date() in override_week}, {"20:00"})
+        self.assertTrue(all(start.strftime("%H:%M") == "23:00" for start in starts if start.weekday() == 6))
+        self.assertTrue(any(start.weekday() == 6 for start in starts))
+        self.assertIn((self.monday + timedelta(days=7)).strftime("%Y/%m/%d"),
+                      plan["availability_snapshot"]["availability_overrides"])
+
+    def test_frozen_clock_decides_whether_a_manual_destination_is_past(self):
+        destination = self.wire(self.monday + timedelta(days=2), 19)
+        frozen = datetime.combine(self.monday + timedelta(days=4), datetime.min.time()).replace(hour=12)
+
+        with running_server(planning="scripted", storage_dir=self.storage / "frozen", now=frozen) as server:
+            plan = self.generate(server)
+            target = next(row for row in plan["schedules"]
+                          if row["topic"] and row["start_date"] > self.wire(self.monday + timedelta(days=5), 0))
+            status, refused = self.manual_move(server, plan, target["schedule_id"], destination)
+            self.assertEqual(status, 422, refused)
+            self.assertEqual(refused["error"]["code"], "MANUAL_MOVE_IN_PAST")
+
+        early = datetime.combine(self.monday, datetime.min.time())
+        with running_server(planning="scripted", storage_dir=self.storage / "early", now=early) as server:
+            plan = self.generate(server)
+            target = next(row for row in plan["schedules"]
+                          if row["topic"] and row["start_date"] > self.wire(self.monday + timedelta(days=5), 0))
+            status, moved = self.manual_move(server, plan, target["schedule_id"], destination)
+            self.assertEqual(status, 200, moved)
+            row = next(row for row in moved["schedules"] if row["schedule_id"] == target["schedule_id"])
+            self.assertEqual(row["start_date"], destination)
+
+    def test_request_log_and_test_control_switches(self):
+        log, control = self.storage / "requests.jsonl", self.storage / "control.json"
+        busy = {"schedule_id": "55", "start_date": self.wire(self.monday + timedelta(days=1), 18),
+                "end_date": self.wire(self.monday + timedelta(days=1), 19), "topic": "외부 일정"}
+        control.write_text(json.dumps({"inject_busy_schedules": [busy], "drop_next_adjust_response": True}),
+                           encoding="utf-8")
+
+        with running_server(planning="scripted", storage_dir=self.storage, request_log=log,
+                            test_control=control) as server:
+            request_json(f"{server.api_base_url}/availability")
+            plan = self.generate(server)
+            self.assertIn("external-55", {row["schedule_id"] for row in plan["schedules"]})
+            target = next(row for row in plan["schedules"] if row["topic"])
+            before = self.readback_rows(server, plan)
+            with self.assertRaises((URLError, ConnectionError, OSError)):
+                self.manual_move(server, plan, target["schedule_id"],
+                                 self.wire(self.monday + timedelta(days=2), 19))
+            self.assertNotEqual(self.readback_rows(server, plan), before)
+            self.assertEqual(json.loads(control.read_text(encoding="utf-8")), {})
+
+        entries = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(entry["method"], entry["path"].split("?")[0], entry["status"]) for entry in entries], [
+            ("GET", "/api/v1/availability", 200), ("POST", "/api/v1/study-plans", 200),
+            ("GET", "/api/v1/study-plans", 200), ("POST", "/api/v1/schedules/adjust", 200),
+            ("GET", "/api/v1/study-plans", 200)])
+        self.assertEqual(entries[1]["body"]["busy_schedules"], [])
+        self.assertEqual(entries[1]["test_control"][0]["rows"], [busy])
+        self.assertTrue(entries[3]["response_dropped"])
+        self.assertEqual(entries[3]["body"]["new_start_date"], self.wire(self.monday + timedelta(days=2), 19))
+
+    def readback_rows(self, server, plan: dict) -> list[dict]:
+        status, listing = request_json(f"{server.api_base_url}/study-plans?schedule_csv_file="
+                                       f"{quote(plan['schedule_csv_file'], safe='')}")
+        self.assertEqual(status, 200, listing)
+        return listing["plans"][0]["schedules"]
+
+    def test_scripted_mode_keeps_provider_access_forbidden(self):
+        with running_server(planning="scripted", storage_dir=self.storage):
+            for module in (license_planner.agent, schedule_adjuster.agent):
+                for name in ("create_response", "load_api_key", "load_model"):
+                    with self.subTest(module=module.__name__, name=name), \
+                            self.assertRaisesRegex(RuntimeError, "must not read provider credentials"):
+                        getattr(module, name)()
+
+    def test_unknown_planning_mode_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unknown planning mode"):
+            with running_server(planning="live"):
+                pass
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 
 명령줄 입력은 변경 대상 ID와 원본 CSV 경로입니다. 새 CSV 열은 `schedule_id,start_date,end_date,topic`이며 시작·종료 값은 `YYYY/MM/DD/HH/MM`입니다. 기존 세 열 CSV도 읽을 수 있습니다. 일정 구간은 시작 포함·종료 제외입니다. ID는 이전 일정 생성 프로그램의 출력과 같이 `study-번호` 또는 `external-번호` 형식이어야 합니다.
 
-- 실패한 공부 일정(`study-N`): 주제가 있으면 Agent가 같은 주제 세션을 먼저 조회합니다. 기존 기간 길이와 주제를 유지하고, 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 충돌하지 않는 구간을 찾습니다. `config/user_availability.json`이 있으면 해당 요일·시간 안에서만 이동합니다. 주제가 없는 구형 행도 같은 가능 시간 규칙을 적용합니다. 다른 일정 행은 그대로 둡니다.
+- 실패한 공부 일정(`study-N`): 주제가 있으면 Agent가 같은 주제 세션을 먼저 조회합니다. 기존 기간 길이와 주제를 유지하고, 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 충돌하지 않는 구간을 찾습니다. `config/user_availability.json`이 있으면 실제 날짜의 가능 구간(주별 교체 시간, 자정을 넘는 구간 포함) 하나 안에 세션 전체가 들어가는 곳으로만 이동합니다. 주제가 없는 구형 행도 같은 가능 시간 규칙을 적용합니다. 다른 일정 행은 그대로 둡니다.
 - 취소된 외부 일정(`external-N`): 취소 행만 제거하고 나머지 외부 일정과 공부 일정은 보존합니다.
 - 출력: `schedule_id,start_date,end_date,topic` CSV. 주제는 이동 후에도 유지되며 외부 일정 주제는 비어 있을 수 있습니다. stdout은 결과 CSV, stderr는 조정 작업과 tool trace입니다.
 
@@ -24,13 +24,16 @@ python -m schedule_adjuster.cli --schedule-id study-104 --schedule-csv schedule.
 ```json
 {
   "weekly_availability": {
-    "monday": [{"start": "19:00", "end": "21:00"}],
+    "monday": [{"start": "23:00", "duration_minutes": 90}],
     "saturday": [{"start": "09:00", "end": "12:00"}]
-  }
+  },
+  "availability_overrides": {"2026/11/23": {}}
 }
 ```
 
-다른 JSON 파일을 지정하려면 `--availability-file availability.json`을 추가합니다. 파일이 없으면 기존처럼 기존 일정과 주제 순서만 고려해 이동합니다. 설정된 요일에 세션 길이를 수용할 만큼 긴 시간 구간이 없으면 조정 오류를 반환합니다. 취소된 외부 일정 제거는 가능 시간 설정과 무관합니다.
+구간은 `start`와 1~1439분 `duration_minutes`로 적고 시작한 요일에 속합니다(월요일 23:00/90분은 화요일 00:30까지). 구형 같은 날 `start`/`end`도 읽습니다. `availability_overrides`는 월요일 날짜 키로 그 주 전체를 교체하며 `{}`는 공부하지 않는 주입니다. 파서·겹침 검사·날짜별 해석은 License Planner와 같은 `backend/study_availability.py`를 씁니다. 읽기만으로는 파일을 다시 쓰지 않습니다.
+
+다른 JSON 파일을 지정하려면 `--availability-file availability.json`을 추가합니다. 파일이 없으면 기존처럼 기존 일정과 주제 순서만 고려해 이동합니다. 시험일까지 남은 가능 구간(이후 주별 교체 시간 포함) 어디에도 세션 길이를 수용할 구간이 없으면 조정 오류를 반환합니다. 취소된 외부 일정 제거는 가능 시간 설정과 무관합니다.
 
 ## Agent 도구
 

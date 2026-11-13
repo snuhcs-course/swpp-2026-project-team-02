@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+
+from study_availability import as_context
 
 from .catalog import Certification
 from .models import PlanRequest, ProblemResult, StudyBlock, TopicStatistics
@@ -44,19 +46,23 @@ def _free_segments(start: datetime, end: datetime, busy_periods) -> list[tuple[d
 
 
 def _free_segments_by_day(request: PlanRequest) -> dict[date, list[tuple[datetime, datetime]]]:
-    """Free intervals per date from preparation_start through exam_date, busy periods removed."""
+    """Free intervals per date from preparation_start through exam_date, busy periods removed.
+
+    Each date uses the shared resolver's absolute windows (including the
+    previous date's overnight spill) clipped to that civil date, so a window
+    crossing midnight contributes each minute to exactly one date.
+    """
+    context = as_context(request.weekly_availability)
     free_by_day: dict[date, list[tuple[datetime, datetime]]] = {}
     current_day = request.preparation_start.date()
     final_day = request.exam_date.date()
     while current_day <= final_day:
+        day_start = datetime.combine(current_day, time())
+        lower = max(day_start, request.preparation_start)
+        upper = min(day_start + timedelta(days=1), request.exam_date)
         day_segments: list[tuple[datetime, datetime]] = []
-        for window in request.weekly_availability.for_weekday(current_day.weekday()):
-            window_start = datetime.combine(current_day, window.start_time)
-            window_end = datetime.combine(current_day, window.end_time)
-            if current_day == request.preparation_start.date():
-                window_start = max(window_start, request.preparation_start)
-            if current_day == request.exam_date.date():
-                window_end = min(window_end, request.exam_date)
+        for window_start, window_end in (context.windows_for(current_day) if context else ()):
+            window_start, window_end = max(window_start, lower), min(window_end, upper)
             if window_start < window_end:
                 day_segments.extend(_free_segments(window_start, window_end, request.busy_periods))
         day_segments.sort(key=lambda segment: segment[0])
@@ -94,8 +100,8 @@ def generate_schedule(request: PlanRequest, cert: Certification,
         raise ValueError("preparation_start and exam_date are required before generating a dated schedule")
     if request.preparation_start >= request.exam_date:
         raise ValueError("preparation_start must be before exam_date")
-    if (request.weekly_availability is None
-            or not any(request.weekly_availability.for_weekday(day) for day in range(7))):
+    context = as_context(request.weekly_availability)
+    if context is None or not context.has_windows():
         raise ValueError(
             "weekly_availability is required. Enter at least one weekday and available time window."
         )

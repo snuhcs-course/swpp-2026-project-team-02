@@ -81,18 +81,18 @@ class AvailabilityAndInputTests(unittest.TestCase):
             loaded = load_personal_availability(config_path)
             document = json.loads(config_path.read_text(encoding="utf-8"))
 
-        # Omitted weekdays are saved as empty lists.
+        # Omitted weekdays are saved as empty lists, in the canonical duration form.
         expected = {
-            "monday": [{"start": "18:00", "end": "21:00"}],
+            "monday": [{"start": "18:00", "duration_minutes": 180}],
             "tuesday": [],
             "wednesday": [],
             "thursday": [],
             "friday": [],
-            "saturday": [{"start": "10:00", "end": "12:00"}],
+            "saturday": [{"start": "10:00", "duration_minutes": 120}],
             "sunday": [],
         }
         self.assertEqual(saved, loaded)
-        self.assertEqual(document["weekly_availability"], expected)
+        self.assertEqual(document, {"weekly_availability": expected, "availability_overrides": {}})
 
     def test_overlapping_or_invalid_availability_is_rejected(self):
         invalid_values = (
@@ -118,6 +118,73 @@ class AvailabilityAndInputTests(unittest.TestCase):
         self.assertEqual(by_topic["함수와 데이터 관리"].possible_score, 1.7)
         self.assertEqual(by_topic["함수와 데이터 관리"].earned_score, 1.0)
         self.assertEqual(by_topic["스프레드시트 기본"].score_percent, 100)
+
+
+class RequestContextPrecedenceTests(unittest.TestCase):
+    """Generation chooses one availability context without saving it."""
+
+    SHARED = parse_weekly_availability({
+        "weekly_availability": {"tuesday": [{"start": "09:00", "end": "11:00"}]},
+        "availability_overrides": {"2026/10/12": {"wednesday": [{"start": "20:00", "duration_minutes": 60}]}},
+    })
+
+    def build(self, **changes):
+        payload = make_api_payload()
+        payload.update(changes)
+        for key, value in list(payload.items()):
+            if value is ...:
+                del payload[key]
+        with patch("api_service.load_personal_availability", return_value=self.SHARED) as loader:
+            request = build_plan_request(payload, require_assessment=True)
+        return request.weekly_availability, loader.call_count
+
+    def test_explicit_base_suppresses_inherited_overrides(self):
+        context, loads = self.build(weekly_availability={"saturday": [{"start": "10:00", "end": "12:00"}]})
+
+        self.assertEqual(loads, 0)
+        self.assertEqual(context.overrides, ())
+        self.assertTrue(context.base.for_weekday(5))
+
+    def test_omitted_base_inherits_the_shared_profile(self):
+        for omitted in (..., None):
+            with self.subTest(weekly_availability=omitted):
+                context, loads = self.build(weekly_availability=omitted)
+                self.assertEqual(loads, 1)
+                self.assertEqual(context, self.SHARED)
+
+    def test_supplied_overrides_replace_the_inherited_map_but_keep_the_base(self):
+        context, _ = self.build(weekly_availability=..., availability_overrides={"2026/10/19": {}})
+
+        self.assertEqual(context.base, self.SHARED.base)
+        self.assertEqual([monday.isoformat() for monday, _ in context.overrides], ["2026-10-19"])
+
+    def test_explicit_base_with_supplied_overrides_uses_both(self):
+        context, loads = self.build(availability_overrides={
+            "2026/10/12": {"friday": [{"start": "07:00", "duration_minutes": 30}]}})
+
+        self.assertEqual(loads, 0)
+        self.assertTrue(context.base.for_weekday(0))
+        self.assertTrue(context.overrides[0][1].for_weekday(4))
+
+    def test_null_overrides_and_cross_day_overlap_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "availability_overrides"):
+            self.build(availability_overrides=None)
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            self.build(weekly_availability={"sunday": [{"start": "23:00", "duration_minutes": 90}]},
+                       availability_overrides={"2026/10/12": {"monday": [{"start": "00:15", "duration_minutes": 30}]}})
+
+    def test_request_context_does_not_touch_the_profile_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "availability.json"
+            save_personal_availability({"tuesday": [{"start": "09:00", "end": "11:00"}]}, path)
+            before = path.read_bytes()
+            payload = make_api_payload()
+            payload["availability_overrides"] = {"2026/10/12": {}}
+            with patch("license_planner.user_availability.USER_AVAILABILITY_PATH", path):
+                build_plan_request(payload, require_assessment=True)
+                del payload["weekly_availability"]
+                build_plan_request(payload, require_assessment=True)
+            self.assertEqual(path.read_bytes(), before)
 
 
 class PlanningScheduleTests(unittest.TestCase):

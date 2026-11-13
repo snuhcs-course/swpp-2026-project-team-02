@@ -44,11 +44,11 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `GET /api/v1/certifications` | 활성 자격증 목록 | 없음 |
 | `GET /api/v1/certifications/{certification_id}/questions` | 더미 진단 질문·선택지·정답 | 없음 |
 | `GET /api/v1/availability` | 저장된 반복 가능 시간 조회 | 없음 |
-| `PUT /api/v1/availability` | 반복 가능 시간 저장 | 요일별 `start`, `end` 배열 |
+| `PUT /api/v1/availability` | 반복 가능 시간과 주별 교체 시간 저장 | 요일별 `start`+`duration_minutes`(또는 구형 `start`/`end`) 배열, 선택적 `availability_overrides` |
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수) |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `preparation_start`를 받습니다 |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:
@@ -69,13 +69,14 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
      "end_date": "2026/10/07/15/00", "topic": ""}
   ],
   "weekly_availability": {
-    "monday": [{"start": "18:00", "end": "21:00"}]
-  }
+    "monday": [{"start": "18:00", "duration_minutes": 180}]
+  },
+  "availability_overrides": {}
 }
 ```
 
 일정 생성 응답에는 화면 표시에 쓸 `schedules` 배열, `schedule_csv` 문자열,
-저장 CSV 다운로드 경로 `schedule_csv_url`이 포함됩니다. 새 계획을 저장할 때 삭제 가능한 자동 생성 CSV 중 최근 100개를 유지하고 더 오래된 파일을 정리합니다. 진단 질문 API는
+저장 CSV 다운로드 경로 `schedule_csv_url`, 이 계획이 받아들인 기본 시간과 주별 교체 시간 `availability_snapshot`(각 구간에 응답용 `end` 포함)이 포함됩니다. 새 계획을 저장할 때 삭제 가능한 자동 생성 CSV 중 최근 100개를 유지하고 더 오래된 파일을 정리합니다. 진단 질문 API는
 더미 문항의 정답도 제공하며, FE가 기본 비교 로직으로 `is_correct`를 계산합니다.
 Planning API는 재채점하지 않지만 `is_correct`가 `user_answer`와 `correct_answer` 비교 결과(`UNKNOWN`은 항상 오답)와 다르면 모델 호출·저장 전에 HTTP 422로 거절합니다. 제출 문항은 하나씩 따로 대조합니다. ID·지문·일반 선택지·정답·배점이 완전한 `reviewed` 문항 레코드와 같으면(순서·부분 집합 무관, `UNKNOWN` 선택지 허용, 진단 선택에 들어 있지 않아도 됨) 그 레코드의 `topic`을 가중치 1로 쓰고, 나머지 미분류 문항만 Agent가 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
 정상 요청은 HTTP 200, 잘못된
@@ -218,14 +219,15 @@ Agent는 최대 6번 모델을 호출합니다(`AGENT_MAX_STEPS`). `build_study_
   "certification_id": "computer_specialist_level_2",
   "study_days_per_week": 5,
   "weekly_availability": {
-    "monday": [{"start": "18:00", "end": "21:00"}],
-    "wednesday": [{"start": "09:00", "end": "12:00"}],
+    "monday": [{"start": "23:00", "duration_minutes": 90}],
+    "wednesday": [{"start": "09:00", "duration_minutes": 180}],
     "saturday": [{"start": "10:00", "end": "14:00"}]
-  }
+  },
+  "availability_overrides": {"2026/10/19": {}}
 }
 ```
 
-가능 시간 JSON의 요일 키는 `monday`부터 `sunday`까지이며, 하루 안의 각 구간은 `{"start":"HH:MM","end":"HH:MM"}` 형식입니다. 같은 요일의 구간은 서로 겹칠 수 없습니다. 빠진 요일은 공부 불가로 취급합니다. 모든 요일이 비어 있거나 요청과 저장 프로필 모두에 시간이 없으면 `weekly_availability is required. Enter at least one weekday and available time window.` 오류를 반환합니다.
+가능 시간 JSON의 요일 키는 `monday`부터 `sunday`까지입니다. 각 구간은 `{"start":"HH:MM","duration_minutes":N}`(N은 1~1439 정수) 형식이 기본이며, 구간은 시작한 요일에 속하고 다음 날로 넘어갈 수 있습니다(월요일 23:00/90분은 화요일 00:30까지). 같은 날 안의 구형 `{"start","end"}`(시작 < 종료)도 받으며, 세 키를 모두 보내면 `end`가 시작+길이와 같아야 합니다. 실제 날짜로 펼친 구간은 다음 날·일요일→월요일·주별 교체 경계까지 포함해 서로 겹칠 수 없고, 맞닿는 구간은 허용합니다. `availability_overrides`는 월요일 날짜(`YYYY/MM/DD`)를 키로 그 주 전체를 교체하며, `{}`는 공부하지 않는 주, 키가 없으면 기본 시간을 씁니다. 요청에 `weekly_availability`를 보내면 저장된 주별 교체 시간은 섞지 않고, 요청의 `availability_overrides`는 이번 요청의 교체 맵 전체를 대신합니다. 일별 가용 분은 날짜 경계에서 나눠 계산합니다(23:00/90분 → 60분+30분). 빠진 요일은 공부 불가로 취급합니다. 모든 요일이 비어 있거나 요청과 저장 프로필 모두에 시간이 없으면 `weekly_availability is required. Enter at least one weekday and available time window.` 오류를 반환합니다.
 
 진단은 HTTP 요청의 `assessment_results` JSON으로 제출합니다. 입력 구조 오류, 중복 문제 ID, 빈 질문/답변, 잘못된 Topic 매핑은 HTTP 422를 반환합니다. Planning Agent는 문제마다 여러 Topic을 지정할 수 있고 각 문제의 비중 합은 1이어야 합니다. 바쁜 일정은 JSON 배열이며 생략하거나 비우면 기존 일정이 없는 것으로 처리합니다. 기존 일정은 출력 CSV에서 `external-` 접두어가 붙습니다.
 
@@ -239,7 +241,7 @@ study-102,2026/10/05/18/00,2026/10/05/19/00,Charts
 external-101,2026/10/12/18/00,2026/10/12/20/00,
 ```
 
-CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장되고, 같은 이름의 `.meta.json` 파일에 검증된 `exam_date`가 함께 저장됩니다. 응답 필드와 CSV 형식은 바뀌지 않습니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
+CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장되고, 같은 이름의 `.meta.json` 파일(version 2)에 검증된 `exam_date`, `preparation_start`, 받아들인 `availability_snapshot`(duration 형식)이 함께 저장됩니다. 이전 `{"exam_date":...}` 파일은 그대로 읽고 다시 쓰지 않습니다. 기존 응답 필드와 CSV 형식은 바뀌지 않고 `availability_snapshot`만 추가됩니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
 
 ### 오류 데이터
 
@@ -309,7 +311,7 @@ python -m license_planner.cli `
   2> scenarios/results/license_planner/manual_agent_log.txt
 ```
 
-`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`end` 구간으로 지정합니다. Android는 로컬 채점된 `assessment_results`와 `weekly_availability`를 생성 요청에 보내고, 조정에는 선택한 계획의 원래 시간표를 보냅니다. Android는 `PUT /api/v1/availability`를 호출하지 않으며, 이 프로필 저장 경로는 다른 클라이언트용입니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
+`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`duration_minutes` 구간(구형 `start`/`end`도 허용)과 선택적 `availability_overrides`로 지정합니다. Android는 로컬 채점된 `assessment_results`와 가능 시간 문맥을 생성 요청에 보내고, 조정에는 선택한 계획의 원래 문맥을 보냅니다. Android는 학습자가 명시적으로 요청할 때만 `GET`/`PUT /api/v1/availability`로 공용 프로필을 불러오거나 저장합니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
 
 계획 CSV 결과는 표준 출력으로도 제공되며, API 서비스는 생성 결과를 `license_planner/output/`에 저장합니다. HTTP 응답의 `schedule_csv_url`은 그 파일을 내려받는 GET 경로입니다. CLI에서 stdout 결과를 파일로 저장하려면 PowerShell 리디렉션(`python -m license_planner.cli ... > plan.csv`)을 사용할 수 있습니다. Agent 요약과 도구 호출명은 표준 오류로 나옵니다.
 
@@ -423,7 +425,7 @@ Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 
 - `study-번호`를 받으면 공부 일정으로 취급합니다. 기존 기간 길이와 주제를 유지하고 같은 주제의 기존 세션 이후로 이동합니다. 공유 개인 시간표가 있으면 그 요일·시간 안에서 다른 일정과 겹치지 않는 첫 구간을 선택합니다.
 - `external-번호`를 받으면 취소된 외부 일정으로 취급하고 해당 행만 결과에서 제거합니다.
 - 변경 대상이 아닌 일정 행은 원래 시작 시각과 종료 시각을 유지합니다. 결과 CSV는 시작 시각과 ID 기준으로 정렬됩니다.
-- 일정 구간은 시작 포함·종료 제외로 처리합니다. 개인 시간표는 `config/user_availability.json`에서 자동으로 읽으며 `--availability-file`로 다른 파일을 지정할 수 있습니다. 시간표 파일이 없으면 기존 충돌 회피 규칙만 적용하고, 공휴일과 시험일은 현재 반영하지 않습니다.
+- 일정 구간은 시작 포함·종료 제외로 처리합니다. 개인 시간표는 `config/user_availability.json`에서 자동으로 읽으며 `--availability-file`로 다른 파일을 지정할 수 있습니다. 시간표 파일이 없으면 기존 충돌 회피 규칙만 적용하고, 공휴일과 시험일은 현재 반영하지 않습니다. 주별 교체 시간과 자정을 넘는 구간도 License Planner와 같은 `study_availability.py` 해석기로 읽으며, 이동한 세션은 한 구간 안에 통째로 들어가야 합니다.
 - 대상 ID가 입력 CSV에 없거나 ID 접두어/번호 형식이 잘못되면 오류를 반환합니다. 일정 ID는 중복될 수 없습니다.
 - 현재 Agent는 `inspect_schedule`을 먼저 호출합니다. 주제가 있는 공부 일정이면 `inspect_topic_schedule`로 같은 주제의 세션을 확인한 뒤, 일정 유형에 맞는 변경 도구를 호출합니다.
 
@@ -433,7 +435,7 @@ Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 
 | --- | --- | --- |
 | `schedule_id` | 문자열 | `study-양의정수` 또는 `external-양의정수`; CSV에 있는 대상 ID여야 합니다. |
 | `schedule_csv` | 파일 경로 또는 CSV 문자열 | CLI에서는 CSV 경로를 받고, 새 열 순서는 `schedule_id,start_date,end_date,topic`입니다. 기존 3열 CSV도 읽으며 영어 또는 한국어 헤더를 허용합니다. |
-| 개인 가능 시간 | `config/user_availability.json` 또는 `--availability-file` JSON | 선택. `weekly_availability` 아래 요일별 `start`/`end` 시각을 지정합니다. 세션 길이를 수용할 수 있는 구간이 없으면 조정 오류를 반환합니다. |
+| 개인 가능 시간 | `config/user_availability.json` 또는 `--availability-file` JSON | 선택. `weekly_availability` 아래 요일별 `start`/`duration_minutes` 구간(구형 `start`/`end`도 허용)과 선택적 `availability_overrides`를 지정합니다. 세션 길이를 수용할 수 있는 구간이 없으면 조정 오류를 반환합니다. |
 | 날짜·시간 | `YYYY/MM/DD/HH/MM` | 시작 시각은 종료 시각보다 빨라야 합니다. 구간은 시작 포함·종료 제외입니다. |
 | 출력 CSV | `schedule_id,start_date,end_date,topic` | 공부 주제를 보존한 조정 후 전체 일정을 반환합니다. 외부 일정은 주제가 없으면 빈 값입니다. |
 

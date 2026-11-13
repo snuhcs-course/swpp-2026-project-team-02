@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,17 +14,17 @@ from license_planner.models import PlanRequest
 from license_planner.tools import check_initial_capacity
 from assessment_service import get_public_questions, parse_assessment_results, partition_assessment
 from license_planner.user_availability import (
-    WEEKDAY_NAMES, load_personal_availability, parse_weekly_availability,
-    save_personal_availability,
+    load_personal_availability, save_personal_availability,
 )
 from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as render_adjusted_csv
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
-from schedule_adjuster.availability import (
-    load_personal_availability as load_adjuster_availability,
-    parse_weekly_availability as parse_adjuster_availability,
+from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
+from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
+from study_availability import (
+    EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
+    parse_overrides,
 )
-from schedule_adjuster.schedule_logic import move_study_entry, remove_external_entry
 from study_plan_store import PlanSnapshot, StudyPlanStore, PlanConflictError, plan_fields
 
 
@@ -33,10 +33,20 @@ STUDY_PLAN_OUTPUT_DIR = Path(os.getenv("APP_STUDY_PLAN_DIR",
                                        BACKEND_ROOT / "license_planner" / "output"))
 MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
                             "Create a new plan before adjusting study sessions.")
+# The project's wire timestamps are Korea-local; Korea has no daylight saving time.
+KOREA_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
+ADJUSTMENT_MODES = ("automatic", "manual")
 
 
-def _save_study_plan_csv(content: str, exam_date: datetime) -> str:
-    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(content, exam_date)
+def current_korea_minute() -> datetime:
+    """Current Asia/Seoul wall-clock time truncated to the minute (naive, like wire timestamps)."""
+    return datetime.now(KOREA_TIMEZONE).replace(tzinfo=None, second=0, microsecond=0)
+
+
+def _save_study_plan_csv(content: str, request: PlanRequest) -> str:
+    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(
+        content, request.exam_date, preparation_start=request.preparation_start,
+        availability=request.weekly_availability)
 
 
 def read_study_plan_csv(filename: str) -> tuple[str, str]:
@@ -76,6 +86,31 @@ def _busy_csv(rows: list[dict[str, Any]]) -> str:
     return output.getvalue()
 
 
+def select_availability_context(payload: dict[str, Any], load_inherited) -> AvailabilityContext | None:
+    """Choose the availability context one generation/adjustment request uses.
+
+    An explicit non-null ``weekly_availability`` replaces both the inherited
+    base and its week overrides.  Otherwise the inherited context (a plan's
+    retained snapshot or the shared profile, from ``load_inherited``) is used.
+    A supplied ``availability_overrides`` map replaces the selected override
+    map; ``null`` is invalid.  Nothing is saved.
+    """
+    if "availability_overrides" in payload and payload["availability_overrides"] is None:
+        raise ValueError("availability_overrides must be an object; omit it to keep inherited weeks")
+    if payload.get("weekly_availability") is not None:
+        base, nested = parse_availability_payload(payload["weekly_availability"])
+        overrides = nested or ()
+    else:
+        inherited = load_inherited()
+        if inherited is None and "availability_overrides" not in payload:
+            return None
+        base = inherited.base if inherited is not None else EMPTY_WEEK
+        overrides = inherited.overrides if inherited is not None else ()
+    if "availability_overrides" in payload:
+        overrides = parse_overrides(payload["availability_overrides"])
+    return make_context(base, overrides)
+
+
 def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = False) -> PlanRequest:
     """입력 값: 학습 계획 API 요청 JSON 객체
     출력 값: 검증된 PlanRequest
@@ -104,10 +139,8 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
     busy = payload.get("busy_schedules") or []
     if not isinstance(busy, list):
         raise ValueError("busy_schedules must be an array or null")
-    raw_availability = payload.get("weekly_availability")
-    availability = (parse_weekly_availability(raw_availability) if raw_availability is not None
-                    else load_personal_availability())
-    if availability is None or not any(availability.for_weekday(day) for day in range(7)):
+    availability = select_availability_context(payload, load_personal_availability)
+    if availability is None or not availability.has_windows():
         raise ValueError(
             "weekly_availability is required. Enter at least one weekday and available time window."
         )
@@ -143,11 +176,12 @@ def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
     csv_text = render_schedule_csv(request.busy_periods, tools.schedule)
-    csv_file = _save_study_plan_csv(csv_text, request.exam_date)
+    csv_file = _save_study_plan_csv(csv_text, request)
     return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
             "schedule_csv_file": csv_file,
             "schedule_csv_url": f"/api/v1/study-plans/{Path(csv_file).name}",
-            "agent_summary": summary, "tool_calls": tools.trace.calls}
+            "agent_summary": summary, "tool_calls": tools.trace.calls,
+            "availability_snapshot": context_payload(request.weekly_availability, include_end=True)}
 
 
 def _csv_rows(content: str) -> list[dict[str, str]]:
@@ -176,11 +210,82 @@ def _adjustment_deadline(payload: dict[str, Any], snapshot: PlanSnapshot | None)
     return snapshot.exam_date
 
 
+def _adjustment_availability(payload: dict[str, Any], snapshot: PlanSnapshot | None) -> AvailabilityContext | None:
+    """Select the context one adjustment uses without saving it.
+
+    Explicit request context wins; otherwise the selected plan's retained
+    context precedes the shared profile.  Explicit null or wholly empty
+    supplied context is rejected instead of falling back.
+    """
+    if "weekly_availability" in payload and payload["weekly_availability"] is None:
+        raise ValueError("weekly_availability must contain at least one study window")
+    retained = snapshot.availability if snapshot is not None else None
+    availability = select_availability_context(
+        payload, lambda: retained if retained is not None else load_adjuster_availability())
+    supplied = "weekly_availability" in payload or "availability_overrides" in payload
+    if supplied and (availability is None or not availability.has_windows()):
+        raise ValueError("weekly_availability must contain at least one study window")
+    return availability
+
+
+def _adjustment_mode(payload: dict[str, Any]) -> str:
+    mode = payload.get("mode", "automatic")
+    if mode not in ADJUSTMENT_MODES or not isinstance(mode, str):
+        raise ValueError("mode must be automatic or manual")
+    return mode
+
+
+def _manual_preparation_start(payload: dict[str, Any], snapshot: PlanSnapshot, exam_date: datetime) -> datetime:
+    """A retained preparation start, or a legacy plan's client-supplied lower bound (never stored)."""
+    supplied = (_datetime(payload["preparation_start"], "preparation_start")
+                if "preparation_start" in payload else None)
+    if snapshot.preparation_start is not None:
+        if supplied is not None and supplied != snapshot.preparation_start:
+            raise ValueError("preparation_start: must match the selected plan's stored preparation start")
+        return snapshot.preparation_start
+    if supplied is None:
+        raise ValueError("preparation_start is required to move a session in a plan without stored context")
+    if supplied >= exam_date:
+        raise ValueError("preparation_start must be before exam_date")
+    return supplied
+
+
+def _manual_summary(entry: ScheduleEntry) -> str:
+    start, end = entry.start_datetime, entry.end_datetime
+    next_day = "다음 날 " if end.date() != start.date() else ""
+    return (f"선택한 공부 일정을 {start.month}월 {start.day}일 "
+            f"{start:%H:%M}–{next_day}{end:%H:%M}로 옮겼어요.")
+
+
+def _adjust_manually(payload: dict[str, Any], entries: tuple[ScheduleEntry, ...], target: ScheduleEntry,
+                     store: StudyPlanStore, snapshot: PlanSnapshot | None) -> dict[str, Any]:
+    """Move one study row to the chosen start without any model request."""
+    exam_date = _adjustment_deadline(payload, snapshot)
+    preparation_start = _manual_preparation_start(payload, snapshot, exam_date)
+    availability = _adjustment_availability(payload, snapshot)
+    moved = place_study_entry_manually(
+        entries, target.schedule_id, _datetime(payload["new_start_date"], "new_start_date"),
+        availability=availability, preparation_start=preparation_start, exam_date=exam_date,
+        now=current_korea_minute(),
+        confirm_outside_availability=payload.get("confirm_outside_availability", False))
+    csv_text = render_adjusted_csv(moved)
+    store.update(snapshot, csv_text)
+    result = {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
+              **plan_fields(snapshot.identifier),
+              "action": "rescheduled_study", "target_schedule_id": target.schedule_id,
+              "agent_summary": _manual_summary(next(e for e in moved if e.schedule_id == target.schedule_id)),
+              "tool_calls": []}
+    if snapshot.availability is not None:
+        result["availability_snapshot"] = context_payload(snapshot.availability, include_end=True)
+    return result
+
+
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
 def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     """Adjust a snapshot and optionally update its existing generated file."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be an object")
+    mode = _adjustment_mode(payload)
     entries = parse_schedule_rows(payload.get("schedules"))
     target_id = payload.get("schedule_id")
     if not isinstance(target_id, str) or not target_id:
@@ -188,19 +293,26 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     target = next((entry for entry in entries if entry.schedule_id == target_id), None)
     if target is None:
         raise ValueError("schedule_id must identify an entry in schedules")
+    if mode == "manual":
+        if "schedule_csv_file" not in payload:
+            raise ValueError("schedule_csv_file is required for a manual move")
+        if target.schedule_type != "study":
+            raise ValueError("only study entries can be moved manually")
+        if "new_start_date" not in payload:
+            raise ValueError("new_start_date is required for a manual move")
+        _datetime(payload["new_start_date"], "new_start_date")
+        if not isinstance(payload.get("confirm_outside_availability", False), bool):
+            raise ValueError("confirm_outside_availability must be true or false")
     store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
     snapshot = None
     if "schedule_csv_file" in payload:
         snapshot = store.snapshot(payload["schedule_csv_file"])
         if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
             raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
+    if mode == "manual":
+        return _adjust_manually(payload, entries, target, store, snapshot)
     exam_date = _adjustment_deadline(payload, snapshot) if target.schedule_type == "study" else None
-    if "weekly_availability" in payload:
-        availability = parse_adjuster_availability(payload["weekly_availability"])
-        if availability is None or not any(availability.for_weekday(day) for day in range(7)):
-            raise ValueError("weekly_availability must contain at least one study window")
-    else:
-        availability = load_adjuster_availability()
+    availability = _adjustment_availability(payload, snapshot)
     # Preflight constraints and guard agent output before any file mutation.
     expected = (move_study_entry(entries, target_id, availability, exam_date)
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))
@@ -228,30 +340,22 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     if snapshot is not None:
         store.update(snapshot, csv_text)
         result.update(plan_fields(snapshot.identifier))
+        if snapshot.availability is not None:
+            result["availability_snapshot"] = context_payload(snapshot.availability, include_end=True)
     return result
 
 
 def read_availability() -> dict[str, Any]:
     """입력 값: 없음
-    출력 값: 주간 가능 시간 JSON 객체
-    기능: 저장된 개인 가능 시간을 요일별 JSON으로 반환합니다.
+    출력 값: weekly_availability와 availability_overrides를 담은 JSON 객체
+    기능: 공용 가능 시간 파일을 읽어(파일은 다시 쓰지 않음) 응답용 end를 덧붙여 반환합니다.
     """
-    availability = load_personal_availability()
-    if availability is None:
-        return {day: [] for day in WEEKDAY_NAMES}
-    return {day: [{"start": window.start_time.strftime("%H:%M"),
-                   "end": window.end_time.strftime("%H:%M")}
-                  for window in availability.for_weekday(index)]
-            for index, day in enumerate(WEEKDAY_NAMES)}
+    return context_payload(load_personal_availability(), include_end=True)
 
 
 def write_availability(payload: dict[str, Any]) -> dict[str, Any]:
-    """입력 값: 요일별 주간 가능 시간 JSON 객체
+    """입력 값: 요일별 가능 시간 또는 weekly_availability/availability_overrides 래퍼
     출력 값: 저장된 가능 시간 JSON 객체
-    기능: 가능 시간을 검증·저장하고 정규화된 값을 반환합니다.
+    기능: 가능 시간을 검증해 duration 형식으로 저장하고, overrides를 생략하면 기존 주별 시간을 유지합니다.
     """
-    saved = save_personal_availability(payload)
-    return {day: [{"start": window.start_time.strftime("%H:%M"),
-                   "end": window.end_time.strftime("%H:%M")}
-                  for window in saved.for_weekday(index)]
-            for index, day in enumerate(WEEKDAY_NAMES)}
+    return context_payload(save_personal_availability(payload), include_end=True)

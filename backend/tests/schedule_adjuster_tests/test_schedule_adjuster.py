@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from schedule_adjuster.csv_io import parse_schedule_csv, render_schedule_csv
 from schedule_adjuster.availability import parse_weekly_availability
 from schedule_adjuster.models import AdjustmentRequest
-from schedule_adjuster.schedule_logic import move_study_entry
+from schedule_adjuster.schedule_logic import ManualMoveError, move_study_entry, place_study_entry_manually
 from schedule_adjuster.tools import ScheduleAdjustmentTools, tool_schemas
 
 
@@ -16,6 +16,127 @@ external-13,2026/10/10/10/00,2026/10/10/12/00,
 external-14,2026/10/05/20/00,2026/10/05/21/00,
 external-15,2026/10/08/20/00,2026/10/08/21/00,
 """
+
+
+class SharedAvailabilityParserTests(unittest.TestCase):
+    """The adjuster reads the same window forms and overlap rule as the planner."""
+
+    def test_duration_and_legacy_windows_match_the_planner_parser(self):
+        from license_planner.user_availability import parse_weekly_availability as planner_parse
+        value = {"monday": [{"start": "23:00", "duration_minutes": 90}],
+                 "tuesday": [{"start": "09:00", "end": "11:00"}]}
+        self.assertEqual(parse_weekly_availability(value), planner_parse(value))
+
+    def test_next_day_overlap_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            parse_weekly_availability({"monday": [{"start": "23:00", "duration_minutes": 90}],
+                                       "tuesday": [{"start": "00:15", "duration_minutes": 60}]})
+
+
+class EffectiveWindowMovementTests(unittest.TestCase):
+    """Automatic movement reads week replacements and keeps overnight sessions whole."""
+
+    ROWS = """schedule_id,start_date,end_date,topic
+study-1,2026/11/16/18/00,2026/11/16/19/30,Functions
+"""
+
+    def setUp(self):
+        self.entries = parse_schedule_csv(self.ROWS)
+        self.exam = datetime(2026, 12, 7, 0, 0)
+
+    def moved(self, availability, exam=None):
+        result = move_study_entry(self.entries, "study-1", availability, exam or self.exam)
+        target = result[0]
+        return target.start_datetime, target.end_datetime
+
+    def test_ninety_minutes_fit_a_future_override_across_midnight(self):
+        context = parse_weekly_availability({
+            "weekly_availability": {"wednesday": [{"start": "19:00", "duration_minutes": 60}]},
+            "availability_overrides": {"2026/11/23": {"monday": [{"start": "23:00", "duration_minutes": 90}]}}})
+        self.assertEqual(self.moved(context), (datetime(2026, 11, 23, 23, 0), datetime(2026, 11, 24, 0, 30)))
+
+    def test_empty_override_week_is_skipped_without_base_fallback(self):
+        base = {"monday": [{"start": "20:00", "duration_minutes": 90}]}
+        self.assertEqual(self.moved(parse_weekly_availability(base))[0], datetime(2026, 11, 16, 20, 0))
+        context = parse_weekly_availability({"weekly_availability": base,
+                                             "availability_overrides": {"2026/11/16": {}}})
+        self.assertEqual(self.moved(context)[0], datetime(2026, 11, 23, 20, 0))
+
+    def test_exam_clips_an_overnight_window(self):
+        context = parse_weekly_availability({"monday": [{"start": "23:00", "duration_minutes": 90}]})
+        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
+            self.moved(context, datetime(2026, 11, 17, 0, 0))
+
+    def test_override_only_context_without_exam_terminates(self):
+        context = parse_weekly_availability({
+            "weekly_availability": {},
+            "availability_overrides": {"2026/11/09": {"monday": [{"start": "20:00", "duration_minutes": 90}]}}})
+        with self.assertRaisesRegex(ValueError, "NO_AVAILABILITY_WINDOW"):
+            move_study_entry(self.entries, "study-1", context, None)
+
+
+class ManualMoveRuleTests(unittest.TestCase):
+    """A chosen time is checked in a fixed order; confirmation only waives study windows."""
+
+    ROWS = """schedule_id,start_date,end_date,topic
+study-1,2026/11/16/18/00,2026/11/16/19/00,Functions
+study-2,2026/11/18/18/00,2026/11/18/19/00,Functions
+external-3,2026/11/17/12/00,2026/11/17/13/00,
+"""
+
+    def setUp(self):
+        self.entries = parse_schedule_csv(self.ROWS)
+        self.context = parse_weekly_availability({"tuesday": [{"start": "18:00", "duration_minutes": 60}],
+                                                  "sunday": [{"start": "23:30", "duration_minutes": 60}]})
+
+    def move(self, start, confirm=False, now=datetime(2026, 11, 16, 12, 0), availability="default"):
+        return place_study_entry_manually(
+            self.entries, "study-1", start,
+            availability=self.context if availability == "default" else availability,
+            preparation_start=datetime(2026, 11, 16, 0, 0), exam_date=datetime(2026, 12, 7, 0, 0),
+            now=now, confirm_outside_availability=confirm)
+
+    def code(self, start, **kwargs):
+        with self.assertRaises(ManualMoveError) as caught:
+            self.move(start, **kwargs)
+        return caught.exception.code
+
+    def test_chosen_time_precedes_same_topic_order_and_keeps_other_rows(self):
+        result = self.move(datetime(2026, 11, 17, 18, 0))
+        self.assertEqual(result[0].start_datetime, datetime(2026, 11, 17, 18, 0))
+        self.assertEqual(result[0].end_datetime, datetime(2026, 11, 17, 19, 0))
+        self.assertEqual(result[0].topic, "Functions")
+        self.assertEqual(result[1:], self.entries[1:])
+
+    def test_overnight_window_fit_and_confirmation_scope(self):
+        self.assertEqual(self.move(datetime(2026, 11, 22, 23, 30))[0].end_datetime, datetime(2026, 11, 23, 0, 30))
+        self.assertEqual(self.code(datetime(2026, 11, 22, 23, 45)), "OUTSIDE_STUDY_WINDOWS")
+        self.assertEqual(self.code(datetime(2026, 11, 17, 14, 0)), "OUTSIDE_STUDY_WINDOWS")
+        self.assertEqual(self.move(datetime(2026, 11, 17, 14, 0), confirm=True)[0].start_datetime,
+                         datetime(2026, 11, 17, 14, 0))
+        self.assertEqual(self.code(datetime(2026, 11, 17, 18, 0), availability=None), "OUTSIDE_STUDY_WINDOWS")
+
+    def test_hard_failures_are_not_waived_by_confirmation(self):
+        cases = {
+            datetime(2026, 11, 16, 11, 59): "MANUAL_MOVE_IN_PAST",
+            datetime(2026, 12, 6, 23, 30): "EXAM_BOUND_EXCEEDED",
+            datetime(2026, 11, 18, 18, 30): "STUDY_SESSION_OVERLAP",
+            datetime(2026, 11, 17, 12, 30): "EXTERNAL_EVENT_OVERLAP",
+        }
+        for start, code in cases.items():
+            with self.subTest(code=code):
+                self.assertEqual(self.code(start, confirm=True), code)
+        self.assertEqual(self.code(datetime(2026, 11, 15, 20, 0), confirm=True, now=datetime(2026, 11, 1)),
+                         "BEFORE_PREPARATION_START")
+
+    def test_error_precedence_and_exact_boundaries(self):
+        # In the past and overlapping a study row: the past check comes first.
+        self.assertEqual(self.code(datetime(2026, 11, 16, 11, 30), confirm=True,
+                                   now=datetime(2026, 11, 16, 18, 30)), "MANUAL_MOVE_IN_PAST")
+        for start in (datetime(2026, 11, 16, 12, 0), datetime(2026, 11, 17, 13, 0),
+                      datetime(2026, 11, 18, 19, 0), datetime(2026, 12, 6, 23, 0)):
+            with self.subTest(start=start):
+                self.assertEqual(self.move(start, confirm=True)[0].start_datetime, start)
 
 
 class ExamDeadlineTests(unittest.TestCase):

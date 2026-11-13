@@ -19,12 +19,15 @@ from uuid import uuid4
 
 from schedule_adjuster.csv_io import parse_schedule_csv
 from schedule_adjuster.models import ScheduleEntry
+from study_availability import AvailabilityContext, context_payload, parse_availability_payload, make_context
 
 PLAN_PREFIX = "license_planner/output/"
 STUDY_PLAN_FILENAME = re.compile(r"study_plan_[0-9A-Fa-fT+_-]+\.csv")
 MAX_STUDY_PLAN_CSV_FILES = 100
 METADATA_SUFFIX = ".meta.json"
 EXAM_DATE_FORMAT = "%Y/%m/%d/%H/%M"
+CONTEXT_METADATA_VERSION = 2
+_CONTEXT_METADATA_KEYS = {"version", "exam_date", "preparation_start", "availability_snapshot"}
 STUDY_PLAN_OUTPUT_LOCK = Lock()
 
 
@@ -48,6 +51,16 @@ class PlanSnapshot:
     # None means the plan has no stored exam metadata (a legacy plan).
     exam_date: datetime | None = None
     metadata_digest: bytes | None = None
+    # Only plans created with retained availability context store these two.
+    preparation_start: datetime | None = None
+    availability: AvailabilityContext | None = None
+
+
+@dataclass(frozen=True)
+class PlanMetadata:
+    exam_date: datetime
+    preparation_start: datetime | None = None
+    availability: AvailabilityContext | None = None
 
 
 def plan_fields(identifier: str) -> dict[str, str]:
@@ -103,16 +116,34 @@ class StudyPlanStore:
             raise PlanStorageError("Could not read study plan metadata") from error
 
     @staticmethod
-    def _parse_metadata(content: bytes) -> datetime:
+    def _parse_timestamp(value: object, field: str) -> datetime:
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be a string")
+        parsed = datetime.strptime(value, EXAM_DATE_FORMAT)
+        if parsed.strftime(EXAM_DATE_FORMAT) != value:
+            raise ValueError(f"{field} is not in canonical form")
+        return parsed
+
+    @classmethod
+    def _parse_metadata(cls, content: bytes) -> PlanMetadata:
+        """Read an exam-only sidecar or a version-2 sidecar with retained context."""
         try:
             data = json.loads(content.decode("utf-8"))
-            value = data["exam_date"] if isinstance(data, dict) and data.keys() == {"exam_date"} else None
-            if not isinstance(value, str):
-                raise ValueError("exam_date must be a string")
-            exam_date = datetime.strptime(value, EXAM_DATE_FORMAT)
-            if exam_date.strftime(EXAM_DATE_FORMAT) != value:
-                raise ValueError("exam_date is not in canonical form")
-            return exam_date
+            if isinstance(data, dict) and data.keys() == {"exam_date"}:
+                return PlanMetadata(cls._parse_timestamp(data["exam_date"], "exam_date"))
+            if (not isinstance(data, dict) or data.keys() != _CONTEXT_METADATA_KEYS
+                    or type(data["version"]) is not int or data["version"] != CONTEXT_METADATA_VERSION):
+                raise ValueError("unsupported study plan metadata")
+            exam_date = cls._parse_timestamp(data["exam_date"], "exam_date")
+            preparation_start = cls._parse_timestamp(data["preparation_start"], "preparation_start")
+            if preparation_start >= exam_date:
+                raise ValueError("preparation_start must be before exam_date")
+            snapshot = data["availability_snapshot"]
+            if not isinstance(snapshot, dict) or snapshot.keys() != {"weekly_availability",
+                                                                    "availability_overrides"}:
+                raise ValueError("availability_snapshot must contain base and overrides")
+            base, overrides = parse_availability_payload(snapshot)
+            return PlanMetadata(exam_date, preparation_start, make_context(base, overrides or ()))
         except (ValueError, UnicodeError) as error:
             raise PlanStorageError("Stored study plan metadata is invalid") from error
 
@@ -124,8 +155,10 @@ class StudyPlanStore:
             metadata = self._read_metadata(path)
             if metadata is None:
                 return PlanSnapshot(identifier, hashlib.sha256(content).digest(), entries)
+            parsed = self._parse_metadata(metadata)
             return PlanSnapshot(identifier, hashlib.sha256(content).digest(), entries,
-                                self._parse_metadata(metadata), hashlib.sha256(metadata).digest())
+                                parsed.exam_date, hashlib.sha256(metadata).digest(),
+                                parsed.preparation_start, parsed.availability)
 
     def download(self, filename: str) -> tuple[str, str]:
         with STUDY_PLAN_OUTPUT_LOCK:
@@ -140,21 +173,40 @@ class StudyPlanStore:
             except UnicodeError as error:
                 raise PlanStorageError("Stored study plan is not UTF-8") from error
 
-    def _plan_item(self, identifier: str, content: bytes) -> dict:
+    def _retained_availability(self, path: Path) -> dict | None:
+        """Response form of a plan's retained context; None when absent or unreadable.
+
+        Listing stays usable for CSV-only, exam-only and damaged sidecars.
+        """
+        try:
+            metadata = self._read_metadata(path)
+            parsed = None if metadata is None else self._parse_metadata(metadata)
+        except PlanStorageError:
+            return None
+        if parsed is None or parsed.availability is None:
+            return None
+        return context_payload(parsed.availability, include_end=True)
+
+    def _plan_item(self, identifier: str, path: Path, content: bytes) -> dict:
         self._parse(content)
-        return {**plan_fields(identifier),
+        item = {**plan_fields(identifier),
                 "schedules": list(csv.DictReader(io.StringIO(content.decode("utf-8"))))}
+        availability = self._retained_availability(path)
+        if availability is not None:
+            item["availability_snapshot"] = availability
+        return item
 
     def list_plans(self, identifier: str | None = None) -> list[dict]:
         with STUDY_PLAN_OUTPUT_LOCK:
             try:
                 if identifier is not None:
                     # Read only the selected file so damage elsewhere cannot block it.
+                    path = self._resolve(identifier)
                     try:
-                        content = self._read(self._resolve(identifier))
+                        content = self._read(path)
                     except PlanNotFoundError:
                         return []
-                    return [self._plan_item(identifier, content)]
+                    return [self._plan_item(identifier, path, content)]
                 if not self.directory.exists():
                     return []
                 paths = [p for p in self.directory.iterdir()
@@ -163,8 +215,9 @@ class StudyPlanStore:
                 paths.sort(key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
                 plans = []
                 for path in paths:
-                    content = self._read(self._resolve(PLAN_PREFIX + path.name))
-                    plans.append(self._plan_item(PLAN_PREFIX + path.name, content))
+                    resolved = self._resolve(PLAN_PREFIX + path.name)
+                    content = self._read(resolved)
+                    plans.append(self._plan_item(PLAN_PREFIX + path.name, resolved, content))
                 return plans
             except OSError as error:
                 raise PlanStorageError("Could not list study plans") from error
@@ -188,12 +241,19 @@ class StudyPlanStore:
                 except OSError:
                     pass
 
-    def create(self, content: str, exam_date: datetime | None = None) -> str:
+    def create(self, content: str, exam_date: datetime | None = None, *,
+               preparation_start: datetime | None = None,
+               availability: AvailabilityContext | None = None) -> str:
         """Save a new plan; API generation always passes its validated exam date.
 
+        With ``preparation_start`` and ``availability`` the sidecar is version 2
+        and retains the accepted context; otherwise it is the exam-only form.
         The metadata sidecar is published before the CSV, so a listed plan
-        never lacks a deadline it was created with.
+        never lacks a deadline or context it was created with.
         """
+        if (preparation_start is None) != (availability is None) or (
+                exam_date is None and preparation_start is not None):
+            raise ValueError("preparation_start and availability require each other and exam_date")
         with STUDY_PLAN_OUTPUT_LOCK:
             try:
                 self.directory.mkdir(parents=True, exist_ok=True)
@@ -202,8 +262,12 @@ class StudyPlanStore:
                 path = self.directory / filename
                 if exam_date is not None:
                     metadata = self._metadata_path(path)
-                    self._atomic_write(metadata, json.dumps(
-                        {"exam_date": exam_date.strftime(EXAM_DATE_FORMAT)}, separators=(",", ":")))
+                    record: dict = {"exam_date": exam_date.strftime(EXAM_DATE_FORMAT)}
+                    if availability is not None:
+                        record = {"version": CONTEXT_METADATA_VERSION, **record,
+                                  "preparation_start": preparation_start.strftime(EXAM_DATE_FORMAT),
+                                  "availability_snapshot": context_payload(availability, include_end=False)}
+                    self._atomic_write(metadata, json.dumps(record, ensure_ascii=False, separators=(",", ":")))
                     try:
                         self._atomic_write(path, content)
                     except PlanStorageError:

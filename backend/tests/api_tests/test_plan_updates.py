@@ -514,7 +514,7 @@ class PlanUpdateTests(unittest.TestCase):
                     "schedule_csv_file": self.identifier,
                     "schedule_csv_url": f"/api/v1/study-plans/{self.filename}",
                     "schedules": ROWS}]})
-                self.assertEqual((read, listed), ([self.filename], []))
+                self.assertEqual((read, listed), ([self.filename, self.metadata.name], []))
                 self.assertEqual((self.root / self.filename).read_bytes(), selected_bytes)
         other_path.chmod(0o644)
         self.assertEqual(other_path.read_text(encoding="utf-8"), "broken")
@@ -706,6 +706,315 @@ class PlanUpdateTests(unittest.TestCase):
                 status, result = self.call("/schedules/adjust", self.payload)
                 self.assertEqual((status, result["error"]["code"]), (502, "UPSTREAM_ERROR"))
                 self.assertEqual(self.store.download(self.filename)[0], self.original)
+
+
+MANUAL_ROWS = [
+    {"schedule_id": "study-1", "start_date": "2026/11/16/18/00", "end_date": "2026/11/16/19/00",
+     "topic": "함수와 데이터 관리"},
+    {"schedule_id": "study-2", "start_date": "2026/11/18/18/00", "end_date": "2026/11/18/19/00",
+     "topic": "함수와 데이터 관리"},
+    {"schedule_id": "external-3", "start_date": "2026/11/17/12/00", "end_date": "2026/11/17/13/00",
+     "topic": ""},
+]
+MANUAL_CONTEXT = {
+    "weekly_availability": {"monday": [{"start": "18:00", "duration_minutes": 120}],
+                            "tuesday": [{"start": "18:00", "duration_minutes": 60}],
+                            "wednesday": [{"start": "18:00", "duration_minutes": 60}]},
+    "availability_overrides": {"2026/11/23": {}},
+}
+MANUAL_PREPARATION = datetime(2026, 11, 16, 0, 0)
+MANUAL_EXAM = datetime(2026, 12, 7, 0, 0)
+FROZEN_NOW = datetime(2026, 11, 16, 12, 0)
+REAL_KOREA_MINUTE = api_service.current_korea_minute
+
+
+class NoAgent:
+    """Fails the test if any adjustment agent is constructed."""
+    constructed = 0
+
+    def __init__(self, *args, **kwargs):
+        NoAgent.constructed += 1
+        raise AssertionError("manual mode must not construct an adjustment agent")
+
+
+class RetainedContextAndManualMoveTests(unittest.TestCase):
+    """Plans keep their accepted context; manual moves are deterministic and typed."""
+
+    def setUp(self):
+        from study_availability import parse_availability_context
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "plans"
+        self.store = StudyPlanStore(self.root)
+        self.profile = Path(self.temp.name) / "profile.json"
+        self.profile.write_text(json.dumps({"thursday": [{"start": "09:00", "end": "11:00"}]}), encoding="utf-8")
+        self.profile_bytes = self.profile.read_bytes()
+        self.context = parse_availability_context(MANUAL_CONTEXT)
+        self.csv = render_schedule_csv(parse_schedule_rows(MANUAL_ROWS))
+        self.identifier = self.store.create(self.csv, MANUAL_EXAM, preparation_start=MANUAL_PREPARATION,
+                                            availability=self.context)
+        self.other = self.store.create(self.csv, MANUAL_EXAM, preparation_start=MANUAL_PREPARATION,
+                                       availability=parse_availability_context({"friday": [
+                                           {"start": "07:00", "duration_minutes": 30}]}))
+        self.before = self.files()
+        NoAgent.constructed = 0
+        for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root), ("AdjustmentAgent", NoAgent),
+                            ("current_korea_minute", lambda: FROZEN_NOW),
+                            ("load_adjuster_availability", lambda: load_adjuster_availability(self.profile))]:
+            patcher = patch.object(api_service, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        handler = make_handler(DEFAULT_API_CONFIG)
+        handler.log_message = lambda *args: None
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.server.shutdown(), self.server.server_close(), thread.join(timeout=3)))
+
+    call = PlanUpdateTests.call
+
+    def files(self):
+        return {path.name: path.read_bytes() for path in self.root.iterdir()} | {"profile": self.profile.read_bytes()}
+
+    def metadata(self, identifier):
+        return self.root / (Path(identifier.rsplit("/", 1)[1]).stem + ".meta.json")
+
+    def manual(self, new_start, **fields):
+        return {"mode": "manual", "schedule_csv_file": self.identifier, "schedule_id": "study-1",
+                "schedules": copy.deepcopy(MANUAL_ROWS), "new_start_date": new_start, **fields}
+
+    def target(self, result):
+        return next(row for row in result["schedules"] if row["schedule_id"] == "study-1")
+
+    def assert_rejected(self, payload, status, code):
+        response_status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual((response_status, result["error"]["code"]), (status, code), result)
+        self.assertEqual(self.files(), self.before)
+        return result
+
+    # Retained context, automatic mode
+
+    def test_generation_context_is_retained_and_returned_in_listing(self):
+        status, listing = self.call("/study-plans?schedule_csv_file=" + quote(self.identifier, safe=""))
+        self.assertEqual(status, 200)
+        snapshot = listing["plans"][0]["availability_snapshot"]
+        self.assertEqual(snapshot["weekly_availability"]["monday"],
+                         [{"start": "18:00", "duration_minutes": 120, "end": "20:00"}])
+        self.assertEqual(snapshot["availability_overrides"]["2026/11/23"]["monday"], [])
+        stored = json.loads(self.metadata(self.identifier).read_text(encoding="utf-8"))
+        self.assertEqual(stored["version"], 2)
+        self.assertEqual(stored["preparation_start"], "2026/11/16/00/00")
+        self.assertNotIn("end", stored["availability_snapshot"]["weekly_availability"]["monday"][0])
+
+    def test_automatic_move_uses_retained_context_before_shared_profile(self):
+        with patch.object(api_service, "AdjustmentAgent", ToolAgent):
+            payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-2",
+                       "schedules": copy.deepcopy(MANUAL_ROWS)}
+            status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        moved = next(row for row in result["schedules"] if row["schedule_id"] == "study-2")
+        # Week of Nov 23 is an explicit empty week, so the next base Monday is Nov 30.
+        self.assertEqual(moved["start_date"], "2026/11/30/18/00")
+        self.assertEqual(result["availability_snapshot"]["availability_overrides"], {
+            "2026/11/23": {day: [] for day in ("monday", "tuesday", "wednesday", "thursday",
+                                               "friday", "saturday", "sunday")}})
+        self.assertEqual(self.profile.read_bytes(), self.profile_bytes)
+        self.assertEqual(self.metadata(self.identifier).read_bytes(), self.before[self.metadata(self.identifier).name])
+
+    def test_explicit_base_suppresses_retained_overrides_and_overrides_alone_replace_them(self):
+        cases = [
+            ({"weekly_availability": {"monday": [{"start": "20:00", "duration_minutes": 60}]}},
+             "2026/11/23/20/00"),
+            ({"availability_overrides": {}}, "2026/11/23/18/00"),
+            ({"availability_overrides": {"2026/11/23": {"tuesday": [{"start": "21:00", "duration_minutes": 60}]}}},
+             "2026/11/24/21/00"),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields), patch.object(api_service, "AdjustmentAgent", ToolAgent):
+                payload = {"schedule_id": "study-2", "schedules": copy.deepcopy(MANUAL_ROWS),
+                           "exam_date": "2026/12/07/00/00", "schedule_csv_file": self.identifier, **fields}
+                payload["schedules"][1]["start_date"] = "2026/11/22/18/00"
+                payload["schedules"][1]["end_date"] = "2026/11/22/19/00"
+                del payload["schedule_csv_file"]
+                with patch.object(api_service, "load_adjuster_availability", lambda: self.context):
+                    status, result = self.call("/schedules/adjust", payload)
+                self.assertEqual(status, 200, result)
+                moved = next(row for row in result["schedules"] if row["schedule_id"] == "study-2")
+                self.assertEqual(moved["start_date"], expected)
+                self.assertNotIn("availability_snapshot", result)
+        self.assertEqual(self.files(), self.before)
+
+    def test_old_plan_uses_shared_profile_and_invalid_context_is_rejected(self):
+        legacy = self.store.create(self.csv, MANUAL_EXAM)
+        legacy_metadata = self.metadata(legacy).read_bytes()
+        with patch.object(api_service, "AdjustmentAgent", ToolAgent):
+            status, result = self.call("/schedules/adjust", {
+                "schedule_csv_file": legacy, "schedule_id": "study-2", "schedules": copy.deepcopy(MANUAL_ROWS)})
+        self.assertEqual(status, 200, result)
+        self.assertEqual(next(r for r in result["schedules"] if r["schedule_id"] == "study-2")["start_date"],
+                         "2026/11/19/09/00")
+        self.assertNotIn("availability_snapshot", result)
+        self.assertEqual(self.metadata(legacy).read_bytes(), legacy_metadata)
+        self.before = self.files()
+        base = {"schedule_csv_file": self.identifier, "schedule_id": "study-2", "schedules": copy.deepcopy(MANUAL_ROWS)}
+        for fields in ({"weekly_availability": None}, {"availability_overrides": None},
+                       {"weekly_availability": {}}, {"weekly_availability": {}, "availability_overrides": {}},
+                       {"availability_overrides": {"2026/11/24": {}}},
+                       {"weekly_availability": {"monday": [{"start": "23:00", "duration_minutes": 90}],
+                                                "tuesday": [{"start": "00:15", "duration_minutes": 60}]}}):
+            with self.subTest(fields=fields):
+                self.assert_rejected({**base, **fields}, 422, "INVALID_INPUT")
+
+    def test_malformed_retained_context_blocks_both_modes(self):
+        metadata = self.metadata(self.identifier)
+        record = json.loads(metadata.read_text(encoding="utf-8"))
+        record["availability_snapshot"]["weekly_availability"]["monday"].append(
+            {"start": "19:00", "duration_minutes": 30})
+        metadata.write_text(json.dumps(record), encoding="utf-8")
+        self.before = self.files()
+        self.assert_rejected(self.manual("2026/11/17/18/00"), 500, "STORAGE_ERROR")
+        with patch.object(api_service, "AdjustmentAgent", ToolAgent):
+            self.assert_rejected({"schedule_csv_file": self.identifier, "schedule_id": "study-1",
+                                  "schedules": copy.deepcopy(MANUAL_ROWS)}, 500, "STORAGE_ERROR")
+        status, listing = self.call("/study-plans")
+        self.assertEqual(status, 200)
+        selected = next(p for p in listing["plans"] if p["schedule_csv_file"] == self.identifier)
+        self.assertNotIn("availability_snapshot", selected)
+        self.assertIn("availability_snapshot",
+                      next(p for p in listing["plans"] if p["schedule_csv_file"] == self.other))
+
+    # Manual mode
+
+    def test_manual_move_to_a_free_window_before_the_automatic_order_bound(self):
+        status, result = self.call("/schedules/adjust", self.manual("2026/11/17/18/00"))
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.target(result), {**MANUAL_ROWS[0], "start_date": "2026/11/17/18/00",
+                                               "end_date": "2026/11/17/19/00"})
+        self.assertCountEqual([r for r in result["schedules"] if r["schedule_id"] != "study-1"], MANUAL_ROWS[1:])
+        self.assertEqual((result["action"], result["target_schedule_id"], result["tool_calls"]),
+                         ("rescheduled_study", "study-1", []))
+        self.assertEqual(result["agent_summary"], "선택한 공부 일정을 11월 17일 18:00–19:00로 옮겼어요.")
+        self.assertEqual(result["schedule_csv_file"], self.identifier)
+        self.assertEqual(result["availability_snapshot"]["weekly_availability"]["tuesday"],
+                         [{"start": "18:00", "duration_minutes": 60, "end": "19:00"}])
+        self.assertEqual(NoAgent.constructed, 0)
+        restarted = StudyPlanStore(self.root)
+        self.assertEqual(restarted.download(self.identifier.rsplit("/", 1)[1])[0], result["schedule_csv"])
+        after = self.files()
+        csv_name = self.identifier.rsplit("/", 1)[1]
+        self.assertEqual({k: v for k, v in after.items() if k != csv_name},
+                         {k: v for k, v in self.before.items() if k != csv_name})
+
+    def test_outside_window_requires_explicit_confirmation(self):
+        for flag in ({}, {"confirm_outside_availability": False}):
+            with self.subTest(flag=flag):
+                result = self.assert_rejected(self.manual("2026/11/17/14/00", **flag), 422, "OUTSIDE_STUDY_WINDOWS")
+                self.assertEqual(result["error"]["message"],
+                                 "The chosen time is outside the study windows. Confirm this one-time exception.")
+        status, result = self.call("/schedules/adjust",
+                                   self.manual("2026/11/17/14/00", confirm_outside_availability=True))
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.target(result)["start_date"], "2026/11/17/14/00")
+        self.assertEqual(self.metadata(self.identifier).read_bytes(),
+                         self.before[self.metadata(self.identifier).name])
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_hard_rejections_ignore_confirmation(self):
+        cases = [("2026/11/16/11/59", "MANUAL_MOVE_IN_PAST"),
+                 ("2026/12/06/23/30", "EXAM_BOUND_EXCEEDED"),
+                 ("2026/11/18/18/30", "STUDY_SESSION_OVERLAP"),
+                 ("2026/11/17/12/30", "EXTERNAL_EVENT_OVERLAP")]
+        for start, code in cases:
+            for confirm in (False, True):
+                with self.subTest(code=code, confirm=confirm):
+                    self.assert_rejected(self.manual(start, confirm_outside_availability=confirm), 422, code)
+        with patch.object(api_service, "current_korea_minute", lambda: datetime(2026, 11, 1, 9, 0)):
+            self.assert_rejected(self.manual("2026/11/15/20/00", confirm_outside_availability=True),
+                                 422, "BEFORE_PREPARATION_START")
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_adjacent_and_exam_end_boundaries_are_accepted(self):
+        for start in ("2026/11/17/13/00", "2026/12/06/23/00", "2026/11/16/12/00"):
+            with self.subTest(start=start):
+                rows = json.loads(json.dumps(MANUAL_ROWS))
+                current = self.store.snapshot(self.identifier).entries
+                rows = [{"schedule_id": e.schedule_id, "start_date": e.start_datetime.strftime("%Y/%m/%d/%H/%M"),
+                         "end_date": e.end_datetime.strftime("%Y/%m/%d/%H/%M"), "topic": e.topic}
+                        for e in current]
+                status, result = self.call("/schedules/adjust", {
+                    **self.manual(start, confirm_outside_availability=True), "schedules": rows})
+                self.assertEqual(status, 200, result)
+                self.assertEqual(self.target(result)["start_date"], start)
+
+    def test_malformed_manual_requests_are_invalid_input(self):
+        variants = [
+            {**self.manual("2026/11/17/18/00"), "mode": None},
+            {**self.manual("2026/11/17/18/00"), "mode": "assisted"},
+            {k: v for k, v in self.manual("2026/11/17/18/00").items() if k != "new_start_date"},
+            self.manual("2026/11/17/18/0"),
+            self.manual(None),
+            self.manual("2026/11/17/18/00", confirm_outside_availability="yes"),
+            self.manual("2026/11/17/18/00", confirm_outside_availability=None),
+            {k: v for k, v in self.manual("2026/11/17/18/00").items() if k != "schedule_csv_file"},
+            {**self.manual("2026/11/17/18/00"), "schedule_id": "external-3"},
+            self.manual("2026/11/17/18/00", exam_date="2026/12/08/00/00"),
+            self.manual("2026/11/17/18/00", preparation_start="2026/11/10/00/00"),
+        ]
+        for payload in variants:
+            with self.subTest(payload=payload):
+                self.assert_rejected(payload, 422, "INVALID_INPUT")
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_stale_missing_and_changed_metadata_precede_manual_rules(self):
+        stale = self.manual("2026/11/16/08/00", confirm_outside_availability=True)
+        stale["schedules"][1]["topic"] = "changed"
+        self.assert_rejected(stale, 409, "PLAN_CONFLICT")
+        missing = self.manual("2026/11/17/18/00")
+        missing["schedule_csv_file"] = "license_planner/output/study_plan_20990101T000000_deadbeef.csv"
+        self.assert_rejected(missing, 404, "PLAN_NOT_FOUND")
+        original = api_service.place_study_entry_manually
+        metadata = self.metadata(self.identifier)
+
+        def change_metadata(*args, **kwargs):
+            metadata.write_bytes(metadata.read_bytes() + b" ")
+            return original(*args, **kwargs)
+        with patch.object(api_service, "place_study_entry_manually", change_metadata):
+            status, result = self.call("/schedules/adjust", self.manual("2026/11/17/18/00"))
+        self.assertEqual((status, result["error"]["code"]), (409, "PLAN_CONFLICT"))
+        csv_name = self.identifier.rsplit("/", 1)[1]
+        self.assertEqual((self.root / csv_name).read_bytes(), self.before[csv_name])
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_legacy_plans_keep_exam_authority_and_need_a_supplied_preparation_bound(self):
+        exam_only = self.store.create(self.csv, MANUAL_EXAM)
+        csv_only = self.store.create(self.csv)
+        self.before = self.files()
+        for identifier, fields, message in [
+                (exam_only, {}, "preparation_start is required"),
+                (exam_only, {"preparation_start": "2026/11/16"}, "preparation_start"),
+                (exam_only, {"preparation_start": "2026/12/07/00/00"}, "before exam_date"),
+                (csv_only, {"preparation_start": "2026/11/16/00/00"}, "Create a new plan"),
+                (csv_only, {"preparation_start": "2026/11/16/00/00", "exam_date": "2026/12/07/00/00"},
+                 "Create a new plan")]:
+            with self.subTest(fields=fields, identifier=identifier):
+                result = self.assert_rejected({**self.manual("2026/11/17/18/00", **fields),
+                                               "schedule_csv_file": identifier}, 422, "INVALID_INPUT")
+                self.assertIn(message, result["error"]["message"])
+        exam_only_metadata = self.metadata(exam_only).read_bytes()
+        status, result = self.call("/schedules/adjust", {
+            **self.manual("2026/11/17/14/00", preparation_start="2026/11/16/00/00",
+                          confirm_outside_availability=True), "schedule_csv_file": exam_only})
+        self.assertEqual(status, 200, result)
+        self.assertNotIn("availability_snapshot", result)
+        self.assertEqual(self.metadata(exam_only).read_bytes(), exam_only_metadata)
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_current_korea_minute_is_truncated_utc_plus_nine(self):
+        from datetime import timezone, timedelta
+        value = REAL_KOREA_MINUTE()
+        expected = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=9)
+        self.assertEqual((value.second, value.microsecond), (0, 0))
+        self.assertLess(abs(value - expected), timedelta(minutes=2))
 
 
 if __name__ == "__main__":

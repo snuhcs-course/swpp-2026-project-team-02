@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from openrouter_client import create_response, decode_call, function_output, parse_reply, usage_record
+from study_availability import as_context, context_payload
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
@@ -86,12 +87,8 @@ class PlanningAgent:
             raise ValueError(f"Unsupported certification {request.certification_id!r}; choose from {cert_ids}")
         check_initial_capacity(request)
         tools = PlannerTools(request, ToolTrace())  # 상태를 공유하는 로컬 도구 집합입니다.
-        weekday_names = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-        availability = ({day: [{"start": window.start_time.strftime("%H:%M"),
-                                "end": window.end_time.strftime("%H:%M")}
-                         for window in request.weekly_availability.for_weekday(index)]
-                        for index, day in enumerate(weekday_names)}
-                       if request.weekly_availability else None)
+        context = as_context(request.weekly_availability)
+        availability = context_payload(context, include_end=True) if context else None
         user = {"certification_id": request.certification_id,
                 "self_assessment": request.self_assessment,
                 "submitted_question_count": submitted_question_count(request),
@@ -106,7 +103,9 @@ class PlanningAgent:
                 ],
                 "preparation_start": request.preparation_start.strftime(DATETIME_FORMAT) if request.preparation_start else None,
                 "exam_date": request.exam_date.strftime(DATETIME_FORMAT) if request.exam_date else None,
-                "weekly_availability": availability}
+                "weekly_availability": availability["weekly_availability"] if availability else None}
+        if availability and availability["availability_overrides"]:
+            user["availability_overrides"] = availability["availability_overrides"]
         date_minutes = usable_date_minutes(request)  # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
         if date_minutes is not None:
             user["usable_minutes_by_date"] = date_minutes

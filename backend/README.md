@@ -23,7 +23,8 @@ Gradle property `licensePlanner.apiBaseUrl`. Backend bind address, port, browser
 origins, and request-size limit are in `config/api_server.json` and can be
 overridden with `APP_API_HOST` and `APP_API_PORT`. Generated plan CSVs are
 stored in `license_planner/output/`, each with a `.meta.json` sidecar holding
-the plan's original `exam_date`; set `APP_STUDY_PLAN_DIR` to use another
+the plan's original `exam_date` (new plans also keep `preparation_start` and the
+accepted availability context); set `APP_STUDY_PLAN_DIR` to use another
 directory, for example a disposable one for tests. Keep each `.csv`/`.meta.json`
 pair together: study adjustment of a saved plan uses only the stored deadline,
 and a plan without one must be recreated before its study sessions can move. The OpenRouter key
@@ -115,16 +116,16 @@ document can be passed to the HTTP Planning API or local planner CLI:
 ]}}
 ```
 
-The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start`/`end` time windows. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. Each question that matches a complete reviewed bank record uses that record's topic; the agent classifies only the remaining questions across one or more catalog topics and proportionally attributes their possible/earned points. Before any model call, the minimum-capacity check uses the exact topic count when every question is resolved, the resolved topic count as a lower bound for a mixed request, and one topic when nothing is resolved; after analysis it uses the union of resolved and classified topics. The planning topic catalog (`config/certifications.json`) is loaded once per process, so restart the server after editing its topics. Weaker topics are ranked first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
+The API request combines these results with the free-form self-assessment, preparation start, exam date, and `weekly_availability`. The weekly availability object uses weekday keys and `start` + `duration_minutes` windows (1–1439 minutes, possibly ending the next day; same-day `start`/`end` windows are still accepted); optional `availability_overrides` replace whole weeks keyed by their Monday date. Existing busy schedules, if supplied, are JSON objects. The CLI accepts plan fields through `--request-json` and assessment results through `--assessment-results-json`. Each question that matches a complete reviewed bank record uses that record's topic; the agent classifies only the remaining questions across one or more catalog topics and proportionally attributes their possible/earned points. Before any model call, the minimum-capacity check uses the exact topic count when every question is resolved, the resolved topic count as a lower bound for a mixed request, and one topic when nothing is resolved; after analysis it uses the union of resolved and classified topics. The planning topic catalog (`config/certifications.json`) is loaded once per process, so restart the server after editing its topics. Weaker topics are ranked first. The planning agent chooses date-specific study minutes per topic from the free-form self-assessment, weighted topic scores, preparation period, and actual availability. It does not classify the user into fixed readiness levels or multiply study time by a level factor. The scheduler validates and places that workload within available windows and outside busy periods, without a fixed session length or daily session-count cap.
 
-Study sessions are placed only inside the user's weekly availability. Supply at least one weekday and `start`/`end` window in `weekly_availability`, or save a profile through `PUT /api/v1/availability`; the backend stores it in `config/user_availability.json`. If neither a request nor saved profile contains an available window, Planning API returns HTTP 422 with an input error instead of using common default hours. The generated `topic` column records each study block's assigned topic; external events have a blank topic unless supplied. The agent is instructed to balance date-specific workload across equivalent dates (for example, 120 minutes across two equivalent dates becomes about 60 minutes per date), while the backend enforces only date-level available capacity and does not guarantee this balance. Busy event ranges are excluded; intervals include their start and exclude their end. There is no fixed session length or maximum number of study blocks per day. After saving a plan, the API attempts to retain the 100 most recent generated plan CSVs by removing older matching files; locked files can prevent cleanup.
+Study sessions are placed only inside the user's weekly availability. Supply at least one window in `weekly_availability` or `availability_overrides`, or save a profile through `PUT /api/v1/availability`; the backend stores it in `config/user_availability.json`. If neither a request nor saved profile contains an available window, Planning API returns HTTP 422 with an input error instead of using common default hours. The generated `topic` column records each study block's assigned topic; external events have a blank topic unless supplied. The agent is instructed to balance date-specific workload across equivalent dates (for example, 120 minutes across two equivalent dates becomes about 60 minutes per date), while the backend enforces only date-level available capacity and does not guarantee this balance. Busy event ranges are excluded; intervals include their start and exclude their end. There is no fixed session length or maximum number of study blocks per day. After saving a plan, the API attempts to retain the 100 most recent generated plan CSVs by removing older matching files; locked files can prevent cleanup.
 
 Example weekly availability JSON:
 
 ```json
 {
-  "monday": [{"start": "18:00", "end": "21:00"}],
-  "wednesday": [{"start": "09:00", "end": "12:00"}],
+  "monday": [{"start": "23:00", "duration_minutes": 90}],
+  "wednesday": [{"start": "09:00", "duration_minutes": 180}],
   "saturday": [{"start": "10:00", "end": "14:00"}]
 }
 ```
@@ -143,7 +144,7 @@ The first two commands do not call a model. The availability runner checks JSON 
 
 ## Schedule Adjuster
 
-The Schedule Adjuster requires a target ID (`study-N` or `external-N`) and an input schedule CSV. It moves study intervals after the old end while preserving interval length, topic, and other rows. When `config/user_availability.json` exists, the new study interval must also fit the user's recurring weekly availability. Cancelled external rows are removed while other rows remain unchanged.
+The Schedule Adjuster requires a target ID (`study-N` or `external-N`) and an input schedule CSV. It moves study intervals after the old end while preserving interval length, topic, and other rows. When `config/user_availability.json` exists, the new study interval must also fit inside one of the user's effective study windows (recurring week or week override, including windows that cross midnight). Over HTTP, a saved plan uses its retained availability context first, and `mode: "manual"` moves a session to a chosen time without a model call; see `FRONTEND_INTEGRATION_GUIDE.md`. Cancelled external rows are removed while other rows remain unchanged.
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `
@@ -232,8 +233,9 @@ custom questions, so the backend tests replay them with each prompt marked as a
 custom question (`test_support/question_banks.py`) and pin
 `topic_errors_then_build_on_last_request` for the classification and deadline
 checks. Adjustment answers with inspect, topic
-inspection and the matching mutation tool. Plans live in a temporary directory
-removed on exit. Reading an OpenRouter key or model setting, or sending a
+inspection and the matching mutation tool. Plans (`plans/`) and the availability
+profile (`user_availability.json`) live in a temporary directory removed on
+exit: `GET`/`PUT /availability` never read or write `config/user_availability.json`. Reading an OpenRouter key or model setting, or sending a
 provider request, raises an error. A client that sends a captured trace's
 original request unchanged gets reviewed topics, which the trace does not
 model; send custom questions with those case IDs. The legacy recorded request's own exam date
@@ -257,6 +259,28 @@ python test_support/fixed_live_e2e_server.py --case-id mixed_reviewed_and_custom
 python test_support/fixed_live_e2e_server.py --case-id topic_errors_then_build_on_last_request
 python -m unittest discover -s tests/api_tests -p test_fixed_live_e2e_server.py -v
 ```
+
+Options for controlled-live device checks (all off by default):
+
+| Option | Effect |
+| --- | --- |
+| `--planning scripted` | Instead of replaying `--case-id`, the fixed model asks for `analyze_exam_results {}` and then builds one 60-minute session per date with at least 60 usable minutes, cycling through the required topics, all taken from that request's own period, availability and overrides. Works for any dates; a request with custom questions (which need classification) or with fewer such dates than topics fails with `UPSTREAM_ERROR`. |
+| `--storage-dir DIR` | Keep `DIR/plans/` and `DIR/user_availability.json` across restarts (restart/readback checks). |
+| `--profile-seed FILE` | Copy this availability JSON to the isolated profile when the profile does not exist yet. |
+| `--now YYYY/MM/DD/HH/MM` | Freeze the Korea-local clock that manual moves compare against (`MANUAL_MOVE_IN_PAST`). Plan generation and automatic adjustment are unaffected. |
+| `--request-log FILE` | Append one JSON line per request: `time`, `method`, `path`, `status`, request `body`, `response`, and any test switch used. |
+| `--test-control FILE` | Test scaffolding, not server behavior. A JSON object re-read on every request: `adjust_delay_seconds` (sleep before each `POST /schedules/adjust`), `drop_next_adjust_response` (apply and save the next adjustment, then close the connection without a response; consumed once), `inject_busy_schedules` (rows appended to the next `POST /study-plans` `busy_schedules`; consumed once; the log keeps the original body). |
+
+```bash
+# from backend/: controlled-live server for a disposable emulator
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000 --planning scripted \
+  --storage-dir "$RUN/storage" --profile-seed "$RUN/seed.json" --now 2026/11/18/12/00 \
+  --request-log "$RUN/requests.jsonl" --test-control "$RUN/control.json"
+```
+
+Stop it with Ctrl+C, or `pkill -TERM -f test_support/fixed_live_e2e_server.py`
+when it runs in the background (`conda run` does not forward signals); both
+shut the server down cleanly.
 
 This is controlled integration evidence for the handler, deadline rules and
 storage. It is not evidence about OpenRouter, model quality, or a deployed

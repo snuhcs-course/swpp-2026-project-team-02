@@ -143,6 +143,71 @@ class UsableCapacityTests(unittest.TestCase):
                     generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 1)))
 
 
+class EffectiveWindowCapacityTests(unittest.TestCase):
+    """Capacity and placement use the same date-specific absolute windows."""
+
+    OVERNIGHT = {"monday": [{"start": "23:00", "duration_minutes": 90}]}
+
+    def capacity(self, start, exam, windows, busy_periods=()):
+        request = make_request(start=start, exam=exam, windows=windows, busy_periods=busy_periods)
+        return {day: amount for day, amount in usable_minutes_by_date(request).items() if amount}
+
+    def test_overnight_window_counts_each_minute_once(self):
+        tuesday = MONDAY + timedelta(days=1)
+        self.assertEqual(self.capacity(at(MONDAY, 0), at(MONDAY + timedelta(days=2), 0), self.OVERNIGHT),
+                         {MONDAY: 60, tuesday: 30})
+
+    def test_busy_interval_in_the_spill_is_subtracted_once(self):
+        tuesday = MONDAY + timedelta(days=1)
+        meeting = busy("7", at(tuesday, 0, 10), at(tuesday, 0, 20))
+        self.assertEqual(self.capacity(at(MONDAY, 0), at(tuesday, 12), self.OVERNIGHT, (meeting,)),
+                         {MONDAY: 60, tuesday: 20})
+
+    def test_preparation_start_and_exam_clip_the_spill(self):
+        tuesday = MONDAY + timedelta(days=1)
+        self.assertEqual(self.capacity(at(tuesday, 0, 10), at(tuesday, 12), self.OVERNIGHT), {tuesday: 20})
+        self.assertEqual(self.capacity(at(MONDAY, 0), at(tuesday, 0), self.OVERNIGHT), {MONDAY: 60})
+
+    def test_overnight_allocation_is_placed_on_each_civil_date(self):
+        tuesday = MONDAY + timedelta(days=1)
+        meeting = busy("7", at(tuesday, 0, 10), at(tuesday, 0, 20))
+        request = make_request(start=at(MONDAY, 0), exam=at(tuesday, 12), windows=self.OVERNIGHT,
+                               busy_periods=(meeting,))
+        stats = summarize_topic_results((ProblemResult(1, BASICS, 1, 0),))
+        blocks = generate_schedule(request, CERT, stats, minutes(
+            (MONDAY.strftime("%Y/%m/%d"), BASICS, 60), (tuesday.strftime("%Y/%m/%d"), BASICS, 20)))
+
+        self.assertEqual([(block.start_datetime, block.end_datetime) for block in blocks], [
+            (at(MONDAY, 23), at(tuesday, 0)),
+            (at(tuesday, 0), at(tuesday, 0, 10)),
+            (at(tuesday, 0, 20), at(tuesday, 0, 30)),
+        ])
+        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
+            generate_schedule(request, CERT, stats, minutes((MONDAY.strftime("%Y/%m/%d"), BASICS, 61)))
+
+    def test_each_week_uses_its_own_replacement(self):
+        windows = {"weekly_availability": {"wednesday": [{"start": "19:00", "end": "20:00"}]},
+                   "availability_overrides": {
+                       "2026/11/23": {},
+                       "2026/11/30": {"tuesday": [{"start": "20:00", "duration_minutes": 60}]}}}
+        capacity = self.capacity(datetime(2026, 11, 16), datetime(2026, 12, 7, 23), windows)
+
+        self.assertEqual(capacity, {date(2026, 11, 18): 60, date(2026, 12, 1): 60})
+
+    def test_sunday_spill_follows_its_own_week_into_an_empty_week(self):
+        windows = {"weekly_availability": {"sunday": [{"start": "23:00", "duration_minutes": 90}]},
+                   "availability_overrides": {"2026/11/30": {}}}
+        capacity = self.capacity(datetime(2026, 11, 29), datetime(2026, 12, 7, 23), windows)
+
+        self.assertEqual(capacity, {date(2026, 11, 29): 60, date(2026, 11, 30): 30})
+
+    def test_override_only_context_has_capacity(self):
+        windows = {"weekly_availability": {},
+                   "availability_overrides": {"2026/11/30": {"tuesday": [{"start": "20:00", "duration_minutes": 45}]}}}
+        self.assertEqual(self.capacity(datetime(2026, 11, 16), datetime(2026, 12, 7), windows),
+                         {date(2026, 12, 1): 45})
+
+
 class InitialCapacityTests(unittest.TestCase):
     def test_question_inputs_require_only_one_minute_before_topic_mapping(self):
         check_initial_capacity(one_minute_request(questions=5))
