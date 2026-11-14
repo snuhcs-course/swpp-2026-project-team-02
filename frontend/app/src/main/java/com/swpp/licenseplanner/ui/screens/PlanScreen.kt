@@ -1,12 +1,14 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
@@ -26,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
@@ -34,11 +37,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.DayPlan
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
+import com.swpp.licenseplanner.domain.WeeklyTimeUsage
+import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.RemovedStudySchedule
@@ -60,6 +66,7 @@ import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkBody
 import com.swpp.licenseplanner.ui.theme.InkSecondary
+import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.MutedSurface
 import com.swpp.licenseplanner.ui.theme.MonoStyles
 import com.swpp.licenseplanner.ui.theme.Paper
@@ -77,6 +84,7 @@ import java.util.Locale
  */
 @Composable
 fun PlanScreen(
+    originalRequest: StudyPlanRequest,
     response: StudyPlanResponse,
     isDemo: Boolean,
     exportCount: Int,
@@ -87,6 +95,9 @@ fun PlanScreen(
     onAdjust: () -> Unit,
 ) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
+    val weeklyTimeUsage = remember(originalRequest, response) {
+        WeeklyTimeUsageCalculator.calculate(originalRequest, response.schedules)
+    }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
     val summary = response.agentSummary?.takeIf { it.isNotBlank() }
@@ -111,7 +122,6 @@ fun PlanScreen(
                     }
                 }
             }
-            if (summary != null) item { PlanSummary(summary) }
             if (week == null) {
                 item {
                     OutlinedCard {
@@ -129,6 +139,9 @@ fun PlanScreen(
                         onNext = { weekIndex++ },
                     )
                 }
+                val selectedWeekUsage = weeklyTimeUsage.firstOrNull { it.monday == week.monday }
+                if (selectedWeekUsage != null) item { WeeklyTimeUsageChart(selectedWeekUsage) }
+                if (summary != null) item { PlanSummary(summary) }
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
             }
             item {
@@ -146,6 +159,58 @@ fun PlanScreen(
             item { SecondaryButton("입력 수정하기", onEdit) }
             item { SecondaryButton("처음으로", onHome) }
         }
+    }
+}
+
+@Composable
+internal fun WeeklyTimeUsageChart(week: WeeklyTimeUsage) {
+    val availableDays = week.days.filter { it.availableMinutes > 0 }
+    if (availableDays.isEmpty()) return
+    val scale = availableDays.maxOfOrNull { maxOf(it.availableMinutes, it.plannedMinutes) }
+        ?.coerceAtLeast(1L)?.toFloat() ?: 1f
+    MutedBox {
+        Text("일별 공부 시간", style = MaterialTheme.typography.titleSmall, color = Ink)
+        Note("이 주의 요일별 가용 시간 중 계획에 배정된 시간을 비교해요.")
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            availableDays.forEach { day ->
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${day.date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)} ${monthDay(day.date)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "배정 ${PlanGrouping.formatDuration(day.plannedMinutes)} / 가용 ${PlanGrouping.formatDuration(day.availableMinutes)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkBody,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(12.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MutedSurface),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((day.availableMinutes / scale).coerceIn(0f, 1f))
+                                .height(12.dp)
+                                .background(Outline),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((day.plannedMinutes / scale).coerceIn(0f, 1f))
+                                .height(12.dp)
+                                .background(Ink),
+                        )
+                    }
+                }
+            }
+        }
+        Note("회색은 가용 시간, 검정은 배정 시간이에요. 가용 시간을 모두 사용하지 않고 일부를 여유 시간으로 남길 수 있어요. 화살표를 눌러 주차별로 확인할 수 있어요.")
     }
 }
 

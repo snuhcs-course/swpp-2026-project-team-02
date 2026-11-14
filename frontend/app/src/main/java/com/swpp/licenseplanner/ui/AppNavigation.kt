@@ -290,6 +290,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
             } else {
                 PlanScreen(
+                    originalRequest = plan.original,
                     response = plan.current,
                     isDemo = plan.isDemo,
                     exportCount = exportCount(plan),

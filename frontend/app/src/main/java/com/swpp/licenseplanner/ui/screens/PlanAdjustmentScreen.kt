@@ -28,6 +28,7 @@ import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WeekPlan
+import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
@@ -145,6 +146,9 @@ fun PlanAdjustmentScreen(
 
     val removedSessions = (state as? AdjustmentState.Success)?.removedSessions.orEmpty()
     val weeks = remember(plan.current.schedules, removedSessions) { adjustmentWeeks(plan, removedSessions) }
+    val weeklyTimeUsage = remember(plan.original, plan.current.schedules) {
+        WeeklyTimeUsageCalculator.calculate(plan.original, plan.current.schedules)
+    }
     val scrollState = rememberScrollState()
     val dayPositions = remember { mutableStateMapOf<java.time.LocalDate, Pair<Int, Int>>() }
     var destinationToReveal by remember { mutableStateOf<PlanSession?>(null) }
@@ -332,6 +336,8 @@ fun PlanAdjustmentScreen(
                 onPrevious = { weekIndex = shownIndex - 1 },
                 onNext = { weekIndex = shownIndex + 1 },
             )
+            val selectedWeekUsage = weeklyTimeUsage.firstOrNull { it.monday == week.monday }
+            if (selectedWeekUsage != null) WeeklyTimeUsageChart(selectedWeekUsage)
             // Selection stays visible but disabled while loading or awaiting a reload; the ViewModel ignores changes then.
             val selectable = mode == AdjustmentMode.Adjustable && !loading
             val showChoices = selectable || selection.failedScheduleId != null
