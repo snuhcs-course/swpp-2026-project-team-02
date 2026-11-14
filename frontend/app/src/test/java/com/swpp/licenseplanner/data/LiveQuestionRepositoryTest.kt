@@ -98,7 +98,7 @@ class LiveQuestionRepositoryTest {
         assertEquals(QuestionOutcome.Failure(ApiError.ServerFailure(500)), load("""{"error":{"code":"INTERNAL_ERROR","message":"x"}}""", 500))
         // Stored-plan codes belong to adjustment only.
         assertEquals(QuestionOutcome.Failure(ApiError.Configuration), load("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""", 404))
-        assertEquals(QuestionOutcome.Failure(ApiError.ServerFailure(409)), load("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}""", 409))
+        assertTrue((load("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}""", 409) as QuestionOutcome.Failure).error is ApiError.UnknownFailure)
     }
 
     @Test
@@ -107,8 +107,8 @@ class LiveQuestionRepositoryTest {
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
         val base = server.url("/api/v1/").toString()
-        assertEquals(QuestionOutcome.Failure(ApiError.Connection), load(repo = LiveQuestionRepository(base, shortClient)))
+        assertTrue((load(repo = LiveQuestionRepository(base, shortClient)) as QuestionOutcome.Failure).error is ApiError.RequestTimeout)
         server.shutdown()
-        assertEquals(QuestionOutcome.Failure(ApiError.Connection), load(base = base))
+        assertTrue((load(base = base) as QuestionOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 }

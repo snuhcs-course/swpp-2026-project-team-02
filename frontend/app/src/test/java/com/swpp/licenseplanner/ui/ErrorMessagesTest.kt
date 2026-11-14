@@ -10,7 +10,7 @@ import org.junit.Test
 class ErrorMessagesTest {
     private val uncertain = "조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
     private val route = "API 경로를 찾을 수 없어요. API 주소와 서버 버전을 확인해 주세요. (HTTP 404)"
-    private val fallback = "요청 정보를 확인하지 못했어요."
+    private val fallback = "원인을 알 수 없는 오류가 발생했어요. 세부 메시지를 확인해 주세요."
 
     private fun invalid(message: String?) = ApiError.InvalidInput(message)
 
@@ -26,11 +26,17 @@ class ErrorMessagesTest {
 
     @Test
     fun uncertainResultsUseOneMessageThatClaimsNoOutcome() {
-        val errors = listOf(ApiError.ServerFailure(409), ApiError.Connection, ApiError.InvalidResponse("raw parser detail"))
+        val errors = listOf(ApiError.Connection, ApiError.InvalidResponse("raw parser detail"), ApiError.RequestTimeout("HTTP 408"))
         for (error in errors) {
             assertEquals(error.toString(), uncertain, error.adjustmentMessage())
             assertTrue(error.requiresReload())
         }
+        val unknown = ApiError.UnknownFailure(409, "conflict")
+        assertEquals(
+            "원인을 알 수 없는 오류가 발생했어요. 세부 메시지를 확인해 주세요.\n조정 결과가 서버에 반영되었을 수 있어 최신 계획을 불러와 확인해 주세요.",
+            unknown.adjustmentMessage(),
+        )
+        assertTrue(unknown.requiresReload())
         assertTrue(ApiError.PlanConflict.requiresReload())
     }
 
@@ -42,15 +48,14 @@ class ErrorMessagesTest {
             ApiError.ServerUnavailable("busy"),
             ApiError.ServerFailure(500),
             ApiError.ServerFailure(502),
-            ApiError.ServerFailure(408),
             ApiError.Configuration,
             ApiError.PlanNotFound,
         )
         for (error in confirmed) assertFalse(error.toString(), error.requiresReload())
         assertEquals(fallback, confirmed[0].adjustmentMessage())
         assertEquals(fallback, confirmed[1].adjustmentMessage())
-        assertEquals("서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요. (HTTP 503)", confirmed[2].adjustmentMessage())
-        assertEquals("서버에서 요청을 처리하지 못했어요. 다시 시도해 주세요. (HTTP 502)", confirmed[4].adjustmentMessage())
+        assertEquals("서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요.", confirmed[2].adjustmentMessage())
+        assertEquals("서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.", confirmed[4].adjustmentMessage())
     }
 
     @Test
@@ -66,7 +71,7 @@ class ErrorMessagesTest {
     fun reloadFailureKeepsTheEarlierPlanAndNamesTheCause() {
         assertEquals("화면에는 이전 계획이 남아 있어요. $route", ApiError.Configuration.reloadMessage())
         assertEquals(
-            "화면에는 이전 계획이 남아 있어요. 서버에 연결할 수 없어요. 네트워크와 서버 상태를 확인한 뒤 다시 시도해 주세요.",
+            "화면에는 이전 계획이 남아 있어요. 네트워크에 연결되지 않았거나 서버가 응답하지 않아요. 연결 상태를 확인한 뒤 다시 시도해 주세요.",
             ApiError.Connection.reloadMessage(),
         )
         assertEquals(
@@ -221,9 +226,9 @@ class ErrorMessagesTest {
     /** Generation and question loading keep their earlier wording. */
     @Test
     fun generalMessagesAreUnchanged() {
-        assertEquals("연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)", ApiError.Configuration.userMessage())
-        assertEquals("서버에서 요청을 처리하지 못했어요. 다시 시도해 주세요. (HTTP 409)", ApiError.ServerFailure(409).userMessage())
-        assertEquals("서버에 연결할 수 없어요. 네트워크와 서버 상태를 확인한 뒤 다시 시도해 주세요.", ApiError.Connection.userMessage())
+        assertEquals("API 주소 또는 서버 경로를 확인해 주세요.", ApiError.Configuration.userMessage())
+        assertEquals("서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.", ApiError.ServerFailure(409).userMessage())
+        assertEquals("네트워크에 연결되지 않았거나 서버가 응답하지 않아요. 연결 상태를 확인한 뒤 다시 시도해 주세요.", ApiError.Connection.userMessage())
         assertEquals("서버 응답을 읽을 수 없어요. 다시 시도해 주세요.", ApiError.InvalidResponse("x").userMessage())
     }
 }

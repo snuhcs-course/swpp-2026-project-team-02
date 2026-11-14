@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.runtime.Composable
+import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.PlanStorage
@@ -25,12 +26,14 @@ fun HomeScreen(
     onAdjust: () -> Unit,
     onRetryLoad: () -> Unit,
     onRetrySave: () -> Unit,
+    onHe12Test: () -> Unit,
 ) {
     AppScreen(title = "학습 계획", navIcon = null) {
         Heading("무엇을 할까요?", "새 계획을 만들거나, 만든 계획에서 놓친 공부 일정을 다시 잡아요.")
         ContextHelpButton(ContextHelpTopic.START)
         PrimaryButton("계획 생성", onCreate, subtitle = "$CERTIFICATION_NAME 필기")
         SecondaryButton("계획 조정", onAdjust)
+        if (BuildConfig.DEMO_MODE) SecondaryButton("HE-12 오류 화면 확인", onHe12Test)
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
         planCountNote(storage, plans.size, savedPlans.size)?.let { Note(it) }

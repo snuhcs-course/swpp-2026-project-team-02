@@ -473,7 +473,9 @@ class PlanPersistenceViewModelTest {
             markerGate.complete(Unit)
             advanceUntilIdle()
             assertEquals(1, server.requestCount)
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("2026-10-19T18:00", success.removedSessions.single().destination?.start.toString())
             assertEquals(PlanStorage.Ready, vm.storage.value)
             assertEquals(listOf("save", "save", "save unresolved 1", "save"), events)
             assertEquals(vm.plans.value, restoredNow())
@@ -589,7 +591,9 @@ class PlanPersistenceViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("2026-10-19T18:00", success.removedSessions.single().destination?.start.toString())
             assertEquals(movedA, vm.plan(1).current.schedules)
             assertEquals(PlanStorage.SaveFailure, vm.storage.value)
             val ifRestartedNow = restoredNow()

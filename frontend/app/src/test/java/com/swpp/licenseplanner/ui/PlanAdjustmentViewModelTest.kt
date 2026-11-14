@@ -285,7 +285,10 @@ class PlanAdjustmentViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("study-1", success.removedSessions.single().original.scheduleId)
+            assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
             assertTrue(vm.selectPlan(2))
             assertTrue(vm.selectPlan(1))
             assertEquals(AdjustmentSelection(1), vm.adjustment.value)
@@ -329,7 +332,11 @@ class PlanAdjustmentViewModelTest {
         adjustment.gate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
-        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1")), vm.adjustment.value)
+        val success = vm.adjustment.value.state as AdjustmentState.Success
+        assertEquals(1, vm.adjustment.value.planOrdinal)
+        assertNull(vm.adjustment.value.failedScheduleId)
+        assertEquals("study-1", success.targetScheduleId)
+        assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
         val updated = vm.plan(1)
         assertEquals(movedA, updated.current.schedules)
         assertEquals("csv-a2", updated.current.scheduleCsv)
@@ -453,7 +460,9 @@ class PlanAdjustmentViewModelTest {
         assertEquals(mondayWindows, adjustment.inputs[1].original.weeklyAvailability)
         assertEquals(fileA, adjustment.inputs[1].scheduleCsvFile)
         assertEquals(1, vm.plans.value.size)
-        assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+        val success = vm.adjustment.value.state as AdjustmentState.Success
+        assertEquals("study-1", success.targetScheduleId)
+        assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
     }
 
     @Test fun changingSelectionAfterFailureBuildsANewRequest() = runTest(dispatcher) {

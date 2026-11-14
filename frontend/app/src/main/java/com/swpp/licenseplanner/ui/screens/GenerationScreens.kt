@@ -55,6 +55,7 @@ fun GenerateScreen(
         when {
             failure != null -> {
                 Heading("계획을 만들지 못했어요", failure.error.userMessage())
+                ErrorDetails(failure.error)
                 Note("입력한 내용은 그대로 있어요. 다시 시도하면 같은 요청을 다시 보내요.")
             }
             unsaved -> {

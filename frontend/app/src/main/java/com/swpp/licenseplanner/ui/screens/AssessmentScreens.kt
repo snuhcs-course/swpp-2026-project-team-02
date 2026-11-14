@@ -79,6 +79,7 @@ fun QuestionsScreen(
         when {
             loadState is QuestionLoadState.Failure -> {
                 Heading("예시 문항을 불러오지 못했어요", loadState.error.userMessage())
+                ErrorDetails(loadState.error)
                 Note("입력한 시험, 날짜, 실력은 그대로 있어요.")
                 PrimaryButton("다시 시도", onLoad)
                 SecondaryButton("이전으로", onExit)

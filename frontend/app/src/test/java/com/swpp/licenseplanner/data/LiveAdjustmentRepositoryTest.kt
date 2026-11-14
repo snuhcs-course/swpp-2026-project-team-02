@@ -184,7 +184,12 @@ class LiveAdjustmentRepositoryTest {
     private fun assertNotReplayed(first: MockResponse, expected: ApiError) {
         server.enqueue(first)
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"second"}}"""))
-        assertEquals(AdjustmentOutcome.Failure(expected), adjust())
+        val firstOutcome = adjust()
+        if (expected is ApiError.UnknownFailure && expected.status == null) {
+            assertTrue((firstOutcome as AdjustmentOutcome.Failure).error is ApiError.UnknownFailure)
+        } else {
+            assertEquals(AdjustmentOutcome.Failure(expected), firstOutcome)
+        }
         assertEquals(1, server.requestCount)
         assertEquals(AdjustmentOutcome.Failure(ApiError.InvalidInput("second")), adjust())
         assertEquals(2, server.requestCount)
@@ -194,7 +199,7 @@ class LiveAdjustmentRepositoryTest {
     @Test
     fun requestTimeoutIsNotReplayed() = assertNotReplayed(
         MockResponse().setResponseCode(408).setHeader("Retry-After", "0"),
-        ApiError.ServerFailure(408),
+        ApiError.RequestTimeout("HTTP 408\nNo response body"),
     )
 
     @Test
@@ -212,13 +217,13 @@ class LiveAdjustmentRepositoryTest {
     fun redirectIsNotFollowedOrReplayed() = assertNotReplayed(
         MockResponse().setResponseCode(307)
             .setHeader("Location", server.url("/api/v1/schedules/adjust-redirected")),
-        ApiError.ServerFailure(307),
+        ApiError.UnknownFailure(307, "No response body"),
     )
 
     @Test
     fun disconnectAfterSendingIsNotReplayed() = assertNotReplayed(
         MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST),
-        ApiError.Connection,
+        ApiError.UnknownFailure(rawDiagnostic = ""),
     )
 
     private fun failureFor(status: Int, body: String): ApiError {
@@ -233,7 +238,7 @@ class LiveAdjustmentRepositoryTest {
         // Unknown fields around a recognized code are tolerated.
         assertEquals(ApiError.PlanConflict, failureFor(409, """{"error":{"code":"PLAN_CONFLICT","detail":1},"trace":"x"}"""))
         // A code with the wrong status keeps that status's generic category.
-        assertEquals(ApiError.ServerFailure(409), failureFor(409, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
+        assertTrue(failureFor(409, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""") is ApiError.UnknownFailure)
         assertEquals(ApiError.Configuration, failureFor(404, """{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
         assertEquals(ApiError.InvalidInput("x"), failureFor(422, """{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
         assertEquals(ApiError.ServerFailure(500), failureFor(500, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
@@ -266,7 +271,10 @@ class LiveAdjustmentRepositoryTest {
             "not json",
             "",
         )
-        for (body in bodies) assertEquals(body, ApiError.ServerFailure(409), failureFor(409, body))
+        for (body in bodies) {
+            val error = failureFor(409, body)
+            assertTrue("$body: $error", error is ApiError.UnknownFailure)
+        }
         assertEquals(bodies.size, server.requestCount)
     }
 
@@ -276,7 +284,7 @@ class LiveAdjustmentRepositoryTest {
         for ((response, expected) in listOf(
             MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""") to ApiError.PlanNotFound,
             MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}""") to ApiError.PlanConflict,
-            MockResponse().setResponseCode(409).setHeader("Retry-After", "0") to ApiError.ServerFailure(409),
+            MockResponse().setResponseCode(409).setHeader("Retry-After", "0") to ApiError.UnknownFailure(409, "No response body"),
         )) {
             server.enqueue(response)
             server.enqueue(MockResponse().setBody(body()))
@@ -303,7 +311,7 @@ class LiveAdjustmentRepositoryTest {
     fun refusedConnectionIsConnectionError() {
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(AdjustmentOutcome.Failure(ApiError.Connection), adjust(repository(base = base)))
+        assertTrue((adjust(repository(base = base)) as AdjustmentOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test
@@ -311,7 +319,7 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setBody(body()).setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(AdjustmentOutcome.Failure(ApiError.Connection), adjust(repository(client = shortClient)))
+        assertTrue((adjust(repository(client = shortClient)) as AdjustmentOutcome.Failure).error is ApiError.RequestTimeout)
         assertEquals(1, server.requestCount)
     }
 
@@ -447,9 +455,9 @@ class LiveAdjustmentRepositoryTest {
 
     /** OkHttp may recover a dropped GET at transport level; either way it is a connection error. */
     @Test
-    fun reloadDisconnectIsConnectionError() {
+    fun reloadDisconnectIsUnknownTransportError() {
         repeat(2) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)) }
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null))
+        assertTrue((reload(null) as ReloadOutcome.Failure).error is ApiError.UnknownFailure)
         assertTrue(server.requestCount in 1..2)
         assertEquals("GET", server.takeRequest().method)
     }
@@ -459,10 +467,10 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setBody("""{"plans":[]}""").setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null, repo = repository(client = shortClient)))
+        assertTrue((reload(null, repo = repository(client = shortClient)) as ReloadOutcome.Failure).error is ApiError.RequestTimeout)
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null, repo = repository(base = base)))
+        assertTrue((reload(null, repo = repository(base = base)) as ReloadOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test

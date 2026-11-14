@@ -139,7 +139,7 @@ class LivePlanningRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
         assertEquals(PlanOutcome.Failure(ApiError.Configuration), generate())
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
-        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(409)), generate())
+        assertTrue((generate() as PlanOutcome.Failure).error is ApiError.UnknownFailure)
         assertEquals(2, server.requestCount)
     }
 
@@ -155,7 +155,7 @@ class LivePlanningRepositoryTest {
     fun refusedConnectionIsConnectionError() {
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(PlanOutcome.Failure(ApiError.Connection), generate(repository(base = base)))
+        assertTrue((generate(repository(base = base)) as PlanOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test
@@ -163,7 +163,7 @@ class LivePlanningRepositoryTest {
         server.enqueue(MockResponse().setBody(successBody).setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(PlanOutcome.Failure(ApiError.Connection), generate(repository(client = shortClient)))
+        assertTrue((generate(repository(client = shortClient)) as PlanOutcome.Failure).error is ApiError.RequestTimeout)
     }
 
     @Test

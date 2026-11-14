@@ -18,6 +18,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.swpp.licenseplanner.data.CalendarAccess
+import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.DemoRequestOperation
+import com.swpp.licenseplanner.data.FlavorRepositories
+import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
@@ -27,6 +31,7 @@ import com.swpp.licenseplanner.ui.screens.DatesScreen
 import com.swpp.licenseplanner.ui.screens.ExamDateEditScreen
 import com.swpp.licenseplanner.ui.screens.GenerateScreen
 import com.swpp.licenseplanner.ui.screens.HomeScreen
+import com.swpp.licenseplanner.ui.screens.He12ErrorDemoScreen
 import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
@@ -50,6 +55,7 @@ private object Routes {
     const val PLAN = "plan"
     const val SHORTFALL = "shortfall"
     const val EDIT_EXAM_DATE = "edit-exam-date"
+    const val HE12_DEMO = "he12-demo"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -137,7 +143,39 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
+                onHe12Test = { if (BuildConfig.DEMO_MODE) nav.go(Routes.HE12_DEMO) },
             )
+        }
+        if (BuildConfig.DEMO_MODE) {
+            composable(Routes.HE12_DEMO) {
+                He12ErrorDemoScreen(
+                    onBack = { nav.popBackStack() },
+                    onStartScenario = { target, error ->
+                        when (target) {
+                            0 -> {
+                                FlavorRepositories.armDemoFailure(DemoRequestOperation.QUESTIONS, error)
+                                nav.fromHome(Routes.CERTIFICATION)
+                            }
+                            1 -> {
+                                FlavorRepositories.armDemoFailure(DemoRequestOperation.GENERATION, error)
+                                nav.fromHome(Routes.CERTIFICATION)
+                            }
+                            2 -> {
+                                FlavorRepositories.armDemoFailure(DemoRequestOperation.ADJUSTMENT, error)
+                                nav.fromHome(Routes.PLAN_LIST)
+                            }
+                            else -> {
+                                FlavorRepositories.armDemoFailure(
+                                    DemoRequestOperation.ADJUSTMENT,
+                                    ApiError.UnknownFailure(rawDiagnostic = "Simulated adjustment failure before reload"),
+                                )
+                                FlavorRepositories.armDemoFailure(DemoRequestOperation.RELOAD, error)
+                                nav.fromHome(Routes.PLAN_LIST)
+                            }
+                        }
+                    },
+                )
+            }
         }
         composable(Routes.PLAN_LIST) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()

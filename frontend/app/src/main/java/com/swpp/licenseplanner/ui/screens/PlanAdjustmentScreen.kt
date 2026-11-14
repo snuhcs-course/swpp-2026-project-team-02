@@ -264,20 +264,28 @@ fun PlanAdjustmentScreen(
             }
         }
         when (mode) {
-            AdjustmentMode.Missing -> AlertCard("이 계획은 더 이상 조정할 수 없어요", ApiError.PlanNotFound.adjustmentMessage())
-            AdjustmentMode.ReloadNeeded -> AlertCard(
-                "최신 계획을 확인해 주세요",
-                (state as? AdjustmentState.Failure)?.error?.adjustmentMessage()
-                    ?: "최신 계획을 불러와야 이 계획을 다시 조정할 수 있어요. 화면에는 이전 계획이 남아 있어요.",
-            )
+            AdjustmentMode.Missing -> {
+                AlertCard("이 계획은 더 이상 조정할 수 없어요", ApiError.PlanNotFound.adjustmentMessage())
+                ErrorDetails(ApiError.PlanNotFound)
+            }
+            AdjustmentMode.ReloadNeeded -> {
+                val error = (state as? AdjustmentState.Failure)?.error
+                AlertCard(
+                    "최신 계획을 확인해 주세요",
+                    error?.adjustmentMessage()
+                        ?: "최신 계획을 불러와야 이 계획을 다시 조정할 수 있어요. 화면에는 이전 계획이 남아 있어요.",
+                )
+                if (error != null) ErrorDetails(error)
+            }
             AdjustmentMode.Reloading -> LoadingBlock(
                 "최신 계획을 불러오는 중이에요",
                 "저장된 계획을 읽기만 해요. 조정 요청은 다시 보내지 않아요.",
             )
-            AdjustmentMode.ReloadFailed -> AlertCard(
-                "최신 계획을 불러오지 못했어요",
-                (state as AdjustmentState.ReloadFailure).error.reloadMessage(),
-            )
+            AdjustmentMode.ReloadFailed -> {
+                val error = (state as AdjustmentState.ReloadFailure).error
+                AlertCard("최신 계획을 불러오지 못했어요", error.reloadMessage())
+                ErrorDetails(error)
+            }
             AdjustmentMode.NoIdentity -> AlertCard(
                 "이 계획은 조정할 수 없어요",
                 "서버가 계획 파일 정보를 보내지 않았어요. 일정은 볼 수 있지만, 조정하려면 새 계획을 만들어 주세요.",
@@ -301,6 +309,7 @@ fun PlanAdjustmentScreen(
                 }
                 state is AdjustmentState.Failure -> {
                     AlertCard("일정을 조정하지 못했어요", state.error.adjustmentMessage())
+                    ErrorDetails(state.error)
                     Note("선택한 일정은 그대로예요. 다시 시도하면 같은 요청을 다시 보내요.")
                 }
                 state == AdjustmentState.DemoNoSlot -> AlertCard(
