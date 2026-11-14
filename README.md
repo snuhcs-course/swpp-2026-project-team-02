@@ -107,6 +107,14 @@ revision or configuration the server is running.
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
+- **How much available time a plan uses:** the live planner chooses how much of
+  the entered study time to schedule and on which days; recent evaluation runs
+  used a median of about 60%, and the chosen days can shift from week to week.
+  A heuristic evaluator expected the plan to use more of the entered time. The
+  unused time is also where adjustment moves missed sessions. Decided on
+  2026-11-14 to keep the current behavior until user testing shows whether
+  learners mean their entered time as a limit or a target, and whether they
+  prefer short daily sessions or longer sessions on fewer days.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
 - **Deployment:** authentication, per-user storage and plan retention remain
