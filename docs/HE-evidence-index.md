@@ -5,7 +5,7 @@ This index covers the HE tasks assigned to Junwoo: HE-01, HE-09/23, HE-11, HE-12
 | Task | Work note | Evidence checked into this branch | Coverage note |
 |---|---|---|---|
 | HE-01 | [Contextual help](HE-01-contextual-help.md) | 10 screenshots in `evidence/he-01/` | Post-change screens and help dialogs; no pre-change capture in the repository. |
-| HE-09/23 | [Generation back navigation](HE-09-23-generation-back-navigation.md) | 3 screenshots in `evidence/he-09-23/` | One pre-change loading screen and post-change confirmation/return flow. The requester separately confirmed dismiss-and-continue; the supplied recording frames checked in here do not show that action. |
+| HE-09/23 | [Generation back navigation](HE-09-23-generation-back-navigation.md) | 4 screenshots in `evidence/he-09-23/` | Pre-change loading, confirmation, generation continuing after dismissal, and return with values preserved. |
 | HE-11 | [Adjustment navigation](HE-11-adjustment-navigation.md) | 5 screenshots in `evidence/he-11/` | Post-change source/destination movement; no pre-change capture in the repository. |
 | HE-12 | [Error recovery](HE-12-error-recovery.md) | 2 screenshots in `evidence/he-12/` | Question-load and plan-generation developer-detail screens; other error categories are not pictured. |
 | HE-13 | [Available-time graph](HE-13-available-time.md) | 2 screenshots in `evidence/he-13/` | Post-change graph on plan and adjustment screens for one selected week; no pre-change image or week-navigation comparison is included. |

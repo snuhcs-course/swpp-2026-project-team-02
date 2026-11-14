@@ -14,21 +14,22 @@ When the user presses Back while a plan-generation request is still running, lea
 
 ## Manual verification
 
-The requester confirmed both emulator paths:
+The requester confirmed both emulator paths, and the supplied post-change recording shows the sequence:
 
 1. During generation, press Back. The confirmation dialog appears.
 2. Select **뒤로 돌아가기 취소**. The dialog closes and generation continues.
 3. During generation, press Back again and select **계획 생성 취소**. The app returns to study-time input with the previously entered values preserved.
 
-The supplied post-change recording visibly captures the confirmation dialog and the return to the study-time input screen with Monday 4 hours, Wednesday 3 hours, and Sunday 2 hours retained. It does not visibly capture the intermediate dismissal-and-continue branch; that branch was separately confirmed by the requester during emulator testing.
+The recording captures a confirmation dialog, the generation spinner after the dialog is dismissed, the dialog shown again on a later Back press, and the return to study-time input after cancellation. The requester confirmed that the first dismissal was made with **뒤로 돌아가기 취소**. The retained form values are Monday 4 hours, Wednesday 3 hours, and Sunday 2 hours.
 
 ## Evidence
 
 - [Back confirmation dialog](evidence/he-09-23/01-generation-back-confirmation.png)
 - [Confirmation options during generation](evidence/he-09-23/02-generation-cancel-confirmation.png)
 - [Returned availability values preserved](evidence/he-09-23/03-returned-availability-values-preserved.png)
+- [Generation continues after dialog dismissal](evidence/he-09-23/04-generation-continues-after-dialog-dismissed.png)
 
-The first image is a frame from the supplied pre-change recording, showing the generation screen before its back-navigation confirmation was added. The latter two are frames from the supplied post-change recording. Both recordings remain at their original local paths and are not copied into this repository.
+The first image is a frame from the supplied pre-change recording, showing the generation screen before its back-navigation confirmation was added. The latter three are frames from the supplied post-change recording. Both recordings remain at their original local paths and are not copied into this repository.
 
 ## Automated verification
 
