@@ -33,6 +33,8 @@ data class SessionPlan(
     val recovery: PlanRecovery = PlanRecovery.Ready,
     val recoveryScheduleId: String? = null,
     val checkIns: Map<String, StudyCheckIn> = emptyMap(),
+    /** Timing-only digests for exact acknowledged conflicts, scoped to this plan and study row. */
+    val keptConflicts: Map<String, Set<String>> = emptyMap(),
 ) {
     val studyCount: Int get() = current.schedules.count { !it.scheduleId.startsWith(EXTERNAL_PREFIX) }
 

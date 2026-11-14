@@ -56,6 +56,168 @@ class MainFlowUiTest {
     }
 
     @Test
+    fun foregroundKeepSurvivesRestoreAndChangedOccurrenceAndStudyIntervalWarnAgain() = withApp { host ->
+        generatePlan(host)
+        val original = host.snapshot().plans.single()
+        val row = original.current.schedules.first { it.scheduleId.startsWith("study-") }
+        val report = StudyCheckIn(StudyCheckInStatus.Done, 20)
+        val a = original.copy(checkIns = mapOf(row.scheduleId to report))
+        val start = WireDateTime.parseOrNull(row.startDate)!!
+        val bRow = row.copy(startDate = WireDateTime.format(start.plusHours(2)), endDate = WireDateTime.format(start.plusHours(3)))
+        val b = original.copy(ordinal = 2, current = original.current.copy(schedules = listOf(bRow)))
+        val draft = CreationDraft(host.viewModel.form.value, CreationStep.QUESTIONS, 2)
+        val seeded = com.swpp.licenseplanner.data.PlanSnapshot(listOf(a, b), creationDraft = draft)
+        host.seedSnapshot(seeded)
+        host.calendarOutcome = conflictingCalendar(row)
+        host.recreate()
+        waitForText("계획 1 · 캘린더와 겹치는 공부 1개")
+        val calls = host.adjustmentCalls.get()
+        val planning = host.planningCalls.get()
+        click("계획 조정")
+        click("계획 1 · $CERTIFICATION_NAME")
+        show("캘린더와 겹치는 공부 시간")
+        host.capture("current-conflict-notice")
+        click("그대로 두기")
+        host.awaitSaved()
+        show("그대로 두기를 기기에 저장했어요.")
+        val kept = host.snapshot()
+        assertEquals(b, kept.plans[1])
+        assertEquals(draft, kept.creationDraft)
+        assertEquals(a.checkIns, kept.plans[0].checkIns)
+        assertTrue(kept.plans[0].keptConflicts.getValue(row.scheduleId).isNotEmpty())
+        assertEquals(calls, host.adjustmentCalls.get())
+        assertEquals(planning, host.planningCalls.get())
+        assertEquals(0, host.calendarWrites.get())
+        host.recreate()
+        waitForText("계획 1 · 캘린더와 겹치는 공부 0개")
+        host.calendarOutcome = conflictingCalendar(row, "edited-occurrence")
+        compose.runOnIdle { host.viewModel.leaveForeground(); host.viewModel.enterForeground(true) }
+        waitForText("계획 1 · 캘린더와 겹치는 공부 1개")
+        host.calendarOutcome = conflictingCalendar(row)
+        val changed = kept.copy(plans = kept.plans.map { plan -> if (plan.ordinal != 1) plan else plan.copy(current = plan.current.copy(
+            schedules = plan.current.schedules.map { if (it.scheduleId == row.scheduleId) it.copy(
+                startDate = WireDateTime.format(start.plusMinutes(1)), endDate = WireDateTime.format(start.plusHours(1).plusMinutes(1))) else it })) })
+        host.seedSnapshot(changed)
+        host.recreate()
+        waitForText("계획 1 · 캘린더와 겹치는 공부 1개")
+        assertEquals(kept.plans[0].keptConflicts, host.snapshot().plans[0].keptConflicts)
+        assertEquals(calls, host.adjustmentCalls.get())
+    }
+
+    @Test
+    fun unsavedKeepOnAnotherPlanBlocksRegenerationUntilLocalRetryWithoutResumingIt() = withApp { host ->
+        generatePlan(host)
+        val original = host.snapshot().plans.single()
+        val row = original.current.schedules.first { it.scheduleId.startsWith("study-") }
+        val draft = CreationDraft(host.viewModel.form.value, CreationStep.QUESTIONS, 2)
+        host.seedSnapshot(com.swpp.licenseplanner.data.PlanSnapshot(listOf(original, original.copy(ordinal = 2)), creationDraft = draft))
+        host.calendarOutcome = conflictingCalendar(row)
+        host.recreate()
+        waitForText("계획 2 · 캘린더와 겹치는 공부 1개")
+        click("계획 조정")
+        click("계획 2 · $CERTIFICATION_NAME")
+        host.failSaves.set(true)
+        click("그대로 두기")
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        show("그대로 두기 · 저장 안 됨. 화면의 다시 저장하기를 눌러 주세요.")
+        pressBack()
+        click("계획 1 · $CERTIFICATION_NAME")
+        compose.onNodeWithText("이 계획 다시 만들기").assertIsNotEnabled()
+        val reads = host.calendarReads.get()
+        val planning = host.planningCalls.get()
+        compose.runOnIdle {
+            assertFalse(host.viewModel.startRegeneration(1))
+            assertFalse(host.viewModel.keepCurrentConflict(1, row.scheduleId))
+            host.viewModel.closeKeepFeedback()
+        }
+        click("다시 저장하기")
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        host.failSaves.set(false)
+        click("다시 저장하기")
+        host.awaitSaved()
+        assertEquals(reads, host.calendarReads.get())
+        assertEquals(planning, host.planningCalls.get())
+        assertEquals(draft, host.snapshot().creationDraft)
+        assertNull(host.viewModel.calendarConflict.value)
+        assertNull(host.viewModel.keepFeedback.value)
+        assertTrue(host.snapshot().plans[1].keptConflicts.isNotEmpty())
+        assertEquals(0, host.adjustmentCalls.get())
+        assertEquals(0, host.calendarWrites.get())
+    }
+
+    @Test
+    fun proposedManualTimeNeedsExternalAndWindowConsentAndItsCombinedSaveRetriesOnlyLocally() = withApp { host ->
+        generatePlan(host)
+        val original = host.snapshot().plans.single()
+        val row = original.current.schedules.first { it.scheduleId.startsWith("study-") }
+        val start = WireDateTime.parseOrNull(row.startDate)!!.plusDays(1).withHour(14)
+        val duration = Duration.between(WireDateTime.parseOrNull(row.startDate), WireDateTime.parseOrNull(row.endDate))
+        val proposed = row.copy(startDate = WireDateTime.format(start), endDate = WireDateTime.format(start.plus(duration)))
+        val external = proposed.copy(scheduleId = "external-991", topic = "")
+        val report = StudyCheckIn(StudyCheckInStatus.Done, 20)
+        val a = original.copy(current = original.current.copy(schedules = original.current.schedules + external), checkIns = mapOf(row.scheduleId to report))
+        val b = original.copy(ordinal = 2)
+        val draft = CreationDraft(host.viewModel.form.value, CreationStep.QUESTIONS, 2)
+        host.seedSnapshot(com.swpp.licenseplanner.data.PlanSnapshot(listOf(a, b), creationDraft = draft))
+        host.calendarOutcome = conflictingCalendar(proposed)
+        host.recreate()
+        click("계획 조정")
+        click("계획 1 · $CERTIFICATION_NAME")
+        compose.runOnIdle {
+            assertTrue(host.viewModel.startCheckIn(2, row.scheduleId))
+            host.viewModel.chooseCheckInStatus(StudyCheckInStatus.Done)
+            host.viewModel.setCheckInMinutes("35")
+            assertTrue(host.viewModel.saveCheckIn())
+        }
+        host.awaitSaved()
+        val savedB = host.snapshot().plans[1]
+        val savedReportFeedback = host.viewModel.checkIn.value
+        compose.runOnIdle {
+            host.viewModel.selectFailedSession(row.scheduleId)
+            assertTrue(host.viewModel.startManualMove())
+            host.viewModel.setManualStart(start)
+        }
+        click("이 시간으로 옮기기")
+        waitForText("겹쳐도 이 시간으로 옮기기")
+        assertEquals(0, host.adjustmentCalls.get())
+        host.capture("manual-overlap-review")
+        click("다른 시간 선택")
+        assertEquals(0, host.adjustmentCalls.get())
+        click("이 시간으로 옮기기")
+        click("겹쳐도 이 시간으로 옮기기")
+        waitForText("설정한 공부 시간 밖이에요.")
+        assertEquals(1, host.adjustmentCalls.get())
+        assertTrue(host.adjustmentInputs.single().manualMove!!.confirmExternalOverlap)
+        assertFalse(host.adjustmentInputs.single().manualMove!!.confirmOutsideAvailability)
+        host.failSaves.set(true)
+        click("이번 한 번만 옮기기")
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        assertEquals(2, host.adjustmentCalls.get())
+        assertTrue(host.adjustmentInputs.last().manualMove!!.confirmExternalOverlap)
+        assertTrue(host.adjustmentInputs.last().manualMove!!.confirmOutsideAvailability)
+        val reads = host.calendarReads.get()
+        assertEquals(savedReportFeedback, host.viewModel.checkIn.value)
+        host.capture("manual-keep-unsaved")
+        host.failSaves.set(false)
+        click("다시 저장하기")
+        host.awaitSaved()
+        assertEquals(reads, host.calendarReads.get())
+        assertEquals(2, host.adjustmentCalls.get())
+        val saved = host.snapshot()
+        assertEquals(proposed, saved.plans[0].current.schedules.single { it.scheduleId == row.scheduleId })
+        assertEquals(report, saved.plans[0].checkIns[row.scheduleId])
+        assertEquals(savedB, saved.plans[1])
+        assertEquals(savedReportFeedback, host.viewModel.checkIn.value)
+        assertEquals(draft, saved.creationDraft)
+        assertEquals(MoveSave.Saved, host.viewModel.keepFeedback.value!!.save)
+        assertEquals(0, host.calendarWrites.get())
+        host.calendarOutcome = com.swpp.licenseplanner.data.CalendarReadOutcome.Loaded(com.swpp.licenseplanner.data.CalendarBusySnapshot(emptyList(), 0, 0))
+        host.recreate()
+        assertEquals(saved, host.snapshot())
+        assertEquals(2, host.adjustmentCalls.get())
+    }
+
+    @Test
     fun freshGenerationConflictReviewCancelAndChangedFinalObservationSendOnlyOnePlan() = withApp { host ->
         startQuestions(host)
         answerAll(host)

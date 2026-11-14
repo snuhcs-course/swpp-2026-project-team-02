@@ -41,6 +41,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
@@ -1065,23 +1066,24 @@ class PlanAdjustmentViewModelTest {
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
         generateAB(vm)
         vm.select(1, "study-1")
-        assertFalse(vm.submitManualMove()) // nothing opened
+        assertFalse(vm.submitManualAfterCalendarCheck()) // nothing opened
         assertTrue(vm.startManualMove())
-        assertFalse(vm.submitManualMove()) // no destination yet
+        assertFalse(vm.submitManualAfterCalendarCheck()) // no destination yet
         vm.setManualStart(chosen)
-        assertFalse(vm.confirmOutsideAvailability()) // not solicited yet
+        assertFalse(vm.confirmOutsideAfterCalendarCheck()) // not solicited yet
         vm.cancelManualMove()
         assertNull(vm.adjustment.value.manual)
-        assertFalse(vm.submitManualMove())
+        assertFalse(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(adjustment.inputs.isEmpty())
 
         assertTrue(vm.startManualMove())
         vm.setManualStart(chosen)
         adjustment.gate = CompletableDeferred()
-        assertTrue(vm.submitManualMove())
-        assertFalse(vm.submitManualMove())
-        assertFalse(vm.confirmOutsideAvailability())
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent() // Complete the fresh calendar review before holding the actual request.
+        assertFalse(vm.submitManualAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         assertFalse(vm.submitAdjustment())
         vm.setManualStart(elsewhere) // ignored while in flight
         advanceUntilIdle()
@@ -1099,7 +1101,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
 
         // The same refused destination is not resent without the explicit exception.
-        assertFalse(vm.submitManualMove())
+        assertFalse(vm.submitManualAfterCalendarCheck())
         vm.retryAdjustment()
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
@@ -1107,13 +1109,13 @@ class PlanAdjustmentViewModelTest {
         // Another time clears the solicitation; it must be refused again before it can be confirmed.
         vm.setManualStart(elsewhere)
         assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
-        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         vm.setManualStart(chosen)
-        assertFalse(vm.confirmOutsideAvailability())
-        assertTrue(vm.submitManualMove())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
-        assertTrue(vm.confirmOutsideAvailability())
-        assertFalse(vm.confirmOutsideAvailability())
+        assertTrue(vm.confirmOutsideAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         assertEquals(ManualDraft(chosen, confirmOutsideAvailability = true), vm.adjustment.value.manual)
         advanceUntilIdle()
         assertEquals(3, adjustment.inputs.size)
@@ -1129,7 +1131,7 @@ class PlanAdjustmentViewModelTest {
         for (reason in ManualMoveRejection.entries) {
             val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(reason)))
             val vm = manualDraftOnA(adjustment)
-            assertTrue(vm.submitManualMove())
+            assertTrue(vm.submitManualAfterCalendarCheck())
             advanceUntilIdle()
             val selection = vm.adjustment.value
             assertEquals(AdjustmentState.Failure(ApiError.ManualMoveRejected(reason)), selection.state)
@@ -1138,7 +1140,7 @@ class PlanAdjustmentViewModelTest {
             assertFalse(ApiError.ManualMoveRejected(reason).requiresReload())
             assertEquals(reason == ManualMoveRejection.OutsideStudyWindows, selection.canConfirmOutsideAvailability)
             if (reason != ManualMoveRejection.OutsideStudyWindows) {
-                assertFalse(vm.confirmOutsideAvailability())
+                assertFalse(vm.confirmOutsideAfterCalendarCheck())
                 advanceUntilIdle()
                 assertEquals(1, adjustment.inputs.size)
             }
@@ -1147,7 +1149,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(ManualMoveRejection.entries.size, messages.size)
         // The generic invalid-input refusal never solicits the exception either.
         val vm = manualDraftOnA(FakeAdjustment(AdjustmentOutcome.Failure(ApiError.InvalidInput("bad"))))
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
     }
@@ -1158,19 +1160,19 @@ class PlanAdjustmentViewModelTest {
         val vm = manualDraftOnA(adjustment)
         vm.reviseManualMove() // nothing to decline yet
         assertEquals(AdjustmentSelection(1, "study-1", manual = ManualDraft(chosen)), vm.adjustment.value)
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
 
         vm.reviseManualMove()
         assertEquals(AdjustmentSelection(1, "study-1", manual = ManualDraft(chosen)), vm.adjustment.value)
-        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         vm.retryAdjustment()
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
 
         // Sending the same time again is a new, unconfirmed request that the server checks from the start.
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(listOf(ManualMove(chosen), ManualMove(chosen)), adjustment.inputs.map { it.manualMove })
         assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
@@ -1184,7 +1186,8 @@ class PlanAdjustmentViewModelTest {
         )
         val vm = manualDraftOnA(adjustment)
         adjustment.gate = CompletableDeferred()
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent()
         vm.cancelManualMove()
         vm.reviseManualMove()
         vm.setManualStart(elsewhere)
@@ -1200,6 +1203,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
         assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
         vm.retryAdjustment()
+        vm.onManualPermission(true)
         advanceUntilIdle()
         assertEquals(2, adjustment.inputs.size)
         assertEquals(adjustment.inputs[0], adjustment.inputs[1])
@@ -1211,24 +1215,24 @@ class PlanAdjustmentViewModelTest {
         val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
         val adjustment = FakeAdjustment(outside, outside)
         val vm = manualDraftOnA(adjustment)
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
 
         vm.selectFailedSession("study-2")
         assertEquals(AdjustmentSelection(1, "study-2"), vm.adjustment.value)
-        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
 
         vm.selectFailedSession("study-1")
         assertTrue(vm.startManualMove())
         vm.setManualStart(chosen)
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
         assertTrue(vm.selectPlan(2))
         assertTrue(vm.selectPlan(1))
         assertEquals(AdjustmentSelection(1), vm.adjustment.value)
-        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(2, adjustment.inputs.size)
         assertTrue(adjustment.inputs.all { it.manualMove == ManualMove(chosen, false) })
@@ -1240,9 +1244,9 @@ class PlanAdjustmentViewModelTest {
             val vm = manualDraftOnA(LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher))
             server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"OUTSIDE_STUDY_WINDOWS","message":"x"}}"""))
             server.enqueue(MockResponse().setBody(adjustedJson(manualA, "study-1")))
-            assertTrue(vm.submitManualMove())
+            assertTrue(vm.submitManualAfterCalendarCheck())
             advanceUntilIdle()
-            assertTrue(vm.confirmOutsideAvailability())
+            assertTrue(vm.confirmOutsideAfterCalendarCheck())
             advanceUntilIdle()
             assertEquals(manualA, vm.plan(1).current.schedules)
             assertEquals(mondayWindows, vm.plan(1).original.weeklyAvailability)
@@ -1281,7 +1285,7 @@ class PlanAdjustmentViewModelTest {
                 val planBBefore = vm.plan(2)
                 server.enqueue(failure)
                 server.enqueue(MockResponse().setBody(listJson(fileA to rowsA)))
-                assertTrue(vm.submitManualMove())
+                assertTrue(vm.submitManualAfterCalendarCheck())
                 advanceUntilIdle()
                 val error = (vm.adjustment.value.state as AdjustmentState.Failure).error
                 assertTrue(error.toString(), error.requiresReload())
@@ -1289,8 +1293,8 @@ class PlanAdjustmentViewModelTest {
                 assertEquals(rowsA, vm.plan(1).current.schedules)
                 assertEquals(planBBefore, vm.plan(2))
                 assertNull(vm.adjustment.value.manual) // a fresh reviewed choice is needed
-                assertFalse(vm.confirmOutsideAvailability())
-                assertFalse(vm.submitManualMove())
+                assertFalse(vm.confirmOutsideAfterCalendarCheck())
+                assertFalse(vm.submitManualAfterCalendarCheck())
                 vm.retryAdjustment()
                 assertFalse(vm.startManualMove())
                 advanceUntilIdle()
@@ -1300,7 +1304,7 @@ class PlanAdjustmentViewModelTest {
                 advanceUntilIdle()
                 assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
                 assertFalse(vm.startManualMove()) // a session must be chosen again
-                assertFalse(vm.submitManualMove())
+                assertFalse(vm.submitManualAfterCalendarCheck())
                 advanceUntilIdle()
                 assertEquals(listOf("POST", "GET"), server.requests().map { it.method })
             } finally {
@@ -1314,13 +1318,13 @@ class PlanAdjustmentViewModelTest {
         try {
             val vm = manualDraftOnA(LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher))
             server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"$fileA"}}"""))
-            assertTrue(vm.submitManualMove())
+            assertTrue(vm.submitManualAfterCalendarCheck())
             advanceUntilIdle()
             assertEquals(AdjustmentState.Failure(ApiError.PlanNotFound), vm.adjustment.value.state)
             assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
             assertNull(vm.adjustment.value.manual)
             assertFalse(vm.startManualMove())
-            assertFalse(vm.submitManualMove())
+            assertFalse(vm.submitManualAfterCalendarCheck())
             vm.retryAdjustment()
             assertFalse(vm.reloadPlan())
             advanceUntilIdle()
@@ -1371,7 +1375,7 @@ class PlanAdjustmentViewModelTest {
         vm.selectFailedSession("study-1")
         assertTrue(vm.startManualMove())
         vm.setManualStart(chosen)
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(manualA, vm.plan(1).current.schedules)
         assertEquals(reportsA, vm.plan(1).checkIns)
@@ -1415,7 +1419,7 @@ class PlanAdjustmentViewModelTest {
         vm.select(1, "study-1")
         assertTrue(vm.startManualMove())
         vm.setManualStart(chosen)
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(manualA, vm.plan(1).current.schedules)
         assertSavedWithDraft()
@@ -1480,7 +1484,7 @@ class PlanAdjustmentViewModelTest {
         vm.select(1, "study-1")
         assertTrue(vm.startManualMove())
         vm.setManualStart(LocalDateTime.of(2026, 10, 31, 23, 30))
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
 
         val move = SessionMove(

@@ -115,6 +115,7 @@ fun PlanAdjustmentScreen(
     onManualRevise: () -> Unit,
     onManualCancel: () -> Unit,
     checkIns: CheckInRows,
+    conflictNotices: @Composable () -> Unit = {},
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
@@ -232,6 +233,7 @@ fun PlanAdjustmentScreen(
             }
         }
         StorageAlert(storage, onRetryLoad = {}, onRetrySave = onRetrySave)
+        conflictNotices()
         if (state == AdjustmentState.Reloaded && mode != AdjustmentMode.Missing) {
             MutedBox {
                 Text("최신 저장 계획을 불러왔어요", style = MaterialTheme.typography.titleSmall, color = Ink)

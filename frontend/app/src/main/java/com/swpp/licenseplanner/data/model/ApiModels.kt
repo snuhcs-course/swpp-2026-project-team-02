@@ -118,6 +118,7 @@ data class ScheduleAdjustmentRequest(
     val mode: String? = null,
     @SerialName("new_start_date") val newStartDate: String? = null,
     @SerialName("confirm_outside_availability") val confirmOutsideAvailability: Boolean? = null,
+    @SerialName("confirm_external_overlap") val confirmExternalOverlap: Boolean? = null,
     @SerialName("preparation_start") val preparationStart: String? = null,
 )
 

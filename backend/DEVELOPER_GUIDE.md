@@ -48,7 +48,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `preparation_start`를 받습니다. `mode: "remaining"`이면 모델 없이 `remaining_sessions`의 남은 분을 한 번에 재배치합니다(필수 필드와 규칙은 [FRONTEND_INTEGRATION_GUIDE.md](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)) |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `confirm_external_overlap`, `preparation_start`를 받습니다. 두 boolean은 기본 false이며 각각 시간 밖·외부 일정 겹침만 허용합니다. 외부 겹침 확인은 manual 전용이며 공부 겹침·기간·저장 검사는 항상 적용합니다. `mode: "remaining"`이면 모델 없이 `remaining_sessions`의 남은 분을 한 번에 재배치합니다(필수 필드와 규칙은 [FRONTEND_INTEGRATION_GUIDE.md](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)) |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:

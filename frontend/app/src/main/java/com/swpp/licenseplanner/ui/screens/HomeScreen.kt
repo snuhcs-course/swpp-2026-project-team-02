@@ -27,12 +27,14 @@ fun HomeScreen(
     onAdjust: () -> Unit,
     onRetryLoad: () -> Unit,
     onRetrySave: () -> Unit,
+    conflictNotices: @Composable () -> Unit = {},
 ) {
     AppScreen(title = "학습 계획", navIcon = null) {
         Heading("무엇을 할까요?", "새 계획을 만들거나, 만든 계획에서 놓친 공부 일정을 다시 잡아요.")
         PrimaryButton("계획 생성", onCreate, subtitle = "$CERTIFICATION_NAME 필기", enabled = storage == PlanStorage.Ready)
         if (hasDraft) SecondaryButton("이어서 만들기", onResume, enabled = storage == PlanStorage.Ready)
         SecondaryButton("계획 조정", onAdjust)
+        conflictNotices()
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
         planCountNote(storage, plans.size, savedPlans.size)?.let { Note(it) }

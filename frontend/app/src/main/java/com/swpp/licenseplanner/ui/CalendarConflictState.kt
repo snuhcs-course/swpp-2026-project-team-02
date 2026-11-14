@@ -7,6 +7,7 @@ import com.swpp.licenseplanner.data.CalendarReadWindow
 import com.swpp.licenseplanner.data.InvalidQuestionDataException
 import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.QuestionAdapter
+import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.QuestionBankResponse
 import com.swpp.licenseplanner.data.model.QuestionDto
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
@@ -17,6 +18,34 @@ import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.WireDateTime
+import java.time.LocalDateTime
+
+enum class NoticePhase { Checking, Checked, Unchecked, Stale }
+
+data class PlanConflictNotice(
+    val source: SessionPlan,
+    val conflicts: CalendarConflictResult = CalendarConflictResult(emptyList()),
+    val phase: NoticePhase = NoticePhase.Unchecked,
+)
+
+data class KeepFeedback(val id: Int, val ordinal: Int, val scheduleId: String, val save: MoveSave = MoveSave.Saving)
+
+/** Captured manual destination and timing observation; never stored or sent over HTTP. */
+data class ManualConflictReview(
+    val id: Int,
+    val source: SessionPlan,
+    val scheduleId: String,
+    val start: LocalDateTime,
+    val window: CalendarReadWindow,
+    val targets: List<ConflictTarget>,
+    val retained: List<ScheduleRow>,
+    val phase: ConflictPhase = ConflictPhase.RequestingPermission,
+    val outcome: CalendarReadOutcome? = null,
+    val conflicts: CalendarConflictResult = CalendarConflictResult(emptyList()),
+    val externalConsent: Boolean = false,
+    val outsideConsent: Boolean = false,
+    val unchecked: Boolean = false,
+)
 
 enum class ConflictKind { Creation, Replacement, Export }
 enum class ConflictPhase { ReplacementConsent, RequestingPermission, AwaitingPermission, Reading, Review, Details, Unchecked, Generating, Saving, Unsaved, Replaced, Failed }

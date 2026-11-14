@@ -194,4 +194,18 @@ class DemoScheduleAdjusterTest {
             assertTrue(start, manual(start, confirm = true) is DemoManualAdjustment.Moved)
         }
     }
+    @Test fun manualExternalAndWindowExceptionsAreIndependentAndPreserveRows() {
+        val destination = WireDateTime.parseOrNull("2026/10/20/12/30")!!
+        fun move(outside: Boolean, external: Boolean, start: java.time.LocalDateTime = destination) =
+            DemoScheduleAdjuster.moveManually(tuesday, manualRows, "study-1", start, now, outside, external)
+        for (outside in listOf(false, true)) assertEquals(DemoManualAdjustment.Rejected(ManualMoveRejection.ExternalEventOverlap), move(outside, false))
+        assertEquals(DemoManualAdjustment.Rejected(ManualMoveRejection.OutsideStudyWindows), move(false, true))
+        val moved = move(true, true) as DemoManualAdjustment.Moved
+        assertEquals(manualRows.drop(1), moved.schedules.drop(1))
+        assertEquals("2026/10/20/12/30", moved.schedules.first().startDate)
+        assertEquals(DemoManualAdjustment.Rejected(ManualMoveRejection.StudySessionOverlap),
+            move(true, true, WireDateTime.parseOrNull("2026/10/21/18/30")!!))
+        assertEquals(DemoManualAdjustment.Rejected(ManualMoveRejection.InPast), move(true, true, now.minusMinutes(1)))
+    }
+
 }

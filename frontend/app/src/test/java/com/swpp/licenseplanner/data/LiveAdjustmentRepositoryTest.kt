@@ -486,7 +486,7 @@ class LiveAdjustmentRepositoryTest {
     // --- Manual mode ---
 
     private val chosen = java.time.LocalDateTime.of(2026, 10, 13, 14, 0)
-    private val manualInput = input.copy(manualMove = ManualMove(chosen, confirmOutsideAvailability = true))
+    private val manualInput = input.copy(manualMove = ManualMove(chosen, confirmOutsideAvailability = true, confirmExternalOverlap = true))
     private val movedRow = """{"schedule_id":"study-1","start_date":"2026/10/13/14/00","end_date":"2026/10/13/15/00","topic":"함수와 데이터 관리"}"""
     private val otherRows = """
         {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
@@ -502,13 +502,14 @@ class LiveAdjustmentRepositoryTest {
         assertEquals("manual", sent["mode"]!!.toString().trim('"'))
         assertEquals("2026/10/13/14/00", sent["new_start_date"]!!.toString().trim('"'))
         assertEquals("true", sent["confirm_outside_availability"].toString())
+        assertEquals("true", sent["confirm_external_overlap"].toString())
         assertEquals(originalA.preparationStart, sent["preparation_start"]!!.toString().trim('"'))
         assertEquals(1, server.requestCount)
         // The automatic request carries none of the manual fields.
         server.enqueue(MockResponse().setBody(body()))
         adjust()
         val automatic = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-        assertTrue(listOf("mode", "new_start_date", "confirm_outside_availability", "preparation_start").none { it in automatic })
+        assertTrue(listOf("mode", "new_start_date", "confirm_outside_availability", "confirm_external_overlap", "preparation_start").none { it in automatic })
     }
 
     @Test

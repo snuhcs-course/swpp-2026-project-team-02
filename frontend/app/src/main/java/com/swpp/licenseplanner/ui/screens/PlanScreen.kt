@@ -83,6 +83,7 @@ fun PlanScreen(
     checkIns: CheckInRows,
     storage: PlanStorage,
     onRetrySave: () -> Unit,
+    conflictNotices: @Composable () -> Unit = {},
 ) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -110,6 +111,7 @@ fun PlanScreen(
                 }
             }
             if (summary != null) item { PlanSummary(summary) }
+            item { conflictNotices() }
             if (storage == PlanStorage.SaveFailure) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

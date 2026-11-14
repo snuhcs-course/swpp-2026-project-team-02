@@ -77,7 +77,7 @@ object DemoScheduleAdjuster {
      * The local manual policy, matching the server's manual mode: the target keeps its duration and
      * moves to [newStart]. Checks run in a fixed order (past, preparation start, exam, another
      * study session, an external event, study windows); [confirmOutsideAvailability] waives only
-     * the last one. [now] is the current local minute.
+     * the last one. [confirmExternalOverlap] waives only external overlaps. [now] is the current local minute.
      */
     fun moveManually(
         original: StudyPlanRequest,
@@ -86,6 +86,7 @@ object DemoScheduleAdjuster {
         newStart: LocalDateTime,
         now: LocalDateTime,
         confirmOutsideAvailability: Boolean,
+        confirmExternalOverlap: Boolean = false,
     ): DemoManualAdjustment {
         val sessions = PlanGrouping.sessions(rows)
         val target = sessions.firstOrNull { it.scheduleId == targetId && !it.isExternal }
@@ -99,7 +100,7 @@ object DemoScheduleAdjuster {
             newStart.isBefore(preparation) -> ManualMoveRejection.BeforePreparationStart
             newEnd.isAfter(exam) -> ManualMoveRejection.ExamBoundExceeded
             overlapping.any { !it.isExternal } -> ManualMoveRejection.StudySessionOverlap
-            overlapping.isNotEmpty() -> ManualMoveRejection.ExternalEventOverlap
+            overlapping.isNotEmpty() && !confirmExternalOverlap -> ManualMoveRejection.ExternalEventOverlap
             !confirmOutsideAvailability && AvailabilityWire.context(original)?.fitsOneWindow(newStart, newEnd) != true ->
                 ManualMoveRejection.OutsideStudyWindows
             else -> null

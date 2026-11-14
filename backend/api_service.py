@@ -274,7 +274,8 @@ def _adjust_manually(payload: dict[str, Any], entries: tuple[ScheduleEntry, ...]
         entries, target.schedule_id, _datetime(payload["new_start_date"], "new_start_date"),
         availability=availability, preparation_start=preparation_start, exam_date=exam_date,
         now=current_korea_minute(),
-        confirm_outside_availability=payload.get("confirm_outside_availability", False))
+        confirm_outside_availability=payload.get("confirm_outside_availability", False),
+        confirm_external_overlap=payload.get("confirm_external_overlap", False))
     csv_text = render_adjusted_csv(moved)
     store.update(snapshot, csv_text)
     result = {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
@@ -358,6 +359,9 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be an object")
     mode = _adjustment_mode(payload)
+    if "confirm_external_overlap" in payload:
+        if mode != "manual" or not isinstance(payload["confirm_external_overlap"], bool):
+            raise ValueError("confirm_external_overlap must be true or false and is only valid in manual mode")
     if mode == "remaining":
         return _adjust_remaining(payload)
     entries = parse_schedule_rows(payload.get("schedules"))

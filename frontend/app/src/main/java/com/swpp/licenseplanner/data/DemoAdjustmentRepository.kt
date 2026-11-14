@@ -19,6 +19,7 @@ class DemoAdjustmentRepository(
         val manual = input.manualMove ?: return automatic(input)
         return when (val result = DemoScheduleAdjuster.moveManually(
             input.original, input.schedules, input.scheduleId, manual.newStart, now(), manual.confirmOutsideAvailability,
+            manual.confirmExternalOverlap,
         )) {
             is DemoManualAdjustment.Moved -> AdjustmentOutcome.Success(
                 StudyPlanResponse(schedules = result.schedules, scheduleCsv = result.csv, agentSummary = null),

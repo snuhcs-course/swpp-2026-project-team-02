@@ -47,6 +47,7 @@ fun PlanListScreen(
     onBack: () -> Unit,
     onRetryLoad: () -> Unit,
     onRetrySave: () -> Unit,
+    conflictNotices: @Composable () -> Unit = {},
 ) {
     val restored = storage != PlanStorage.Loading && storage != PlanStorage.LoadFailure
     AppScreen(
@@ -59,6 +60,7 @@ fun PlanListScreen(
         Heading("어떤 계획을 조정할까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
+        conflictNotices()
         when {
             !restored -> Unit // the loading or failure state above stands in for the list
             plans.isEmpty() -> OutlinedCard {

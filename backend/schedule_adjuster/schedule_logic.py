@@ -141,11 +141,12 @@ def fits_one_window(start: datetime, end: datetime,
 def place_study_entry_manually(schedule: tuple[ScheduleEntry, ...], schedule_id: str, new_start: datetime, *,
                                availability: AvailabilityContext | WeeklyAvailability | None,
                                preparation_start: datetime, exam_date: datetime, now: datetime,
-                               confirm_outside_availability: bool) -> tuple[ScheduleEntry, ...]:
+                               confirm_outside_availability: bool,
+                               confirm_external_overlap: bool = False) -> tuple[ScheduleEntry, ...]:
     """입력 값: 전체 일정, 공부 일정 ID, 사용자가 고른 시작 시각, 문맥·기간·현재 분, 시간 밖 확인 여부
     출력 값: 해당 공부 일정만 선택한 시각으로 옮긴 새 일정 튜플
     기능: 자동 순서 규칙 없이 지정 시각으로 옮기고, 과거·기간·겹침·가능 시간 순서로 거절합니다.
-    가능 시간 밖 확인은 마지막 검사만 통과시키며 기간과 겹침 검사는 항상 적용합니다.
+    두 확인은 각각 가능 시간 밖·외부 일정 겹침만 허용하며 기간과 공부 일정 겹침은 항상 검사합니다.
     """
     target = next((entry for entry in schedule if entry.schedule_id == schedule_id), None)
     if target is None or target.schedule_type != "study":
@@ -161,7 +162,7 @@ def place_study_entry_manually(schedule: tuple[ScheduleEntry, ...], schedule_id:
               and intervals_overlap(new_start, new_end, entry.start_datetime, entry.end_datetime)]
     if any(entry.schedule_type == "study" for entry in others):
         raise ManualMoveError("STUDY_SESSION_OVERLAP", "The chosen time overlaps another study session.")
-    if others:
+    if others and not confirm_external_overlap:
         raise ManualMoveError("EXTERNAL_EVENT_OVERLAP", "The chosen time overlaps an external calendar event.")
     if not confirm_outside_availability and not fits_one_window(new_start, new_end, availability):
         raise ManualMoveError("OUTSIDE_STUDY_WINDOWS",

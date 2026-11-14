@@ -76,7 +76,7 @@ study-1,2026/11/16/18/00,2026/11/16/19/30,Functions
 
 
 class ManualMoveRuleTests(unittest.TestCase):
-    """A chosen time is checked in a fixed order; confirmation only waives study windows."""
+    """A chosen time is checked in a fixed order with independent narrow exceptions."""
 
     ROWS = """schedule_id,start_date,end_date,topic
 study-1,2026/11/16/18/00,2026/11/16/19/00,Functions
@@ -89,12 +89,35 @@ external-3,2026/11/17/12/00,2026/11/17/13/00,
         self.context = parse_weekly_availability({"tuesday": [{"start": "18:00", "duration_minutes": 60}],
                                                   "sunday": [{"start": "23:30", "duration_minutes": 60}]})
 
-    def move(self, start, confirm=False, now=datetime(2026, 11, 16, 12, 0), availability="default"):
+    def move(self, start, confirm=False, now=datetime(2026, 11, 16, 12, 0), availability="default", external=False):
         return place_study_entry_manually(
             self.entries, "study-1", start,
             availability=self.context if availability == "default" else availability,
             preparation_start=datetime(2026, 11, 16, 0, 0), exam_date=datetime(2026, 12, 7, 0, 0),
-            now=now, confirm_outside_availability=confirm)
+            now=now, confirm_outside_availability=confirm, confirm_external_overlap=external)
+
+    def test_external_consent_is_independent_and_keeps_external_rows(self):
+        start = datetime(2026, 11, 17, 12, 30)
+        for outside in (False, True):
+            self.assertEqual(self.code(start, confirm=outside), "EXTERNAL_EVENT_OVERLAP")
+        self.assertEqual(self.code(start, external=True), "OUTSIDE_STUDY_WINDOWS")
+        inside = parse_weekly_availability({"tuesday": [{"start": "12:00", "duration_minutes": 120}]})
+        self.assertEqual(self.move(start, external=True, availability=inside)[0].start_datetime, start)
+        result = self.move(start, confirm=True, external=True)
+        self.assertEqual(result[0].start_datetime, start)
+        self.assertEqual(result[1:], self.entries[1:])
+        for destination, code in ((datetime(2026, 11, 16, 11, 59), "MANUAL_MOVE_IN_PAST"),
+                                  (datetime(2026, 12, 6, 23, 30), "EXAM_BOUND_EXCEEDED"),
+                                  (datetime(2026, 11, 18, 18, 30), "STUDY_SESSION_OVERLAP")):
+            self.assertEqual(self.code(destination, confirm=True, external=True), code)
+        self.assertEqual(self.code(datetime(2026, 11, 15, 20), confirm=True, external=True,
+                                   now=datetime(2026, 11, 1)), "BEFORE_PREPARATION_START")
+
+    def test_external_consent_cannot_hide_a_simultaneous_study_overlap(self):
+        self.entries += (self.entries[-1].__class__("external-4", datetime(2026, 11, 18, 18),
+                                                   datetime(2026, 11, 18, 19), ""),)
+        self.assertEqual(self.code(datetime(2026, 11, 18, 18), confirm=True, external=True),
+                         "STUDY_SESSION_OVERLAP")
 
     def code(self, start, **kwargs):
         with self.assertRaises(ManualMoveError) as caught:

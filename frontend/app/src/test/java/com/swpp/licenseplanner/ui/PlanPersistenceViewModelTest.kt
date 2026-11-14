@@ -261,7 +261,7 @@ class PlanPersistenceViewModelTest {
         val current = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(plans, liveScope)).jsonObject
         val v1 = JsonObject(current + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(current.getValue("entries").jsonArray.map { entry ->
             val original = entry.jsonObject.getValue("original").jsonObject
-            JsonObject(entry.jsonObject - "check_ins" + ("original" to JsonObject(original - "availability_overrides")))
+            JsonObject(entry.jsonObject - "check_ins" - "kept_conflicts" + ("original" to JsonObject(original - "availability_overrides")))
         })))
         val legacyBytes = v1.toString().encodeToByteArray()
         disk.committed = legacyBytes.copyOf()
@@ -275,7 +275,7 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(4), saved["version"])
+        assertEquals(JsonPrimitive(5), saved["version"])
         assertEquals(plans.plans + vm.plan(3), restoredNow())
         assertEquals(mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))), restoredNow()[0].original.weeklyAvailability)
     }
@@ -781,22 +781,22 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.openManualMove()
-        assertTrue(vm.submitManualMove())
+        assertTrue(vm.submitManualAfterCalendarCheck())
         advanceUntilIdle()
         val before = vm.plans.value
         assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
 
         store.failingSaves += store.saves + 1
-        assertTrue(vm.confirmOutsideAvailability())
-        assertFalse(vm.confirmOutsideAvailability())
+        assertTrue(vm.confirmOutsideAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
         assertEquals(AdjustmentState.Idle, vm.adjustment.value.state)
         assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
         assertEquals(before, vm.plans.value)
-        assertFalse(vm.confirmOutsideAvailability())
-        assertFalse(vm.submitManualMove())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        assertFalse(vm.submitManualAfterCalendarCheck())
         vm.retryAdjustment()
 
         vm.retrySave()
@@ -805,8 +805,8 @@ class PlanPersistenceViewModelTest {
         assertEquals(1, adjustment.inputs.size) // the save retry never submits
         assertEquals(before[0].copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = "study-1"), restoredNow()[0])
         assertEquals(restoredNow(), vm.plans.value)
-        assertFalse(vm.submitManualMove())
-        assertFalse(vm.confirmOutsideAvailability())
+        assertFalse(vm.submitManualAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
         assertEquals(1, adjustment.inputs.size)
     }
 
@@ -821,8 +821,8 @@ class PlanPersistenceViewModelTest {
             server.enqueue(MockResponse().setBody(adjustedJson(manualA, "study-1")))
 
             vm.openManualMove()
-            assertTrue(vm.submitManualMove())
-            assertFalse(vm.submitManualMove())
+            assertTrue(vm.submitManualAfterCalendarCheck())
+            assertFalse(vm.submitManualAfterCalendarCheck())
             advanceUntilIdle()
             assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], manualA[0]), MoveSave.Unsaved), vm.adjustment.value.state)
             assertEquals(manualA, vm.plan(1).current.schedules)
@@ -836,7 +836,7 @@ class PlanPersistenceViewModelTest {
             val (restarted, _) = open(adjustment = live)
             assertTrue(restarted.selectPlan(1))
             assertFalse(restarted.startManualMove())
-            assertFalse(restarted.submitManualMove())
+            assertFalse(restarted.submitManualAfterCalendarCheck())
 
             assertFalse(vm.startManualMove())
             vm.retrySave()

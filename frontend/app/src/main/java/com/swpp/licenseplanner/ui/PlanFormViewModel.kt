@@ -45,6 +45,8 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarConflicts
+import com.swpp.licenseplanner.domain.CalendarConflictResult
+import com.swpp.licenseplanner.domain.ConflictTarget
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
@@ -73,6 +75,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -309,6 +313,9 @@ class PlanFormViewModel(
      * which is captured once for the creation form.
      */
     private val currentDate: () -> LocalDate = { LocalDate.now() },
+    private val currentMinute: () -> LocalDateTime = {
+        LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).withSecond(0).withNano(0)
+    },
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -401,6 +408,7 @@ class PlanFormViewModel(
         val draft: DraftDecision? = null,
         val replacementId: Int? = null,
         val replacementOrdinal: Int? = null,
+        val keep: KeepFeedback? = null,
     )
 
     private var pendingWrite: PendingLocalWrite? = null
@@ -410,6 +418,31 @@ class PlanFormViewModel(
     val calendarConflict: StateFlow<CalendarConflictState?> = _calendarConflict.asStateFlow()
     private var nextConflictId = 1
     private var lastGenerationReview: CalendarConflictState? = null
+
+    private val _notices = MutableStateFlow<Map<Int, PlanConflictNotice>>(emptyMap())
+    val notices: StateFlow<Map<Int, PlanConflictNotice>> = combine(_notices, _savedPlans) { notices, saved ->
+        notices.mapValues { (ordinal, notice) ->
+            val owner = saved.firstOrNull { it.ordinal == ordinal }
+            when {
+                owner == null -> notice
+                owner.current != notice.source.current -> PlanConflictNotice(owner, phase = NoticePhase.Stale)
+                else -> notice.copy(conflicts = CalendarConflicts.unacknowledged(owner, notice.conflicts))
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    private val _keepFeedback = MutableStateFlow<KeepFeedback?>(null)
+    val keepFeedback: StateFlow<KeepFeedback?> = _keepFeedback.asStateFlow()
+    private val _noticePermission = MutableStateFlow<ConflictPhase?>(null)
+    val noticePermission: StateFlow<ConflictPhase?> = _noticePermission.asStateFlow()
+    private val _manualReview = MutableStateFlow<ManualConflictReview?>(null)
+    val manualReview: StateFlow<ManualConflictReview?> = _manualReview.asStateFlow()
+    private var acceptedManualReview: ManualConflictReview? = null
+    private val calendarQuery = Mutex()
+    private var foreground = false
+    private var foregroundGrant = false
+    private var foregroundEpoch = 0
+    private var noticePending = false
+    private var noticeReading = false
 
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
@@ -421,7 +454,8 @@ class PlanFormViewModel(
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
      * on the plan it started from.
      */
-    private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null
+    private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
+        _manualReview.value != null
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -439,6 +473,120 @@ class PlanFormViewModel(
 
     init {
         viewModelScope.launch { restore() }
+        viewModelScope.launch {
+            combine(_plans, _storage, _generation, _adjustment,
+                combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision, _profile) { _, _, _, _, _ -> Unit },
+            ) { _, _, _, _, _ -> Unit }.collect { refreshNoticesWhenIdle() }
+        }
+    }
+
+    private suspend fun readCalendar(window: CalendarReadWindow): CalendarReadOutcome =
+        calendarQuery.withLock { calendarReadRepository.read(window) }
+
+    /** Real foreground entry, independent of route recomposition and rotation. Never prompts. */
+    fun enterForeground(readGranted: Boolean) {
+        if (foreground && foregroundGrant == readGranted) return
+        foreground = true
+        foregroundGrant = readGranted
+        foregroundEpoch++
+        noticePending = true
+        refreshNoticesWhenIdle()
+    }
+
+    fun leaveForeground() {
+        foreground = false
+        foregroundEpoch++
+    }
+
+    fun requestNoticeCheck(): Boolean {
+        if (!storageReady || busy || generating || _noticePermission.value != null) return false
+        _noticePermission.value = ConflictPhase.RequestingPermission
+        return true
+    }
+
+    fun noticePermissionPrompted() {
+        if (_noticePermission.value == ConflictPhase.RequestingPermission) _noticePermission.value = ConflictPhase.AwaitingPermission
+    }
+
+    fun onNoticePermission(granted: Boolean) {
+        if (_noticePermission.value == null) return
+        _noticePermission.value = null
+        foregroundGrant = granted
+        noticePending = true
+        refreshNoticesWhenIdle()
+    }
+
+    private fun noticeSourceCurrent(source: SessionPlan): Boolean = plan(source.ordinal)?.let {
+        it.current == source.current && it.original == source.original && it.scheduleCsvFile == source.scheduleCsvFile
+    } == true
+
+    private fun refreshNoticesWhenIdle() {
+        if (!foreground || !noticePending || noticeReading || !storageReady || busy || generating || profileBusy ||
+            _draftDecision.value != null || _checkIn.value?.save == CheckInSave.Saving) return
+        noticePending = false
+        val epoch = foregroundEpoch
+        val now = currentMinute()
+        val sources = _plans.value.map { source -> source to CalendarConflicts.sessions(source.current.schedules)
+            .filter { it.interval.end > now } }
+        fun unchecked(source: SessionPlan): PlanConflictNotice {
+            val previous = _notices.value[source.ordinal]?.takeIf { noticeSourceCurrent(it.source) }
+            return previous?.copy(phase = NoticePhase.Stale, conflicts = CalendarConflictResult(
+                previous.conflicts.matches.filter { it.target.interval.end > currentMinute() })) ?: PlanConflictNotice(source)
+        }
+        if (!foregroundGrant) {
+            _notices.value = sources.associate { (source, _) -> source.ordinal to unchecked(source) }
+            return
+        }
+        noticeReading = true
+        viewModelScope.launch {
+            try {
+                val groups = sources.groupBy { (_, targets) ->
+                    if (targets.isEmpty()) null else CalendarReadWindow(
+                        maxOf(now, targets.minOf { it.interval.start }).toLocalDate(),
+                        targets.maxOf { it.interval.end }.toLocalDate().plusDays(1))
+                }
+                for ((window, owners) in groups) {
+                    if (!foreground || epoch != foregroundEpoch) break
+                    for ((source, _) in owners) _notices.update { it + (source.ordinal to
+                        (it[source.ordinal]?.copy(phase = NoticePhase.Checking) ?: PlanConflictNotice(source, phase = NoticePhase.Checking))) }
+                    val outcome = if (window == null) CalendarReadOutcome.Loaded(CalendarBusySnapshot(emptyList(), 0, 0)) else readCalendar(window)
+                    if (!foreground || epoch != foregroundEpoch) break
+                    for ((source, targets) in owners) {
+                        if (!noticeSourceCurrent(source)) { noticePending = true; continue }
+                        val snapshot = (outcome as? CalendarReadOutcome.Loaded)?.snapshot
+                        val result = if (snapshot != null) PlanConflictNotice(source,
+                            CalendarConflicts.compare(targets.filter { it.interval.end > currentMinute() }, snapshot.occurrences), NoticePhase.Checked)
+                        else unchecked(source)
+                        _notices.update { it + (source.ordinal to result) }
+                    }
+                }
+            } finally {
+                noticeReading = false
+                refreshNoticesWhenIdle()
+            }
+        }
+    }
+
+    /** Saves only the exact currently checked set; no HTTP or provider write. */
+    fun keepCurrentConflict(ordinal: Int, scheduleId: String): Boolean {
+        if (!regenerationSaveReady() || busy || generating || noticeReading) return false
+        val source = plan(ordinal) ?: return false
+        val notice = _notices.value[ordinal]?.takeIf { it.phase == NoticePhase.Checked && noticeSourceCurrent(it.source) } ?: return false
+        val current = CalendarConflictResult(CalendarConflicts.unacknowledged(source, notice.conflicts).matches
+            .filter { it.target.scheduleId == scheduleId && it.target.interval.end > currentMinute() })
+        if (current.matches.isEmpty()) return false
+        val candidate = CalendarConflicts.acknowledge(source, current)
+        val feedback = KeepFeedback(nextConflictId++, ordinal, scheduleId)
+        _keepFeedback.value = feedback
+        updatePlan(ordinal) { candidate }
+        val pending = PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), keep = feedback)
+        _storage.value = PlanStorage.Saving
+        viewModelScope.launch { write(pending) }
+        return true
+    }
+
+    fun closeKeepFeedback() {
+        if (_keepFeedback.value?.save != MoveSave.Saving) _keepFeedback.value = null
     }
 
     fun selectCertification(id: String) = edit(CreationStep.CERTIFICATION) { it.copy(certificationId = id) }
@@ -654,7 +802,7 @@ class PlanFormViewModel(
         val window = CalendarReadWindow(form.preparationStart, examDate)
         _calendarRead.value = CalendarReadState.Loading
         viewModelScope.launch {
-            val outcome = calendarReadRepository.read(window)
+            val outcome = readCalendar(window)
             if (requestId != calendarReadId || _form.value.preparationStart != window.start || _form.value.examDate != window.endExclusive) {
                 return@launch
             }
@@ -747,6 +895,7 @@ class PlanFormViewModel(
     }
 
     private fun regenerationSaveReady(): Boolean = storageReady && pendingWrite == null &&
+        _keepFeedback.value?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _checkIn.value?.save !in setOf(CheckInSave.Saving, CheckInSave.Unsaved) &&
         (_adjustment.value.state as? AdjustmentState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _draftDecision.value == null &&
@@ -859,7 +1008,7 @@ class PlanFormViewModel(
         if (!reviewSourceCurrent(review)) return
         _calendarConflict.value = review.copy(phase = ConflictPhase.Reading)
         viewModelScope.launch {
-            val outcome = calendarReadRepository.read(review.window)
+            val outcome = readCalendar(review.window)
             if (_calendarConflict.value?.id != review.id || !reviewSourceCurrent(review)) return@launch
             val snapshot = (outcome as? CalendarReadOutcome.Loaded)?.snapshot
             val updated = review.copy(
@@ -968,11 +1117,12 @@ class PlanFormViewModel(
 
     /** Opens a chosen-time move for the selected study row. Nothing is sent until [submitManualMove]. */
     fun startManualMove(): Boolean {
-        if (generating || busy || !storageReady) return false
+        if (generating || busy || !regenerationSaveReady()) return false
         val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
         _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
         _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = ManualDraft()) }
         pendingAdjustment = null
+        acceptedManualReview = null
         return true
     }
 
@@ -983,6 +1133,7 @@ class PlanFormViewModel(
         if (draft.newStart == start) return
         _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = ManualDraft(start)) }
         pendingAdjustment = null
+        acceptedManualReview = null
     }
 
     /** Discards the draft without sending anything. */
@@ -1006,7 +1157,8 @@ class PlanFormViewModel(
      * server refused is not sent again; choosing another time makes it sendable.
      */
     fun submitManualMove(): Boolean =
-        !_adjustment.value.manualRejected && sendManual(confirmOutsideAvailability = false)
+        (!_adjustment.value.manualRejected || (_adjustment.value.state as? AdjustmentState.Failure)?.error ==
+            ApiError.ManualMoveRejected(ManualMoveRejection.ExternalEventOverlap)) && sendManual(confirmOutsideAvailability = false)
 
     /**
      * After an outside-study-windows refusal of this exact destination, sends it again with the
@@ -1016,16 +1168,96 @@ class PlanFormViewModel(
         _adjustment.value.canConfirmOutsideAvailability && sendManual(confirmOutsideAvailability = true)
 
     private fun sendManual(confirmOutsideAvailability: Boolean): Boolean {
-        if (generating || busy || !storageReady) return false
+        if (generating || busy || !regenerationSaveReady()) return false
         val start = _adjustment.value.manual?.newStart ?: return false
         val plan = selectedPlan()?.takeIf { it.canAdjust } ?: return false
         val target = _adjustment.value.failedScheduleId?.takeIf { plan.isStudy(it) } ?: return false
+        val row = plan.current.schedules.single { it.scheduleId == target }
+        val oldStart = WireDateTime.parseOrNull(row.startDate) ?: return false
+        val oldEnd = WireDateTime.parseOrNull(row.endDate) ?: return false
+        val end = start.plus(java.time.Duration.between(oldStart, oldEnd))
+        val targets = CalendarConflicts.sessions(listOf(row.copy(startDate = WireDateTime.format(start), endDate = WireDateTime.format(end))))
+        val retained = plan.current.schedules.filter { it.scheduleId.startsWith("external-") &&
+            targets.single().interval.overlaps(WireDateTime.parseOrNull(it.startDate) ?: end,
+                WireDateTime.parseOrNull(it.endDate) ?: start) }
+        val previous = acceptedManualReview?.takeIf { it.source == plan && it.scheduleId == target && it.start == start }
         _adjustment.update { it.copy(manual = ManualDraft(start, confirmOutsideAvailability)) }
-        sendAdjustment(
-            plan.ordinal,
-            AdjustmentInput(plan.original, plan.scheduleCsvFile, plan.current.schedules, target, ManualMove(start, confirmOutsideAvailability)),
+        _manualReview.value = ManualConflictReview(
+            nextConflictId++, plan, target, start, CalendarReadWindow(start.toLocalDate(), end.toLocalDate().plusDays(1)),
+            targets, retained, outcome = previous?.outcome, conflicts = previous?.conflicts ?: CalendarConflictResult(emptyList()),
+            externalConsent = previous?.externalConsent == true, outsideConsent = confirmOutsideAvailability,
+            unchecked = previous?.unchecked == true,
         )
         return true
+    }
+
+    fun manualPermissionPrompted() {
+        _manualReview.update { if (it?.phase == ConflictPhase.RequestingPermission) it.copy(phase = ConflictPhase.AwaitingPermission) else it }
+    }
+
+    fun onManualPermission(granted: Boolean, id: Int? = _manualReview.value?.id) {
+        val review = _manualReview.value?.takeIf { it.id == id &&
+            it.phase in setOf(ConflictPhase.RequestingPermission, ConflictPhase.AwaitingPermission) } ?: return
+        if (granted) readManual(review, final = review.outcome != null)
+        else _manualReview.value = review.copy(phase = ConflictPhase.Unchecked, outcome = CalendarReadOutcome.PermissionMissing,
+            externalConsent = false, unchecked = false)
+    }
+
+    fun cancelManualReview() {
+        val review = _manualReview.value ?: return
+        _manualReview.value = null
+        acceptedManualReview = null
+        _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = ManualDraft(review.start)) }
+        refreshNoticesWhenIdle()
+    }
+
+    fun retryManualRead() {
+        _manualReview.update { if (it?.phase == ConflictPhase.Unchecked) it.copy(phase = ConflictPhase.RequestingPermission) else it }
+    }
+
+    fun continueManualUnchecked(): Boolean {
+        val review = _manualReview.value?.takeIf { it.phase == ConflictPhase.Unchecked } ?: return false
+        val updated = review.copy(unchecked = true)
+        if (review.retained.isNotEmpty()) _manualReview.value = updated.copy(phase = ConflictPhase.Review)
+        else readManual(updated, final = true)
+        return true
+    }
+
+    fun confirmManualExternalOverlap(): Boolean {
+        val review = _manualReview.value?.takeIf { it.phase == ConflictPhase.Review } ?: return false
+        readManual(review.copy(externalConsent = true), final = true)
+        return true
+    }
+
+    private fun manualSourceCurrent(review: ManualConflictReview): Boolean =
+        selectedPlan() == review.source && _adjustment.value.failedScheduleId == review.scheduleId &&
+            _adjustment.value.manual?.newStart == review.start && regenerationSaveReady()
+
+    private fun readManual(review: ManualConflictReview, final: Boolean) {
+        if (!manualSourceCurrent(review)) return cancelManualReview()
+        _manualReview.value = review.copy(phase = ConflictPhase.Reading)
+        viewModelScope.launch {
+            val outcome = if (review.outcome == CalendarReadOutcome.PermissionMissing && review.unchecked)
+                CalendarReadOutcome.PermissionMissing else readCalendar(review.window)
+            if (_manualReview.value?.id != review.id || !manualSourceCurrent(review)) return@launch
+            val snapshot = (outcome as? CalendarReadOutcome.Loaded)?.snapshot
+            val conflicts = CalendarConflicts.compare(review.targets, snapshot?.occurrences.orEmpty())
+            val changed = final && (outcome != review.outcome || conflicts != review.conflicts)
+            val updated = review.copy(outcome = outcome, conflicts = conflicts,
+                phase = if (snapshot == null && !review.unchecked) ConflictPhase.Unchecked else ConflictPhase.Review,
+                externalConsent = review.externalConsent && !changed,
+                unchecked = review.unchecked && !changed)
+            _manualReview.value = updated
+            if (changed || (snapshot == null && !updated.unchecked)) return@launch
+            val overlap = conflicts.matches.isNotEmpty() || review.retained.isNotEmpty()
+            if (overlap && !updated.externalConsent) return@launch
+            if (!final) { readManual(updated, final = true); return@launch }
+            acceptedManualReview = updated
+            _manualReview.value = null
+            _adjustment.update { it.copy(manual = ManualDraft(review.start, updated.outsideConsent)) }
+            sendAdjustment(review.source.ordinal, AdjustmentInput(review.source.original, review.source.scheduleCsvFile,
+                review.source.current.schedules, review.scheduleId, ManualMove(review.start, updated.outsideConsent, updated.externalConsent)))
+        }
     }
 
     /**
@@ -1050,6 +1282,10 @@ class PlanFormViewModel(
         if (_adjustment.value.manualRejected) return
         val (ordinal, input) = pendingAdjustment ?: return
         if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
+        if (input.manualMove != null) {
+            sendManual(input.manualMove.confirmOutsideAvailability)
+            return
+        }
         sendAdjustment(ordinal, input)
     }
 
@@ -1324,6 +1560,7 @@ class PlanFormViewModel(
             val live = input.scheduleCsvFile != null
             if (live && !commit(unresolved(ordinal, input.scheduleId), inFlightAdjustment = ordinal)) {
                 pendingAdjustment = null
+                acceptedManualReview = null
                 // Nothing was sent; a chosen time keeps its draft but must be confirmed again if needed.
                 _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = it.manual?.copy(confirmOutsideAvailability = false)) }
                 return@launch
@@ -1332,14 +1569,25 @@ class PlanFormViewModel(
                 is AdjustmentOutcome.Success -> {
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
+                    if (_keepFeedback.value?.let { it.ordinal == ordinal && it.scheduleId == input.scheduleId } == true) {
+                        _keepFeedback.value = null
+                    }
+                    val review = acceptedManualReview?.takeIf { input.manualMove != null && it.source.ordinal == ordinal &&
+                        it.scheduleId == input.scheduleId && it.start == input.manualMove.newStart }
+                    val keep = review?.takeIf { it.externalConsent && it.conflicts.matches.isNotEmpty() }?.let {
+                        updatePlan(ordinal) { source -> CalendarConflicts.acknowledge(source, it.conflicts) }
+                        KeepFeedback(nextConflictId++, ordinal, input.scheduleId).also { feedback -> _keepFeedback.value = feedback }
+                    }
+                    acceptedManualReview = null
                     pendingAdjustment = null
                     val success = AdjustmentState.Success(input.scheduleId, sessionMove(input, outcome.response.schedules))
                     _adjustment.update { it.copy(failedScheduleId = null, state = success, manual = null) }
-                    commit(_plans.value, move = _adjustment.value)
+                    commit(_plans.value, move = _adjustment.value, keep = keep)
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
                 is AdjustmentOutcome.Failure -> {
                     val recovery = recoveryAfter(outcome.error, input)
+                    if (outcome.error != ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows)) acceptedManualReview = null
                     if (recovery != PlanRecovery.Ready) {
                         pendingAdjustment = null
                         // The failed session is kept with the gate so returning to this plan shows it again.
@@ -1538,7 +1786,8 @@ class PlanFormViewModel(
         inFlightAdjustment: Int? = null,
         checkIn: CheckInEditor? = null,
         move: AdjustmentSelection? = null,
-    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value), checkIn, move))
+        keep: KeepFeedback? = null,
+    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value), checkIn, move, keep = keep))
 
     private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean = write(PendingLocalWrite(snapshot))
 
@@ -1548,6 +1797,15 @@ class PlanFormViewModel(
     }
 
     private fun settleParticipants(pending: PendingLocalWrite, saved: Boolean?) {
+        pending.keep?.let { captured ->
+            _keepFeedback.update { current ->
+                if (current?.id == captured.id) current.copy(save = when (saved) {
+                    null -> MoveSave.Saving
+                    true -> MoveSave.Saved
+                    false -> MoveSave.Unsaved
+                }) else current
+            }
+        }
         pending.checkIn?.let { captured ->
             _checkIn.update { current ->
                 if (current?.copy(save = captured.save) == captured) {
@@ -1601,6 +1859,7 @@ class PlanFormViewModel(
                     pendingAdjustment = null
                 }
                 if (_checkIn.value?.planOrdinal == pending.replacementOrdinal) _checkIn.value = null
+                if (_keepFeedback.value?.ordinal == pending.replacementOrdinal) _keepFeedback.value = null
             }
             if (pending.draft?.choice == DraftChoice.Discard) resetCreation()
         }

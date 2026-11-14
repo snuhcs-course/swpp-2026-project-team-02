@@ -69,7 +69,8 @@ object PlanStorageScope {
 }
 
 /**
- * JSON form of a [PlanSnapshot]. Saving always writes version 4: an optional `creation_draft`
+ * JSON form of a [PlanSnapshot]. Saving writes version 5 with timing-only kept conflict digests.
+ * Version 4 added an optional `creation_draft`
  * next to the entries; each entry carries its study reports (`check_ins`), and creation requests
  * may carry `start` + `duration_minutes` windows and week replacements. Versions 3 (no draft),
  * 2 (also no reports) and 1 (also only same-day `start` + `end` windows, no replacements) are still
@@ -80,11 +81,12 @@ object PlanStorageScope {
  * for readiness to generate.
  */
 internal object PlanSnapshotCodec {
-    const val VERSION = 4
+    const val VERSION = 5
+    const val DRAFT_VERSION = 4
     const val CHECK_IN_VERSION = 3
     const val NO_CHECK_IN_VERSION = 2
     const val LEGACY_VERSION = 1
-    private val SUPPORTED_VERSIONS = setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION, CHECK_IN_VERSION, VERSION)
+    private val SUPPORTED_VERSIONS = setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION, CHECK_IN_VERSION, DRAFT_VERSION, VERSION)
 
     // Unlike the API JSON, unknown keys are rejected: this file is only ever written by this codec.
     private val json = Json {
@@ -108,6 +110,7 @@ internal object PlanSnapshotCodec {
                     recovery = StoredRecovery.of(plan.recovery),
                     recoveryScheduleId = plan.recoveryScheduleId,
                     checkIns = plan.checkIns.mapValues { (_, checkIn) -> StoredCheckIn.of(checkIn) },
+                    keptConflicts = plan.keptConflicts.mapValues { (_, digests) -> digests.sorted() },
                 )
             },
             inFlightAdjustmentOrdinal = snapshot.inFlightAdjustmentOrdinal,
@@ -133,13 +136,14 @@ internal object PlanSnapshotCodec {
         if (envelope.scope != scope || !envelope.isValid()) return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
         val draft = when {
             envelope.creationDraft == null -> null
-            envelope.version < VERSION -> return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
+            envelope.version !in setOf(DRAFT_VERSION, VERSION) -> return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
             else -> envelope.creationDraft.domainOrNull() ?: return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
         }
         val plans = envelope.entries.map { entry ->
             val recovery = if (entry.ordinal == envelope.inFlightAdjustmentOrdinal) PlanRecovery.ReloadRequired else entry.recovery.domain
             val checkIns = entry.checkIns.orEmpty().mapValues { (_, stored) -> stored.domain }
-            val plan = SessionPlan(entry.ordinal, entry.original, entry.isDemo, entry.current, entry.scheduleCsvFile, recovery, checkIns = checkIns)
+            val plan = SessionPlan(entry.ordinal, entry.original, entry.isDemo, entry.current, entry.scheduleCsvFile, recovery,
+                checkIns = checkIns, keptConflicts = entry.keptConflicts.orEmpty().mapValues { it.value.toSet() })
             plan.copy(recoveryScheduleId = entry.recoveryScheduleId?.takeIf { recovery == PlanRecovery.ReloadRequired && plan.isStudy(it) })
         }
         return PlanStoreLoad.Loaded(PlanSnapshot(plans, creationDraft = draft))
@@ -165,12 +169,18 @@ internal object PlanSnapshotCodec {
             original.availabilityOverrides.isEmpty() && current.availabilitySnapshot == null &&
                 original.weeklyAvailability.values.flatten().all { it.durationMinutes == null && it.end != null }
             )
-        val checkInsOk = if (version < CHECK_IN_VERSION) {
+        val checkInsOk = if (version in setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION)) {
             checkIns == null
         } else {
             checkIns != null && checkIns.all { (id, stored) -> SessionPlan.isStudyId(id) && stored.domain.isValid }
         }
-        return identityOk && legacyShapeOk && checkInsOk && scheduleRowProblem(current.schedules) == null && original.isValid()
+        val keepsOk = if (version == VERSION) {
+            keptConflicts != null && keptConflicts.all { (id, digests) ->
+                SessionPlan.isStudyId(id) && digests.isNotEmpty() && digests.distinct().size == digests.size &&
+                    digests.all { it.matches(Regex("[0-9a-f]{64}")) }
+            }
+        } else keptConflicts == null
+        return identityOk && legacyShapeOk && checkInsOk && keepsOk && scheduleRowProblem(current.schedules) == null && original.isValid()
     }
 
     /** Dates and the complete availability context of an accepted creation request, which later adjustments resend. */
@@ -203,6 +213,7 @@ internal object PlanSnapshotCodec {
         @SerialName("recovery_schedule_id") val recoveryScheduleId: String? = null,
         /** Required from version 3 on and absent before it. */
         @SerialName("check_ins") val checkIns: Map<String, StoredCheckIn>? = null,
+        @SerialName("kept_conflicts") val keptConflicts: Map<String, List<String>>? = null,
     )
 
     @Serializable

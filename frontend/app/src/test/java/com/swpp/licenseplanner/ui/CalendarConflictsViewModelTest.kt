@@ -28,6 +28,14 @@ internal fun PlanFormViewModel.retryAfterCalendarCheck() {
     onConflictPermission(true)
 }
 
+internal fun PlanFormViewModel.submitManualAfterCalendarCheck(): Boolean = submitManualMove().also {
+    if (it) onManualPermission(true)
+}
+
+internal fun PlanFormViewModel.confirmOutsideAfterCalendarCheck(): Boolean = confirmOutsideAvailability().also {
+    if (it) onManualPermission(true)
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class CalendarConflictsViewModelTest {
     private val dispatcher = StandardTestDispatcher()

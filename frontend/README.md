@@ -403,8 +403,8 @@ created before this storage existed, cannot be recovered from the server,
 whose list lacks the original creation inputs. Form input that was not
 explicitly saved as a draft, navigation and the moved-session tag are not saved.
 
-**Snapshot versions.** Saving writes snapshot version 4. Each entry keeps that
-plan's study-session reports (status and actual minutes) by study-row ID;
+**Snapshot versions.** Saving writes snapshot version 5, including plan-scoped
+timing-only conflict digests. Each entry keeps that plan's study-session reports (status and actual minutes) by study-row ID;
 identical IDs in two plans never share a report, and a report whose row is no
 longer in the plan is kept but not shown as a current session's. Next to the
 entries, version 4 has an optional slot for one unfinished plan creation: the
@@ -450,11 +450,11 @@ outcome write fails, the result stays unsaved in memory and local retry writes t
 same plan plus draft removal without another generation. Ending the process before
 that succeeds restores the earlier saved draft, not the unsaved result or request.
 
-Version 1, 2 and 3 lists saved by earlier builds still load (versions 1 and 2
-as plans without reports), always without a draft, and the file is not
-rewritten until the next save of the list, which writes version 4. An older
+Version 1, 2, 3 and 4 lists saved by earlier builds still load (versions 1 and 2
+as plans without reports; v3 retains reports, v4 also retains drafts), without
+keeps, and the file is not rewritten until the next save of the list, which writes version 5. An older
 build cannot read a newer version and shows the load failure above without
-changing the file, so downgrading after a version 4 save needs a compatible
+changing the file, so downgrading after a version 5 save needs a compatible
 backup of the earlier file; nothing is converted back automatically.
 
 At start the app reads the saved list before anything can change it. While it
@@ -637,7 +637,7 @@ exception, and 시간 다시 고르기 returns to the fields with the time kept 
 nothing sent (sending the same time again is checked from the start). Any
 change to the date or time clears an earlier question or exception. Other
 refusals are shown under the field they concern, keep the chosen time and
-disable 이 시간으로 옮기기 until the time changes; no refusal can be bypassed:
+disable 이 시간으로 옮기기 until the time changes. External overlap alone offers a fresh review and explicit consent:
 
 | Server code | Shown under | Message |
 | --- | --- | --- |
@@ -650,7 +650,7 @@ disable 이 시간으로 옮기기 until the time changes; no refusal can be byp
 
 Every other outcome follows the automatic rules above: a definite failure
 (for example HTTP 500 or 503) keeps the chosen time and offers 다시 시도, which
-resends exactly the reviewed request; 404 `PLAN_NOT_FOUND`, any 409, a lost
+rechecks the same destination and asks again if the timing observation changed; 404 `PLAN_NOT_FOUND`, any 409, a lost
 response or timeout, and a 200 that does not show exactly the target at the
 chosen time with the same topic and duration (and every other row unchanged)
 close the editor and require 최신 계획 불러오기, after which a session and time
@@ -661,7 +661,7 @@ with 계획이 조정됐어요 and the moved session's week. The demo applies th
 checks locally against the plan's original windows and the device clock and
 labels the editor 로컬 시연 계산. Neither flavor writes the device calendar or the
 shared availability profile. Live requests add `"mode": "manual"`,
-`new_start_date`, `confirm_outside_availability` and the plan's
+`new_start_date`, `confirm_outside_availability`, `confirm_external_overlap` and the plan's
 `preparation_start` to the fields below.
 
 **Live contract.** The app always sends five fields to
@@ -737,7 +737,7 @@ that detailed gate remains unverified. See [Verification](#verification).
 
 ## Study availability
 
-Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. Snapshot version 4 and earlier supported readers are unchanged.
+Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. The snapshot writes v5 and explicitly reads v1–v5 without read-time migration.
 
 The study-time screen (공부 시간) shows every window for each weekday.
 시간대 추가 opens a candidate starting at 18:00 for 60 minutes. 수정 or tapping
@@ -882,7 +882,7 @@ independent saved creation draft and existing calendar copies remain intact.
 Unusable original assessment/context data shows a reason and requires a new plan.
 
 Regeneration waits until every accepted local save is resolved, including a failed
-report, movement or draft save on another plan or in a closed editor. The disabled
+report, movement, draft or keep save on another plan or in a closed editor. The disabled
 action explains 먼저 이 기기에 저장해 주세요 and uses the existing 다시 저장하기
 recovery. Local retry writes its captured complete snapshot and settles only that
 write's matching feedback. A replacement candidate stays unpublished until the
@@ -903,6 +903,49 @@ afresh before the first insert. Changed data clears override/unchecked consent a
 requires new review. An unavailable query permits explicit unchecked continuation
 and the ordinary final confirmation. Missing calendar permission requires settings
 or retry and cannot grant write access.
+
+## Calendar notices and keeping a conflict
+
+After saved plans load and on each real foreground entry, an existing read grant
+allows a timing-only check of upcoming and still-running study intervals. Identical
+plan ranges share one query; active operations defer it. Rotation keeps the same
+check. Foreground entry never requests permission, calls the backend or saves.
+Home and the saved-plan list show plan-scoped counts; plan screens show generic
+external intervals. Missing permission offers 캘린더 시간 확인; failed/revoked reads
+label older results as stale, never clear. There is no background monitoring.
+
+시간 옮기기 opens the existing editor without sending. 그대로 두기 saves a local
+acknowledgment for the displayed current study interval and exact occurrences;
+it does not move the study or edit a calendar. The persisted values are SHA-256
+digests scoped to plan ordinal, study ID, exact study interval and the existing
+occurrence key. Changed event timing (even within a minute), another occurrence,
+or a changed study interval warns again. Keeps never waive export checks.
+
+A proposed manual destination is freshly checked against device occurrences and
+retained external plan rows, without removing either. 다른 시간 선택 cancels this
+review. 겹쳐도 이 시간으로 옮기기 explicitly applies the proposed time and sends the
+manual-only boolean `confirm_external_overlap`. Outside-window permission remains
+an independent `confirm_outside_availability` decision. Before every dispatch the
+same interval is re-read; changed inputs or keys require fresh consent. Failed
+reads require explicit unchecked continuation; retained conflicts still require
+external consent. Study overlaps, time bounds, stale rows and recovery cannot be
+waived. The matching backend is required; deployed compatibility is unverified.
+
+Current keeps use no POST. Accepted manual moves save fresh-occurrence keeps only
+with the validated move outcome, preserving reports, other plans and the saved
+draft. Saving or save failure is shown truthfully; the existing 다시 저장하기 writes the
+exact captured whole collection with no read, POST or calendar write. A pure keep
+retry settles only its matching keep feedback; a move-plus-keep write settles both
+matching results, leaving unrelated already saved report/move wording unchanged.
+Any unresolved local write blocks further keeps, manual dispatch and every
+regeneration entry, including after the originating card closes. Retry never
+resumes a blocked action automatically. Regeneration clears only the selected
+plan's keeps and reports when its replacement commits.
+
+The v5 collection keeps only digests and owning study IDs, alongside v3 reports,
+v4 drafts and recovery markers. v1–v4 load with empty keeps without rewriting;
+malformed digests or unsupported versions fail without resetting the file.
+Earlier binaries cannot read v5: use a compatible backup when testing downgrades.
 
 ## Calendar export
 
@@ -1241,9 +1284,8 @@ skip (이미 아는 내용이에요) action and no history of earlier reports.
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
-- Calendar conflict checks run after explicit generation or export actions. Adjustment
-  still uses the saved plan's external rows. Background monitoring and remembered
-  conflict decisions remain outside the implemented flow.
+- Calendar checks are foreground snapshots and explicit action reviews. Background
+  monitoring, synchronization and system notifications remain outside the flow.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
   failure with retry, not as a storage problem. Retrying cannot succeed until the
   saved plan file on the server is repaired; the plan stays viewable and unchanged.

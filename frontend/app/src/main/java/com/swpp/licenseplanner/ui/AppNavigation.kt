@@ -13,12 +13,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -29,6 +32,10 @@ import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.components.CalendarConflictDialog
+import com.swpp.licenseplanner.ui.components.ManualConflictDialog
+import com.swpp.licenseplanner.ui.components.PlanConflictNotices
+import com.swpp.licenseplanner.ui.components.Note
+import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
 import com.swpp.licenseplanner.ui.components.CreationExitDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityActions
@@ -133,6 +140,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
     val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
+    val notices by viewModel.notices.collectAsStateWithLifecycle()
+    val keepFeedback by viewModel.keepFeedback.collectAsStateWithLifecycle()
+    val noticePermission by viewModel.noticePermission.collectAsStateWithLifecycle()
+    val manualReview by viewModel.manualReview.collectAsStateWithLifecycle()
     val generationForConflict by viewModel.generation.collectAsStateWithLifecycle()
     val exportBlocks by viewModel.exportBlocks.collectAsStateWithLifecycle()
     val committedDraft by viewModel.committedDraft.collectAsStateWithLifecycle()
@@ -200,6 +211,69 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     }
 
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, context, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.enterForeground(CalendarAccess.READ.isGranted(context))
+                Lifecycle.Event.ON_STOP -> if ((context as? android.app.Activity)?.isChangingConfigurations != true) viewModel.leaveForeground()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) viewModel.enterForeground(CalendarAccess.READ.isGranted(context))
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val selectedNotices: @Composable (Int) -> Unit = { ordinal ->
+        PlanConflictNotices(notices[ordinal], keepFeedback, storage == PlanStorage.Ready,
+            onCheck = { viewModel.requestNoticeCheck() },
+            onKeep = { viewModel.keepCurrentConflict(ordinal, it) },
+            onMove = { id ->
+                if (viewModel.selectPlan(ordinal)) {
+                    viewModel.selectFailedSession(id)
+                    if (viewModel.startManualMove()) nav.fromHome(Routes.ADJUST)
+                }
+            })
+    }
+    val noticeCounts: @Composable () -> Unit = {
+        for ((ordinal, notice) in notices.toSortedMap()) {
+            val count = notice.conflicts.matches.map { it.target.scheduleId }.distinct().size
+            Note("계획 $ordinal · " + when (notice.phase) {
+                NoticePhase.Checked -> "캘린더와 겹치는 공부 ${count}개"
+                NoticePhase.Checking -> "캘린더 확인 중"
+                NoticePhase.Stale -> "이전 캘린더 확인 결과 · 다시 확인해 주세요"
+                NoticePhase.Unchecked -> "캘린더 확인 안 됨"
+            })
+        }
+        if (notices.isNotEmpty()) SecondaryButton("캘린더 시간 확인", { viewModel.requestNoticeCheck() }, enabled = storage == PlanStorage.Ready)
+    }
+    val noticePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onNoticePermission(CalendarAccess.READ.isGranted(context))
+    }
+    LaunchedEffect(noticePermission) {
+        if (noticePermission != ConflictPhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onNoticePermission(true)
+        else {
+            viewModel.noticePermissionPrompted()
+            noticePermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    var manualPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val manualPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onManualPermission(CalendarAccess.READ.isGranted(context), manualPermissionOwner)
+    }
+    LaunchedEffect(manualReview?.id, manualReview?.phase) {
+        if (manualReview?.phase != ConflictPhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onManualPermission(true, manualReview?.id)
+        else {
+            manualPermissionOwner = manualReview?.id
+            viewModel.manualPermissionPrompted()
+            manualPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    manualReview?.let { state -> ManualConflictDialog(state,
+        onConfirm = { viewModel.confirmManualExternalOverlap() }, onCancel = viewModel::cancelManualReview,
+        onUnchecked = { viewModel.continueManualUnchecked() }, onRetry = viewModel::retryManualRead) }
     // The answer arrives here also after rotation; access is read again rather than taken from the result.
     val exportPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         viewModel.onCalendarPermission(CalendarAccess.EXPORT.isGranted(context))
@@ -286,6 +360,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
+                conflictNotices = noticeCounts,
             )
         }
         composable(Routes.PLAN_LIST) {
@@ -300,6 +375,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onBack = { nav.popBackStack() },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
+                conflictNotices = noticeCounts,
             )
         }
         composable(Routes.ADJUST) {
@@ -333,6 +409,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onManualRevise = viewModel::reviseManualMove,
                     onManualCancel = viewModel::cancelManualMove,
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    conflictNotices = { selectedNotices(plan.ordinal) },
                 )
             }
         }
@@ -454,6 +531,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                     storage = storage,
                     onRetrySave = viewModel::retrySave,
+                    conflictNotices = { selectedNotices(plan.ordinal) },
                 )
             }
         }

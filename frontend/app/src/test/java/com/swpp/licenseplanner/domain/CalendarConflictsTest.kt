@@ -12,6 +12,26 @@ class CalendarConflictsTest {
     private fun occurrence(key: String, day: LocalDate = monday, hour: Int = 19, series: String? = null) =
         CalendarOccurrence(key, series, day.atTime(hour, 30), day.atTime(hour + 1, 30), false)
 
+    @Test fun keepMatchesOnlyTheReviewedPlanStudyIntervalAndExactOccurrences() {
+        val row = ScheduleRow("study-1", "2031/03/03/19/00", "2031/03/03/21/00", "공부")
+        val request = (com.swpp.licenseplanner.data.RequestMapper.map(
+            com.swpp.licenseplanner.TestFixtures.completeState(start = monday, exam = monday.plusWeeks(6))) as
+            com.swpp.licenseplanner.data.MappingResult.Ready).request
+        val plan = SessionPlan.register(1, request, com.swpp.licenseplanner.data.model.StudyPlanResponse(listOf(row)), true)
+        val first = occurrence("first", series = "series")
+        val second = occurrence("second", series = "series")
+        val reviewed = CalendarConflicts.compare(CalendarConflicts.sessions(listOf(row)), listOf(first, second))
+        val kept = CalendarConflicts.acknowledge(plan, reviewed)
+        assertEquals(2, kept.keptConflicts.getValue("study-1").size)
+        assertTrue(CalendarConflicts.unacknowledged(kept, reviewed).matches.isEmpty())
+        assertEquals(2, CalendarConflicts.unacknowledged(kept.copy(ordinal = 2), reviewed).matches.size)
+        val withNew = CalendarConflicts.compare(CalendarConflicts.sessions(listOf(row)), listOf(first, second, first.copy(key = "third")))
+        assertEquals("third", CalendarConflicts.unacknowledged(kept, withNew).matches.single().occurrence.key)
+        val moved = CalendarConflicts.compare(CalendarConflicts.sessions(listOf(row.copy(startDate = "2031/03/03/19/01"))), listOf(first, second))
+        assertEquals(2, CalendarConflicts.unacknowledged(kept, moved).matches.size)
+        assertTrue(kept.keptConflicts.values.flatten().all { it.matches(Regex("[0-9a-f]{64}")) })
+    }
+
     @Test fun overlapIsHalfOpenAndDuplicateOccurrencesAreComparedOnce() {
         val targets = CalendarConflicts.windows(StudyAvailability(mapOf(Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(19, 0), 60)))), monday, monday.plusWeeks(1))
         val busy = occurrence("one")

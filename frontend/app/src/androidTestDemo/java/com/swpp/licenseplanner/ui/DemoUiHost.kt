@@ -85,6 +85,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     var returnedTopic: String? = null
     /** The device date the report gate reads; by default later than every demo session. */
     @Volatile var deviceDate: LocalDate = LocalDate.of(2030, 1, 1)
+    @Volatile var deviceMinute = LocalDate.of(2026, 11, 16).atStartOfDay()
+    val adjustmentInputs = java.util.concurrent.CopyOnWriteArrayList<AdjustmentInput>()
     /** While set, every save is refused before any byte is written, as a failed device write. */
     val failSaves = AtomicBoolean(false)
     /** While set, every save waits for it to complete before writing or being refused. */
@@ -123,6 +125,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         val adjustment = DemoAdjustmentRepository { today.atStartOfDay() }
         val countedAdjustment = object : AdjustmentRepository by adjustment {
             override suspend fun adjust(input: AdjustmentInput) = adjustment.adjust(input).also {
+                adjustmentInputs += input
                 adjustmentCalls.incrementAndGet()
             }
             override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
@@ -181,6 +184,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 },
                 availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                 currentDate = { deviceDate },
+                currentMinute = { deviceMinute },
             ) as T
         }
         rule.runOnIdle {

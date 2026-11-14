@@ -228,6 +228,17 @@ class CalendarProviderIntegrationTest {
         val targets = com.swpp.licenseplanner.domain.CalendarConflicts.sessions(rows)
         val conflicts = com.swpp.licenseplanner.domain.CalendarConflicts.compare(targets, first.occurrences)
         assertEquals(listOf("study-1"), conflicts.matches.map { it.target.scheduleId })
+        val request = com.swpp.licenseplanner.data.model.StudyPlanRequest(
+            com.swpp.licenseplanner.domain.CERTIFICATION_ID, "2031/03/03/00/00", "2031/03/31/00/00", "intermediate",
+            com.swpp.licenseplanner.data.model.AssessmentResults(com.swpp.licenseplanner.domain.CERTIFICATION_ID, emptyList()),
+            1, mapOf("monday" to listOf(com.swpp.licenseplanner.data.model.TimeWindow("18:00", durationMinutes = 120))),
+        )
+        val source = com.swpp.licenseplanner.domain.SessionPlan.register(1, request,
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true)
+        val kept = com.swpp.licenseplanner.domain.CalendarConflicts.acknowledge(source, conflicts)
+        assertTrue(com.swpp.licenseplanner.domain.CalendarConflicts.unacknowledged(kept,
+            com.swpp.licenseplanner.domain.CalendarConflicts.compare(targets, read().occurrences)).matches.isEmpty())
+        assertEquals(1, com.swpp.licenseplanner.domain.CalendarConflicts.unacknowledged(kept.copy(ordinal = 2), conflicts).matches.size)
         assertEquals(count, eventCount())
         assertEquals(3, first.occurrences.count { it.seriesKey != null })
         assertEquals(1, first.occurrences.filter { it.seriesKey != null }.map { it.seriesKey }.distinct().size)
@@ -238,6 +249,12 @@ class CalendarProviderIntegrationTest {
         val edited = read()
         assertEquals(first.schedules, edited.schedules)
         assertFalse(first.occurrences == edited.occurrences)
+        assertEquals(1, com.swpp.licenseplanner.domain.CalendarConflicts.unacknowledged(kept,
+            com.swpp.licenseplanner.domain.CalendarConflicts.compare(targets, edited.occurrences)).matches.size)
+        val manualRows = listOf(rows[1], rows[0].copy(scheduleId = "external-99", topic = ""))
+        val moved = com.swpp.licenseplanner.domain.DemoScheduleAdjuster.moveManually(request, manualRows, "study-2",
+            LocalDateTime.of(2031, 3, 3, 18, 30), LocalDateTime.of(2031, 3, 3, 12, 0), true, true)
+        assertTrue(moved is com.swpp.licenseplanner.domain.DemoManualAdjustment.Moved)
         assertEquals(count, eventCount())
         event(calendar, "합성 새 시간", kst(3, 19), kst(3, 20))
         val fresh = read()

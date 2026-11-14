@@ -21,9 +21,14 @@ data class AdjustmentInput(
 
 /**
  * A chosen start for the target, reviewed by the learner. [confirmOutsideAvailability] is the
- * explicit one-time exception for this destination only; it never waives bounds or overlaps.
+ * explicit one-time window exception. External consent is independent; neither waives bounds
+ * or overlap with another study session.
  */
-data class ManualMove(val newStart: LocalDateTime, val confirmOutsideAvailability: Boolean = false)
+data class ManualMove(
+    val newStart: LocalDateTime,
+    val confirmOutsideAvailability: Boolean = false,
+    val confirmExternalOverlap: Boolean = false,
+)
 
 sealed interface AdjustmentOutcome {
     /** The validated updated plan; [response] carries rows, CSV and an optional summary. */

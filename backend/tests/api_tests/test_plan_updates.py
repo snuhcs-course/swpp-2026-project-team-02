@@ -919,6 +919,60 @@ class RetainedContextAndManualMoveTests(unittest.TestCase):
                          self.before[self.metadata(self.identifier).name])
         self.assertEqual(NoAgent.constructed, 0)
 
+    def test_external_overlap_needs_separate_consent_and_exact_http_readback(self):
+        for fields in ({}, {"confirm_external_overlap": False}, {"confirm_outside_availability": True}):
+            self.assert_rejected(self.manual("2026/11/17/12/30", **fields), 422, "EXTERNAL_EVENT_OVERLAP")
+        self.assert_rejected(self.manual("2026/11/17/12/30", confirm_external_overlap=True),
+                             422, "OUTSIDE_STUDY_WINDOWS")
+        status, result = self.call("/schedules/adjust", self.manual(
+            "2026/11/17/12/30", confirm_external_overlap=True, confirm_outside_availability=True))
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.target(result), {**MANUAL_ROWS[0], "start_date": "2026/11/17/12/30",
+                                               "end_date": "2026/11/17/13/30"})
+        self.assertCountEqual([r for r in result["schedules"] if r["schedule_id"] != "study-1"], MANUAL_ROWS[1:])
+        status, listing = self.call("/study-plans?schedule_csv_file=" + quote(self.identifier, safe=""))
+        self.assertEqual(status, 200, listing)
+        self.assertCountEqual(listing["plans"][0]["schedules"], result["schedules"])
+        self.assertEqual(result["schedule_csv_file"], self.identifier)
+        csv_name = self.identifier.rsplit("/", 1)[1]
+        self.assertEqual({k: v for k, v in self.files().items() if k != csv_name},
+                         {k: v for k, v in self.before.items() if k != csv_name})
+        self.assertEqual((NoAgent.constructed, result["tool_calls"]), (0, []))
+
+    def test_external_consent_does_not_waive_bounds_or_study_overlap(self):
+        for start, code in (("2026/11/16/11/59", "MANUAL_MOVE_IN_PAST"),
+                            ("2026/12/06/23/30", "EXAM_BOUND_EXCEEDED"),
+                            ("2026/11/18/18/30", "STUDY_SESSION_OVERLAP")):
+            self.assert_rejected(self.manual(start, confirm_external_overlap=True,
+                                              confirm_outside_availability=True), 422, code)
+
+    def test_external_consent_is_boolean_and_manual_only(self):
+        for value in (None, 0, 1, "true", [], {}):
+            self.assert_rejected(self.manual("2026/11/17/12/30", confirm_external_overlap=value),
+                                 422, "INVALID_INPUT")
+        for mode in (None, "automatic", "remaining"):
+            for value in (False, True):
+                payload = self.manual("2026/11/17/12/30", confirm_external_overlap=value)
+                if mode is None:
+                    payload.pop("mode")
+                else:
+                    payload["mode"] = mode
+                self.assert_rejected(payload, 422, "INVALID_INPUT")
+        self.assertEqual(NoAgent.constructed, 0)
+
+    def test_external_consent_preserves_stale_missing_and_storage_authority(self):
+        payload = self.manual("2026/11/17/12/30", confirm_external_overlap=True,
+                              confirm_outside_availability=True)
+        stale = copy.deepcopy(payload)
+        stale["schedules"][1]["topic"] = "changed"
+        self.assert_rejected(stale, 409, "PLAN_CONFLICT")
+        missing = {**payload, "schedule_csv_file": "license_planner/output/study_plan_20990101T000000_deadbeef.csv"}
+        self.assert_rejected(missing, 404, "PLAN_NOT_FOUND")
+        self.metadata(self.identifier).write_text("{broken", encoding="utf-8")
+        self.before = self.files()
+        self.assert_rejected(payload, 500, "STORAGE_ERROR")
+        self.assertEqual(NoAgent.constructed, 0)
+
     def test_hard_rejections_ignore_confirmation(self):
         cases = [("2026/11/16/11/59", "MANUAL_MOVE_IN_PAST"),
                  ("2026/12/06/23/30", "EXAM_BOUND_EXCEEDED"),

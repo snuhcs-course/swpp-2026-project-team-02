@@ -213,7 +213,7 @@ class AtomicFilePlanStoreTest {
     }
 
     @Test fun unusableSavedDataIsNotOverwrittenWithReports() = runTest {
-        val unsupported = String(encoded(earlier)).replaceFirst("\"version\":4", "\"version\":5").encodeToByteArray()
+        val unsupported = String(encoded(earlier)).replaceFirst("\"version\":5", "\"version\":6").encodeToByteArray()
         val cases = mapOf(
             "unsupported version" to (unsupported to PlanLoadFailure.Unsupported),
             "malformed" to ("{\"version\":3,".encodeToByteArray() to PlanLoadFailure.Malformed),
@@ -324,8 +324,8 @@ class AtomicFilePlanStoreTest {
         val cases = mapOf(
             "unknown step" to (text.replaceFirst("\"step\":\"questions\"", "\"step\":\"generate\"") to PlanLoadFailure.Malformed),
             "cursor past the end" to (text.replaceFirst("\"question_index\":0", "\"question_index\":4") to PlanLoadFailure.Invalid),
-            "draft in version 3" to (text.replaceFirst("\"version\":4", "\"version\":3") to PlanLoadFailure.Invalid),
-            "unsupported version" to (text.replaceFirst("\"version\":4", "\"version\":5") to PlanLoadFailure.Unsupported),
+            "draft in version 3" to (text.replaceFirst("\"version\":5", "\"version\":3").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "") to PlanLoadFailure.Invalid),
+            "unsupported version" to (text.replaceFirst("\"version\":5", "\"version\":6") to PlanLoadFailure.Unsupported),
         )
         for ((case, value) in cases) {
             val (savedText, reason) = value
@@ -343,7 +343,7 @@ class AtomicFilePlanStoreTest {
     }
 
     @Test fun loadingAnEarlierVersionDoesNotRewriteIt() = runTest {
-        val legacy = String(encoded(earlier)).replaceFirst("\"version\":4", "\"version\":3").encodeToByteArray()
+        val legacy = String(encoded(earlier)).replaceFirst("\"version\":5", "\"version\":3").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "").encodeToByteArray()
         val file = atomic(liveX)
         file.baseFile.writeBytes(legacy)
         assertTrue(file.baseFile.setLastModified(1_000_000L))
@@ -354,6 +354,23 @@ class AtomicFilePlanStoreTest {
         assertArrayEquals(legacy, file.baseFile.readBytes())
         assertEquals(1_000_000L, file.baseFile.lastModified())
         assertFalse(File(file.baseFile.path + ".new").exists())
+    }
+
+    @Test fun interruptedKeepWriteRestoresTheWholeEarlierEnvelopeThenCommitsTheWholeCandidate() = runTest {
+        val old = earlier.copy(creationDraft = quizDraft)
+        val candidate = old.copy(plans = old.plans.mapIndexed { index, plan ->
+            if (index == 0) plan.copy(keptConflicts = mapOf("study-1" to setOf("a".repeat(64)))) else plan
+        })
+        val first = store(liveX)
+        first.load()
+        assertTrue(first.save(old))
+        val bytes = encoded(candidate)
+        atomic(liveX).startWrite().use { it.write(bytes, 0, bytes.size / 2) }
+        assertEquals(PlanStoreLoad.Loaded(old), store(liveX).load())
+        assertTrue(store(liveX).let { it.load(); it.save(candidate) })
+        assertEquals(PlanStoreLoad.Loaded(candidate), store(liveX).load())
+        assertEquals(old.creationDraft, candidate.creationDraft)
+        assertEquals(old.plans.drop(1), candidate.plans.drop(1))
     }
 
     @Test fun demoAndEachApiTargetKeepTheirOwnDraft() = runTest {

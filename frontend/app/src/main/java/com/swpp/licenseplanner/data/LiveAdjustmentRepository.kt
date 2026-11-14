@@ -39,6 +39,7 @@ class LiveAdjustmentRepository(
             mode = input.manualMove?.let { MANUAL },
             newStartDate = input.manualMove?.let { WireDateTime.format(it.newStart) },
             confirmOutsideAvailability = input.manualMove?.confirmOutsideAvailability,
+            confirmExternalOverlap = input.manualMove?.confirmExternalOverlap,
             preparationStart = input.manualMove?.let { input.original.preparationStart },
         )
         val body = OneShotBody(

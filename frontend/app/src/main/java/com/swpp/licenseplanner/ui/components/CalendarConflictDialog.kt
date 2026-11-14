@@ -15,6 +15,11 @@ import androidx.compose.ui.window.DialogProperties
 import com.swpp.licenseplanner.data.CalendarReadOutcome
 import com.swpp.licenseplanner.domain.StudyInterval
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.KeepFeedback
+import com.swpp.licenseplanner.ui.ManualConflictReview
+import com.swpp.licenseplanner.ui.MoveSave
+import com.swpp.licenseplanner.ui.NoticePhase
+import com.swpp.licenseplanner.ui.PlanConflictNotice
 import com.swpp.licenseplanner.ui.CalendarConflictState
 import com.swpp.licenseplanner.ui.ConflictKind
 import com.swpp.licenseplanner.ui.ConflictPhase
@@ -28,7 +33,7 @@ internal const val REPLACEMENT_NOTICE = "선택한 계획을 새 계획으로 �
 internal const val UNCHECKED_NOTICE = "캘린더를 확인하지 못했어요. 겹치는 일정이 있는지 알 수 없어요."
 
 private val conflictDate = DateTimeFormatter.ofPattern("M월 d일(E)", java.util.Locale.KOREAN)
-private fun intervalText(interval: StudyInterval): String =
+internal fun intervalText(interval: StudyInterval): String =
     "${interval.start.format(conflictDate)} ${WireDateTime.formatTime(interval.start.toLocalTime())}–" +
         (if (interval.end.toLocalDate() == interval.start.toLocalDate()) "" else "${interval.end.format(conflictDate)} ") +
         WireDateTime.formatTime(interval.end.toLocalTime())
@@ -142,6 +147,94 @@ fun CalendarConflictDialog(
                         SecondaryButton("닫기", onClose)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Generic intervals only; acknowledgment does not change or synchronize calendar events. */
+@Composable
+fun PlanConflictNotices(
+    notice: PlanConflictNotice?,
+    feedback: KeepFeedback?,
+    enabled: Boolean,
+    onCheck: () -> Unit,
+    onKeep: (String) -> Unit,
+    onMove: (String) -> Unit,
+) {
+    if (notice == null) return
+    val phase = notice.phase
+    feedback?.takeIf { it.ordinal == notice.source.ordinal }?.let {
+        Note(when (it.save) {
+            MoveSave.Saving -> "그대로 두기를 기기에 저장하는 중이에요."
+            MoveSave.Unsaved -> "그대로 두기 · 저장 안 됨. 화면의 다시 저장하기를 눌러 주세요."
+            MoveSave.Saved -> "그대로 두기를 기기에 저장했어요."
+        })
+    }
+    if (phase != NoticePhase.Checked) {
+        Note(when (phase) {
+            NoticePhase.Checking -> "캘린더 시간을 확인하는 중이에요"
+            NoticePhase.Stale -> "이전 확인 결과예요. 최신 캘린더를 확인하지 못했어요."
+            else -> UNCHECKED_NOTICE
+        })
+        SecondaryButton("캘린더 시간 확인", onCheck, enabled = enabled && phase != NoticePhase.Checking)
+    }
+    for ((id, matches) in notice.conflicts.matches.groupBy { it.target.scheduleId }) {
+        if (id == null) continue
+        OutlinedCard {
+            Heading("캘린더와 겹치는 공부 시간")
+            Note("계획 ${notice.source.ordinal} · " + notice.source.current.schedules.firstOrNull { it.scheduleId == id }?.topic.orEmpty())
+            Note(intervalText(matches.first().target.interval))
+            Note("겹치는 외부 일정 ${matches.size}개")
+            for (match in matches) Note("외부 일정 · ${intervalText(StudyInterval(match.occurrence.start, match.occurrence.end))}")
+            Note(CALENDAR_SNAPSHOT_NOTICE)
+            val owner = feedback?.takeIf { it.ordinal == notice.source.ordinal && it.scheduleId == id }
+            SecondaryButton("시간 옮기기", { onMove(id) }, enabled = enabled)
+            SecondaryButton("그대로 두기", { onKeep(id) }, enabled = enabled &&
+                phase == NoticePhase.Checked && owner?.save != MoveSave.Unsaved)
+        }
+    }
+}
+
+@Composable
+fun ManualConflictDialog(
+    state: ManualConflictReview,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    onUnchecked: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(dismissOnClickOutside = false)) {
+        Surface(shape = MaterialTheme.shapes.large, color = Paper) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Heading("선택한 시간 확인")
+                InfoRow("계획", "계획 ${state.source.ordinal}")
+                val old = state.source.current.schedules.single { it.scheduleId == state.scheduleId }
+                Note("현재 · ${old.startDate}–${old.endDate}")
+                Note("옮길 시간 · ${intervalText(state.targets.single().interval)}")
+                when (state.phase) {
+                    ConflictPhase.RequestingPermission, ConflictPhase.AwaitingPermission, ConflictPhase.Reading -> LoadingBlock("캘린더 시간을 확인하는 중이에요")
+                    ConflictPhase.Unchecked -> {
+                        Note(UNCHECKED_NOTICE)
+                        PrimaryButton("다시 확인", onRetry)
+                        SecondaryButton("확인 없이 계속", onUnchecked)
+                    }
+                    else -> {
+                        val fresh = state.conflicts.matches.map { StudyInterval(it.occurrence.start, it.occurrence.end) }
+                        val retained = state.retained.mapNotNull {
+                            val start = WireDateTime.parseOrNull(it.startDate) ?: return@mapNotNull null
+                            val end = WireDateTime.parseOrNull(it.endDate) ?: return@mapNotNull null
+                            StudyInterval(start, end)
+                        }
+                        for (interval in (fresh + retained).distinct()) Note("외부 일정 · ${intervalText(interval)}")
+                        if (retained.isNotEmpty()) Note("계획에 보관된 외부 일정 시간도 유지해요. 현재 캘린더와 다를 수 있어요.")
+                        if (state.unchecked) Note(UNCHECKED_NOTICE)
+                        Note("겹쳐도 선택한 시간으로 이번 공부 일정만 옮겨요. 공부 시간 밖 예외는 별도로 확인해요.")
+                        Note(CALENDAR_SNAPSHOT_NOTICE)
+                        PrimaryButton("겹쳐도 이 시간으로 옮기기", onConfirm)
+                    }
+                }
+                SecondaryButton("다른 시간 선택", onCancel)
             }
         }
     }

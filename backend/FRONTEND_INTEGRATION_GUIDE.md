@@ -421,8 +421,8 @@ shape and omit the two file fields.
 `"mode": "manual"` moves one study row of a saved plan to a chosen start without
 any model request. It requires `schedule_csv_file`, the full current
 `schedules`, a `study-N` `schedule_id` and `new_start_date`
-(`YYYY/MM/DD/HH/MM`). Optional: `confirm_outside_availability` (boolean, default
-false), `exam_date` (same stored-deadline rule as above), request availability
+(`YYYY/MM/DD/HH/MM`). Optional: `confirm_outside_availability` and
+`confirm_external_overlap` (independent booleans, each default false), `exam_date` (same stored-deadline rule as above), request availability
 (same selection rules) and `preparation_start`. A plan with retained context uses
 its stored preparation start, and a supplied value must equal it. An exam-only
 plan requires a valid `preparation_start` before its exam; it is only a
@@ -456,8 +456,13 @@ time is allowed. Checks run after request parsing, stale-row (409), missing-plan
 | 422 / `OUTSIDE_STUDY_WINDOWS` | Does not fit inside one effective study window (an overnight window counts whole); message: `The chosen time is outside the study windows. Confirm this one-time exception.` |
 
 Only `OUTSIDE_STUDY_WINDOWS` is waived by `confirm_outside_availability: true`;
-the other codes apply whatever its value, and a context with no study window
-always needs that confirmation. Touching rows are not overlaps. A missing
+`confirm_external_overlap: true` waives only `EXTERNAL_EVENT_OVERLAP`. Both
+flags are required when both constraints apply. Study overlap and temporal bounds
+remain mandatory. The external flag rejects null/nonboolean values and any
+supplied value outside manual mode as `422 INVALID_INPUT`, before provider access
+or mutation. Automatic requests must omit it. The server checks retained external
+rows only; fresh device occurrences and their private keys are never sent.
+A context with no study window always needs outside-window confirmation. Touching rows are not overlaps. A missing
 destination or identity, an `external-N` target, a non-boolean confirmation or a
 mismatching `exam_date`/`preparation_start` returns `422 INVALID_INPUT`. Every
 rejection leaves the plan, its metadata and the profile unchanged. A confirmed
@@ -548,7 +553,7 @@ answers `422 INVALID_INPUT` (`mode must be ...`); do not retry in another mode.
 | Status / code | FE handling |
 | --- | --- |
 | 422 / `INVALID_INPUT` | Correct invalid fields, duplicate IDs, missing target, or unusable availability; for the fixed no-stored-exam-date message, create a new plan |
-| 422 / manual-move codes | See the manual move table above; keep the chosen time and ask for another one, or confirm only `OUTSIDE_STUDY_WINDOWS` |
+| 422 / manual-move codes | Keep the chosen time for correction or explicitly review the independent outside-window and external-overlap exceptions described above |
 | 404 / `PLAN_NOT_FOUND` | Refresh the plan list; the file may have been pruned |
 | 409 / `PLAN_CONFLICT` | Reload the plan before resubmitting; never overwrite with stale rows |
 | 500 / `STORAGE_ERROR` | Report storage failure |

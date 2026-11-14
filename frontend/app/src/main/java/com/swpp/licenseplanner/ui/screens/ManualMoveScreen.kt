@@ -140,6 +140,9 @@ internal fun ManualMoveScreen(
                     PrimaryButton("다시 시도", onRetry, enabled = canSend)
                     SecondaryButton("취소", onCancel)
                 }
+                rejection == ManualMoveRejection.ExternalEventOverlap -> {
+                    PrimaryButton("겹치는 시간 다시 확인", onSubmit, enabled = canSend)
+                }
                 else -> PrimaryButton(
                     if (loading) "옮기는 중…" else "이 시간으로 옮기기",
                     onSubmit,
