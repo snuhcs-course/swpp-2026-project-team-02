@@ -34,7 +34,7 @@ object Validation {
         if (day.enabled && window(day) == null) "공부 시간은 1분부터 1439분까지 정할 수 있어요." else null
 
     /**
-     * Null when the full context (base, replacement weeks and every unshown window) can be
+     * Null when the full context (base, replacement weeks and every window) can be
      * submitted; otherwise the reason it cannot.
      */
     fun availabilityError(

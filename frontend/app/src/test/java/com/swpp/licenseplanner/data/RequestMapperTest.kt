@@ -53,7 +53,7 @@ class RequestMapperTest {
     }
 
     @Test
-    fun hiddenWindowsOvernightWindowsAndWeekReplacementsAreAllSent() {
+    fun extraWindowsOvernightWindowsAndWeekReplacementsAreAllSent() {
         val monday = DayAvailability(true, LocalTime.of(8, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
         val sunday = DayAvailability(true, LocalTime.of(23, 30), 60)
         val replaced = mapOf(Weekday.TUESDAY to DayAvailability(true, LocalTime.of(20, 0), 60))

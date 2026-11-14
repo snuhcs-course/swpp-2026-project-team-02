@@ -381,7 +381,9 @@ private fun DayRow(
                 InputBox(
                     "${window.durationMinutes}분",
                     { onEdit(index) },
-                    Modifier.fillMaxWidth().testTag(if (index == 0) "study-duration-${day.key}" else "study-duration-${day.key}-$index"),
+                    Modifier.fillMaxWidth()
+                        .testTag(if (index == 0) "study-duration-${day.key}" else "study-duration-${day.key}-$index")
+                        .semantics { contentDescription = windowEditDescription(day, index, window) },
                     enabled = enabled,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -470,17 +472,22 @@ private fun StudyWindowDialog(
 internal fun parseDurationMinutes(text: String): Int? =
     text.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toIntOrNull()?.takeIf { WindowSpec.isValidDuration(it) }
 
+/** Spoken label of a window's minutes box, which edits that window: “월요일 시간대 2, 19:00–21:00, 120분, 수정”. */
+internal fun windowEditDescription(day: Weekday, index: Int, window: WindowSpec): String =
+    "${day.label}요일 시간대 ${index + 1}, ${WireDateTime.formatTime(window.start)}–" +
+        (if (window.endsNextDay) "다음 날 " else "") + "${WireDateTime.formatTime(window.end)}, ${window.durationMinutes}분, 수정"
+
 /** “– 20:00”, or “– 다음 날 00:30” for an end on the following date. */
 internal fun endLabel(window: WindowSpec): String =
     "– " + (if (window.endsNextDay) "다음 날 " else "") + WireDateTime.formatTime(window.end)
 
 internal data class WeekTotals(val days: Int, val minutes: Int)
 
-/** Weekdays with any window and the minutes of every window, unshown ones included. */
+/** Weekdays with any window and the minutes of every window. */
 internal fun weekTotals(week: WeekWindows): WeekTotals =
     WeekTotals(week.count { it.value.isNotEmpty() }, week.values.sumOf { windows -> windows.sumOf { it.durationMinutes } })
 
-/** Windows the editor keeps without showing: all but the first of each day in the base and every replacement week. */
+/** Every window after the first on each day of the base and every replacement week; used only in the profile preview. */
 internal fun retainedWindowCount(availability: StudyAvailability): Int =
     (listOf(availability.base) + availability.overrides.values).sumOf { week -> week.values.sumOf { (it.size - 1).coerceAtLeast(0) } }
 

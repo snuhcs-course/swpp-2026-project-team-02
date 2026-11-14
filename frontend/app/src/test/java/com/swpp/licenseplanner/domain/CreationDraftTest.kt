@@ -20,8 +20,8 @@ class CreationDraftTest {
     )
 
     private val evening = DayAvailability(true, LocalTime.of(18, 0), 90, listOf(WindowSpec(LocalTime.of(7, 0), 30)))
-    private val hiddenOnly = DayAvailability(false, LocalTime.of(20, 30), 120, listOf(WindowSpec(LocalTime.of(23, 30), 90)))
-    private val base = defaultAvailability() + (Weekday.MONDAY to evening) + (Weekday.SUNDAY to hiddenOnly)
+    private val extraOnly = DayAvailability(false, LocalTime.of(20, 30), 120, listOf(WindowSpec(LocalTime.of(23, 30), 90)))
+    private val base = defaultAvailability() + (Weekday.MONDAY to evening) + (Weekday.SUNDAY to extraOnly)
 
     /** Answers part of the quiz, edits a replaced week and keeps an explicitly empty one. */
     private val inProgress = fresh.copy(
@@ -111,7 +111,7 @@ class CreationDraftTest {
             "week not a Monday" to draft.copy(availabilityWeek = LocalDate.of(2026, 11, 24)),
             "missing weekday" to draft.copy(form = inProgress.copy(availability = noSunday)),
             "zero duration" to draft.copy(form = inProgress.copy(availability = base + (Weekday.MONDAY to evening.copy(durationMinutes = 0)))),
-            "too long hidden window" to draft.copy(
+            "too long extra window" to draft.copy(
                 form = inProgress.copy(availability = base + (Weekday.MONDAY to evening.copy(extras = listOf(WindowSpec(LocalTime.of(7, 0), 1440))))),
             ),
             "seconds in a start" to draft.copy(form = inProgress.copy(availability = base + (Weekday.MONDAY to evening.copy(start = LocalTime.of(18, 0, 30))))),

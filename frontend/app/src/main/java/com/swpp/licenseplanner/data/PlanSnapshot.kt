@@ -348,7 +348,7 @@ internal object PlanSnapshotCodec {
         }
     }
 
-    /** One editor day: the visible primary window, on or off, plus the windows the editor keeps hidden. */
+    /** One editor day: the visible primary window, on or off, plus the day's extra windows. */
     @Serializable
     private data class StoredDay(
         val enabled: Boolean,

@@ -21,6 +21,11 @@ class AvailabilityTextTest {
         assertEquals("– 다음 날 00:00", endLabel(window(0, 1, 1439)))
     }
 
+    @Test fun minutesBoxNamesTheWeekdayWindowAndTimes() {
+        assertEquals("월요일 시간대 2, 19:00–21:00, 120분, 수정", windowEditDescription(Weekday.MONDAY, 1, window(19, 0, 120)))
+        assertEquals("일요일 시간대 1, 23:30–다음 날 00:30, 60분, 수정", windowEditDescription(Weekday.SUNDAY, 0, window(23, 30, 60)))
+    }
+
     @Test fun durationEntryAcceptsOnlyTheSupportedRange() {
         assertEquals(1, parseDurationMinutes("1"))
         assertEquals(90, parseDurationMinutes("90"))
@@ -28,7 +33,7 @@ class AvailabilityTextTest {
         for (text in listOf("", "0", "1440", "9999", "-5", "1.5")) assertNull(text, parseDurationMinutes(text))
     }
 
-    @Test fun summariesCountUnshownWindowsAndWeekKinds() {
+    @Test fun summariesCountEveryWindowAndWeekKinds() {
         val base = mapOf(
             Weekday.MONDAY to listOf(window(8, 0, 60), window(23, 0, 90)),
             Weekday.WEDNESDAY to listOf(window(19, 0, 60)),

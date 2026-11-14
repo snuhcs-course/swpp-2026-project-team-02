@@ -260,10 +260,10 @@ class CreationDraftViewModelTest {
     }
 
     @Test fun replacedWeekResumesWithEveryWindowAndImportedBusyRows() = runTest(dispatcher) {
-        val hidden = WindowSpec(LocalTime.of(22, 0), 60)
+        val extraWindow = WindowSpec(LocalTime.of(22, 0), 60)
         val base = TestFixtures.gen01Availability() +
-            (Weekday.TUESDAY to DayAvailability(false, LocalTime.of(7, 0), 30, listOf(hidden)))
-        val replaced = base + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(6, 0), 90, listOf(hidden)))
+            (Weekday.TUESDAY to DayAvailability(false, LocalTime.of(7, 0), 30, listOf(extraWindow)))
+        val replaced = base + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(6, 0), 90, listOf(extraWindow)))
         val busy = listOf(ScheduleRow("41", "2026/10/20/09/00", "2026/10/20/12/00", "바쁜 일정"))
         val form = TestFixtures.completeState(availability = base, start = today, exam = exam).copy(
             availabilityOverrides = mapOf(thirdWeek to replaced, fourthWeek to emptyWeek()),

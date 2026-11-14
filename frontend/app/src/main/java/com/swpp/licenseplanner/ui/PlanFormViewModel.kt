@@ -442,7 +442,8 @@ class PlanFormViewModel(
     }
 
     /*
-     * Day edits change the visible primary window only; unshown windows of that day stay. A null
+     * Primary-window setters: they change only the day's primary entry and keep its other windows.
+     * The availability screen edits identified list entries through [captureWindow] instead. A null
      * [week] edits the recurring base; a Monday edits that week's replacement, if it has one.
      */
     fun setDayEnabled(day: Weekday, enabled: Boolean, week: LocalDate? = null) = editDay(day, week) { it.copy(enabled = enabled) }
@@ -531,7 +532,7 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Gives the week its own times, starting from a copy of the base week (unshown windows included). */
+    /** Gives the week its own times, starting from a copy of the base week with every window. */
     fun replaceWeek(monday: LocalDate): Boolean = editWeek(monday) { it.availability }
 
     /** Makes the week an explicit no-study week; windows starting the previous day still run into it. */
@@ -570,7 +571,7 @@ class PlanFormViewModel(
         return true
     }
 
-    /** Replaces the form's base week and week replacements with the previewed profile, unshown windows included. */
+    /** Replaces the form's base week and week replacements with the previewed profile, every window included. */
     fun acceptProfile() {
         val preview = _profile.value as? ProfileState.Preview ?: return
         if (generating) return

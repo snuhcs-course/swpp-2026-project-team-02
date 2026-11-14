@@ -105,7 +105,7 @@ repositories and the AtomicFile store in a fresh test-owned directory. Sixteen c
 - Home-bound save/discard/stay for visible and system Back; untouched defaults,
   delayed/failed saves and local retry, failed discard and explicit replacement.
 - Same-question resume without refetching, an earlier edit moving the checkpoint,
-  a replaced availability week with hidden windows and busy rows, and atomic
+  a replaced availability week with several windows per day and busy rows, and atomic
   plan completion removing the draft. Fresh injected state is not process death.
 
 - Creation through all 18 loaded questions, unknown-answer scores, authored-example
@@ -740,8 +740,9 @@ that detailed gate remains unverified. See [Verification](#verification).
 Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. Snapshot version 4 and earlier supported readers are unchanged.
 
 The study-time screen (공부 시간) shows every window for each weekday.
-시간대 추가 opens a candidate starting at 18:00 for 60 minutes. Tapping a
-window's minutes edits its start and duration together. 확인 applies it, while
+시간대 추가 opens a candidate starting at 18:00 for 60 minutes. 수정 or tapping
+a window's minutes opens the same editor for its start and duration. 확인
+applies it, while
 취소 or Back keeps the entered list. Minutes must be a whole number from 1 to
 1439, and invalid text stays available for correction. Start times use the
 existing time picker. A next-day end is labeled 다음 날. 삭제 removes only its
@@ -759,8 +760,8 @@ shown or changed. Each week is one of:
 
 - 기본 시간 (no change for that week): 이번 주는 기본 시간을 사용해요, and the
   editor below (매주 기본 시간) changes the recurring base for every such week.
-  이번 주 시간 바꾸기 gives the week its own copy of the base (hidden windows
-  included); 이번 주 공부 안 함 makes it an empty week.
+  이번 주 시간 바꾸기 gives the week its own copy of the base, with every
+  window of each day; 이번 주 공부 안 함 makes it an empty week.
 - Replaced (이번 주 공부 시간): the editor changes only that week. 이번 주 공부 안 함
   empties it; 기본 시간으로 되돌리기 removes the change so the week follows the
   base again.
@@ -777,8 +778,7 @@ notice shows only the part inside the preparation/exam period, such as 월요일
 An empty week is sent as an explicit empty `availability_overrides` entry, while a
 reset week has no entry, so the two are never confused. Changing the dates keeps
 week changes; those outside the new period are kept but not shown. The summary
-box (공부하는 요일, 공부 시간) counts every window of the shown week, hidden ones
-included.
+box (공부하는 요일, 공부 시간) counts every window of the shown week.
 
 **Conflicts.** Windows that overlap, including a window spilling past midnight
 into the next day's window, a Sunday spill into Monday, or a replaced week's
@@ -795,13 +795,13 @@ server; the last successful save wins.
 
 - 저장된 공부 시간 불러오기 sends `GET /availability` and shows a preview
   (기본 시간, 별도 설정, 추가 공부 시간). The form changes only after 불러온 시간 적용,
-  which replaces the base and all week changes with the loaded ones, hidden windows
+  which replaces the base and all week changes with the loaded ones, every window
   included. 취소 or Back keeps the current draft.
 - 서버에 공부 시간 저장 sends the complete current base and every week change with
   `PUT /availability` (an empty override map when there are none). The response
   must match what was sent.
 - A failed load or save shows 공부 시간을 불러오지/저장하지 못했어요 with the current
-  draft summary; the draft and hidden windows are unchanged. 다시 시도 repeats the
+  draft summary; the draft and all its windows are unchanged. 다시 시도 repeats the
   action once on tap; 취소 returns to the editor. Nothing is retried automatically.
 
 Generation, navigation, adjustment and restored plans never load or save the

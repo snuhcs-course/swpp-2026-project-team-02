@@ -75,11 +75,11 @@ class ValidationTest {
     }
 
     @Test
-    fun hiddenWindowsCountAndConflict() {
-        val hidden = DayAvailability(false, LocalTime.of(8, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
-        // The visible primary is disabled but the hidden window keeps the day usable.
-        assertNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to hidden)))
-        val clash = hidden.copy(enabled = true, start = LocalTime.of(18, 30))
+    fun extraWindowsCountAndConflict() {
+        val extraOnly = DayAvailability(false, LocalTime.of(8, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
+        // The primary is disabled but the extra window keeps the day usable.
+        assertNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to extraOnly)))
+        val clash = extraOnly.copy(enabled = true, start = LocalTime.of(18, 30))
         assertNotNull(Validation.availabilityError(defaultAvailability() + (Weekday.MONDAY to clash)))
         assertEquals(listOf(WindowSpec(LocalTime.of(18, 30), 60), WindowSpec(LocalTime.of(19, 0), 120)), clash.windows())
     }

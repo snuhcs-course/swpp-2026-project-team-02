@@ -9,7 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 sealed interface ProfileOutcome {
-    /** The validated profile: base week and every week replacement, including unshown windows. */
+    /** The validated profile: base week and every week replacement, with every window. */
     data class Loaded(val availability: StudyAvailability) : ProfileOutcome
     data class Failure(val error: ApiError) : ProfileOutcome
 }

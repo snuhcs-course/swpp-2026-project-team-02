@@ -471,7 +471,7 @@ class PlanSnapshotTest {
         }
     }
 
-    @Test fun overnightHiddenAndEmptyWeekContextsRoundTrip() {
+    @Test fun overnightExtraAndEmptyWeekContextsRoundTrip() {
         val restored = (decode(encoded(PlanSnapshot(listOf(contextPlan)))) as PlanStoreLoad.Loaded).snapshot.plans.single()
         assertEquals(contextPlan, restored)
         assertEquals(emptyMap<String, List<TimeWindow>>(), restored.original.availabilityOverrides.getValue("2026/10/19"))

@@ -197,7 +197,7 @@ class CreationDraftCodecTest {
             "impossible start" to day("monday") { it.with("start", JsonPrimitive("25:00")) },
             "start with seconds" to day("monday") { it.with("start", JsonPrimitive("18:00:00")) },
             "zero duration" to day("monday") { it.with("duration_minutes", JsonPrimitive(0)) },
-            "too long hidden window" to day("monday") { d ->
+            "too long extra window" to day("monday") { d ->
                 d.with("extras", JsonArray(listOf(JsonObject(mapOf("start" to JsonPrimitive("07:30"), "duration_minutes" to JsonPrimitive(1440))))))
             },
             "replacement not on a Monday" to editDraft(text) { d ->

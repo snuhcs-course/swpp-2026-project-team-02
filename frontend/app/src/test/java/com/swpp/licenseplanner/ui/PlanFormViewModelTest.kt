@@ -398,7 +398,7 @@ class PlanFormViewModelTest {
 
     // --- Shared server profile ---
 
-    /** Monday 08:00/60 plus a hidden 23:00/90 window, and an explicit no-study week. */
+    /** Monday 08:00/60 plus an extra 23:00/90 window, and an explicit no-study week. */
     private val serverProfile = StudyAvailability(
         base = mapOf(Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(8, 0), 60), WindowSpec(LocalTime.of(23, 0), 90))),
         overrides = mapOf(LocalDate.of(2026, 10, 26) to emptyMap()),
@@ -437,7 +437,7 @@ class PlanFormViewModelTest {
         vm.acceptProfile()
         assertEquals(ProfileState.Idle, vm.profile.value)
         assertEquals(serverProfile.base.toEditorDays(), vm.form.value.availability)
-        assertEquals(serverProfile, vm.form.value.studyAvailability) // the hidden window and the empty week are kept
+        assertEquals(serverProfile, vm.form.value.studyAvailability) // the extra window and the empty week are kept
         assertEquals(1, vm.form.value.availability.getValue(Weekday.MONDAY).extras.size)
 
         assertTrue(vm.saveProfile())
@@ -532,7 +532,7 @@ class PlanFormViewModelTest {
         vm.setDayEnabled(Weekday.MONDAY, true, LocalDate.of(2026, 12, 7))
         assertEquals(before, vm.form.value)
 
-        // Replacing starts from the base, unshown windows included, and edits only that week.
+        // Replacing starts from the base, every window included, and edits only that week.
         assertTrue(vm.replaceWeek(oct19))
         assertEquals(oct19, vm.availabilityWeek.value)
         assertEquals(WeekSource.REPLACED, vm.form.value.weekSource(oct19))
@@ -560,7 +560,7 @@ class PlanFormViewModelTest {
         assertEquals(multiWindowProfile, vm.form.value.studyAvailability)
     }
 
-    @Test fun editingVisibleWindowsKeepsHiddenWindowsThroughSaveAndGeneration() = runTest(dispatcher) {
+    @Test fun editingPrimaryWindowsKeepsExtraWindowsThroughSaveAndGeneration() = runTest(dispatcher) {
         val profile = FakeProfile(ProfileOutcome.Loaded(multiWindowProfile), ProfileOutcome.Loaded(StudyAvailability(emptyMap())))
         val planning = FakePlanning(PlanOutcome.Success(plan, false))
         val vm = withProfile(profile, planning)
@@ -577,7 +577,7 @@ class PlanFormViewModelTest {
         )
         assertEquals(expected, vm.form.value.studyAvailability)
 
-        // Disabling the base primary still leaves its hidden window.
+        // Disabling the base primary still leaves its extra window.
         vm.setDayEnabled(Weekday.MONDAY, false)
         assertEquals(listOf(WindowSpec(LocalTime.of(23, 0), 90)), vm.form.value.studyAvailability.base[Weekday.MONDAY])
         vm.setDayEnabled(Weekday.MONDAY, true)
