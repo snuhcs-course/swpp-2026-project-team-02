@@ -163,6 +163,12 @@ See `schedule_adjuster/README.md` for behavior assumptions and the integration t
 
 ## Checks and coverage
 
+For focused checks while editing, see the
+[local testing workflow](../docs/testing-workflow.md#focused-jvm-and-backend-recipes).
+It includes a single-file offline unittest recipe and separates development logs
+from cited handoff evidence. Keep the change's full required backend and contract
+gates; commands sharing the coverage database below must run serially.
+
 CI ([`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the
 three offline unit suites in `tests/` under coverage with Python 3.14. Each suite
 runs even if an earlier one fails, and any failure fails the job. Scenario

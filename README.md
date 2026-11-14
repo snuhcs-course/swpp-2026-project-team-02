@@ -18,6 +18,7 @@ project/
 | [`backend/DEVELOPER_GUIDE.md`](backend/DEVELOPER_GUIDE.md) | Internal architecture, validation, scheduling and storage rules, question-bank maintenance |
 | [`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md) | HTTP contract used by the Android app: payloads, errors, deadlines and reload recovery |
 | [`frontend/README.md`](frontend/README.md) | Android build, flavors and signing, app behavior, calendar permissions and verification procedures |
+| [`docs/testing-workflow.md`](docs/testing-workflow.md) | Local affected checks, task-specific filters, handoff evidence, review reuse and a bounded daemon comparison |
 | [`deploy/README.md`](deploy/README.md) | Server topology, installed-state inspection, updates and backups, release APK and operational checks |
 
 Package READMEs (for example `backend/schedule_adjuster/README.md`) describe

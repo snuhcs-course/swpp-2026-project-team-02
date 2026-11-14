@@ -53,6 +53,16 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ## Checks
 
+For local editing, use the [local testing workflow](../docs/testing-workflow.md)
+for task-specific JVM filters, incremental/fresh execution, focused Compose
+methods and evidence reuse. Its [bounded local comparison](../docs/testing-workflow.md#bounded-local-daemon-comparison)
+supports `--daemon` for local recipes on the measured toolchain (five JVM tests;
+later medians 1.279 s reused versus 4.655 s fresh). This is one class on one
+host with a warmed daemon, not a full-build, Compose or CI speed claim. Keep
+`--no-daemon` as the fallback and preserve existing named-change commands and
+all required full gates/device recipes.
+
+The commands below reproduce CI; the local recipes do not replace them.
 CI runs these in order (Android SDK platform 36 and build-tools 36.0.0,
 Python 3.14). `ci.yml` provisions Java 25, while the checked-in Gradle daemon
 criteria select Java 17. The separate signed-release workflow provisions Java 17:
