@@ -57,6 +57,7 @@ fun PlanListScreen(
         } else null,
     ) {
         Heading("어떤 계획을 조정할까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
+        ContextHelpButton(ContextHelpTopic.SAVED_PLANS)
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
         when {

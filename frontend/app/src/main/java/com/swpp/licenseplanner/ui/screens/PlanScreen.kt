@@ -132,6 +132,9 @@ fun PlanScreen(
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
             }
             item {
+                ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
+            }
+            item {
                 PrimaryButton(
                     exportButtonText(exportCount),
                     onExport,

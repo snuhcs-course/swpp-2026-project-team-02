@@ -190,7 +190,10 @@ fun PlanAdjustmentScreen(
     val summary = shownSummary(plan, state)
     // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
     val exportAction: @Composable () -> Unit = {
-        if (exportBlock != ExportBlock.NoStudy) SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
+        if (exportBlock != ExportBlock.NoStudy) {
+            ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
+            SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
+        }
     }
 
     AppScreen(
@@ -246,6 +249,7 @@ fun PlanAdjustmentScreen(
             "준비 ${wireDate(plan.original.preparationStart)} – 시험 ${wireDate(plan.original.examDate)}",
         )
         OriginalPlanInputs(plan)
+        ContextHelpButton(ContextHelpTopic.ADJUSTMENT)
         if (plan.isDemo) {
             MutedBox {
                 Text("로컬 시연 계산", style = MaterialTheme.typography.titleSmall, color = Ink)

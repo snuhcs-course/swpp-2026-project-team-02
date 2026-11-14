@@ -85,6 +85,16 @@ fun AvailabilityScreen(
         },
     ) {
         Heading("보통 언제 공부할 수 있나요?", "요일마다 시작 시간과 공부 시간을 정해 주세요. 공부하지 않는 요일은 0시간으로 두세요.")
+        ContextHelpButton(ContextHelpTopic.AVAILABILITY)
+        MutedBox {
+            Text("시간 입력 방법", style = MaterialTheme.typography.titleSmall, color = Ink)
+            Text(
+                "요일의 +와 −는 공부 시간을 30분씩 바꿔요. 시작 시간을 누르면 종료 시간은 자동으로 계산돼요. " +
+                    "공부하지 않는 날은 0시간으로 두고, 아래 주간 합계를 확인하세요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkSecondary,
+            )
+        }
         Column {
             for (day in Weekday.entries) {
                 DayRow(
