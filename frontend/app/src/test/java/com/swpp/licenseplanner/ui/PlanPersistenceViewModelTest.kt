@@ -273,7 +273,7 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.generate())
         advanceUntilIdle()
         val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(3), saved["version"])
+        assertEquals(JsonPrimitive(4), saved["version"])
         assertEquals(plans.plans + vm.plan(3), restoredNow())
         assertEquals(mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))), restoredNow()[0].original.weeklyAvailability)
     }
@@ -1131,5 +1131,178 @@ class PlanPersistenceViewModelTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    // --- Creation drafts ---
+
+    /** What a new process would restore from [disk] right now, draft included. */
+    private fun TestScope.snapshotNow(): PlanSnapshot {
+        val store = BytesPlanStore(MemoryPlanBytes(disk.committed), liveScope, dispatcher)
+        var result: PlanStoreLoad? = null
+        launch { result = store.load() }
+        advanceUntilIdle()
+        return (result as PlanStoreLoad.Loaded).snapshot
+    }
+
+    @Test fun draftSaveAndDiscardKeepSavedPlansAndReportsAndSendNothing() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val adjustment = FakeAdjustment()
+        val (vm, _) = open(planning, adjustment)
+        generateAB(vm)
+        assertTrue(report(vm, 1, "study-1", StudyCheckInStatus.Done))
+        vm.closeCheckIn()
+        val plans = vm.plans.value
+        assertEquals(plans, restoredNow())
+
+        vm.setLevel(CurrentLevel.BEGINNER)
+        assertTrue(vm.saveDraftAndExit())
+        advanceUntilIdle()
+        assertEquals(DraftPhase.Done, vm.draftDecision.value?.phase)
+        vm.draftDecisionHandled()
+        val stored = snapshotNow()
+        assertEquals(plans, stored.plans)
+        assertEquals(vm.form.value, stored.creationDraft?.form)
+
+        // A restart offers the draft with both plans and the report intact.
+        val planningAfter = FakePlanning()
+        val (second, _) = open(planningAfter, FakeAdjustment())
+        assertEquals(plans, second.plans.value)
+        assertEquals(stored.creationDraft, second.committedDraft.value)
+        assertTrue(second.discardDraft())
+        advanceUntilIdle()
+        assertEquals(DraftPhase.Done, second.draftDecision.value?.phase)
+        assertEquals(PlanSnapshot(plans), snapshotNow())
+        assertEquals(plans, second.plans.value)
+        assertEquals(2, planning.requests.size)
+        assertTrue(planningAfter.requests.isEmpty())
+        assertTrue(adjustment.inputs.isEmpty())
+    }
+
+    @Test fun draftDecisionsWaitWhileShownPlansAreUnsaved() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(planA, false))
+        val (vm, _) = open(planning)
+        disk.failWrites = true
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertFalse(vm.saveDraftAndExit())
+        assertFalse(vm.discardDraft())
+        assertNull(vm.draftDecision.value)
+
+        // The plan retry still saves the shown collection, not a draft.
+        disk.failWrites = false
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(vm.plans.value, snapshotNow().plans)
+        assertNull(snapshotNow().creationDraft)
+        assertEquals(1, planning.requests.size)
+    }
+
+    @Test fun everyPlanSaveKeepsTheSavedDraftWithBothPlansReportsAndReloadGates() = runTest(dispatcher) {
+        val movedB = rowsB.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/21/18/00", endDate = "2026/10/21/19/00") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Failure(ApiError.PlanConflict),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedB, "csv-b2", null, null)),
+            AdjustmentOutcome.Failure(ApiError.PlanConflict),
+        ).apply {
+            reloads += ReloadOutcome.Missing
+            reloads += ReloadOutcome.Loaded(rowsB)
+        }
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val (vm, _) = open(planning, adjustment)
+        generateAB(vm)
+        vm.setLevel(CurrentLevel.BEGINNER)
+        assertTrue(vm.saveDraftAndExit())
+        advanceUntilIdle()
+        vm.draftDecisionHandled()
+        val draft = snapshotNow().creationDraft!!
+        assertEquals(draft, vm.committedDraft.value)
+
+        fun assertSavedWithDraft() {
+            val stored = snapshotNow()
+            assertEquals(draft, stored.creationDraft)
+            assertEquals(vm.plans.value, stored.plans)
+            assertNull(stored.inFlightAdjustmentOrdinal)
+            assertEquals(draft, vm.committedDraft.value)
+            assertEquals(PlanStorage.Ready, vm.storage.value)
+        }
+
+        // Reports on the same row ID of both plans.
+        assertTrue(report(vm, 1, "study-1", StudyCheckInStatus.Partly, "30"))
+        assertTrue(report(vm, 2, "study-1", StudyCheckInStatus.Done, "20"))
+        vm.closeCheckIn()
+        assertSavedWithDraft()
+        val reportA = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 30))
+        val reportB = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20))
+        assertEquals(reportA to reportB, vm.plan(1).checkIns to vm.plan(2).checkIns)
+
+        // A live failure leaves A behind a reload gate.
+        vm.select(1, "study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertSavedWithDraft()
+
+        // B's unresolved snapshot before sending, then its outcome, both keep the draft and A's gate.
+        adjustment.gate = CompletableDeferred()
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val unresolved = snapshotNow()
+        val storedMarker = ApiJson.parseToJsonElement(String(disk.committed!!)).jsonObject["in_flight_adjustment_ordinal"]
+        assertEquals(JsonPrimitive(2), storedMarker)
+        assertNull(unresolved.inFlightAdjustmentOrdinal)
+        assertEquals(PlanRecovery.ReloadRequired, unresolved.plans.single { it.ordinal == 2 }.recovery)
+        assertEquals(draft, unresolved.creationDraft)
+        assertEquals(PlanRecovery.ReloadRequired, unresolved.plans.single { it.ordinal == 1 }.recovery)
+        adjustment.gate!!.complete(Unit)
+        adjustment.gate = null
+        advanceUntilIdle()
+        assertEquals(movedB, vm.plan(2).current.schedules)
+        assertSavedWithDraft()
+
+        // A failed report save keeps the earlier bytes; the local retry keeps the draft.
+        val committed = disk.committed
+        disk.failWrites = true
+        assertFalse(report(vm, 1, "study-1", StudyCheckInStatus.Missed))
+        assertArrayEquals(committed, disk.committed)
+        assertEquals(draft, vm.committedDraft.value)
+        disk.failWrites = false
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(CheckInSave.Saved, vm.checkIn.value!!.save)
+        vm.closeCheckIn()
+        assertSavedWithDraft()
+        val missedA = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Missed, 0))
+
+        // Reloading A finds it gone; B gets its own gate and reloads its rows.
+        assertTrue(vm.selectPlan(1))
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+        assertSavedWithDraft()
+        vm.select(2, "study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(2).recovery)
+        assertSavedWithDraft()
+        assertTrue(vm.reloadPlan())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.Ready to rowsB, vm.plan(2).recovery to vm.plan(2).current.schedules)
+        assertSavedWithDraft()
+
+        assertEquals(missedA, vm.plan(1).checkIns)
+        assertEquals(reportB, vm.plan(2).checkIns)
+        assertEquals(2, planning.requests.size)
+        assertEquals(3, adjustment.inputs.size)
+        assertEquals(2, adjustment.reloadCalls)
+
+        // A restart offers the same draft beside both plans, sending nothing.
+        val fresh = FakeAdjustment()
+        val (second, _) = open(FakePlanning(), fresh)
+        assertEquals(draft, second.committedDraft.value)
+        assertEquals(vm.plans.value, second.plans.value)
+        assertTrue(fresh.inputs.isEmpty() && fresh.reloadCalls == 0)
     }
 }

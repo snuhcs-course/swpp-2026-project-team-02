@@ -10,10 +10,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.domain.LocalTopics
@@ -47,6 +43,8 @@ import com.swpp.licenseplanner.ui.userMessage
 fun QuestionsScreen(
     form: PlanFormState,
     loadState: QuestionLoadState,
+    index: Int,
+    onShowQuestion: (Int) -> Unit,
     onLoad: () -> Unit,
     onAnswer: (questionId: Int, choiceKey: String) -> Unit,
     onExit: () -> Unit,
@@ -54,9 +52,8 @@ fun QuestionsScreen(
 ) {
     LaunchedEffect(Unit) { onLoad() }
     val questions = form.questions
-    var index by rememberSaveable { mutableIntStateOf(0) }
     val loaded = loadState == QuestionLoadState.Loaded && questions.isNotEmpty()
-    BackHandler(enabled = loaded && index > 0) { index-- }
+    BackHandler(enabled = loaded && index > 0) { onShowQuestion(index - 1) }
 
     val question = questions.getOrNull(index.coerceAtMost(questions.lastIndex))
     val selected = question?.let { form.answers[it.id] }
@@ -71,7 +68,7 @@ fun QuestionsScreen(
                 PrimaryButton(
                     text = if (isLast) "결과 보기" else "다음",
                     enabled = selected != null,
-                    onClick = { if (isLast) onFinished() else index++ },
+                    onClick = { if (isLast) onFinished() else onShowQuestion(index + 1) },
                 )
             }
         } else null,

@@ -1,8 +1,5 @@
 package com.swpp.licenseplanner.ui
 
-import com.swpp.licenseplanner.domain.PlanGrouping
-import com.swpp.licenseplanner.domain.StudyCheckIn
-import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -46,16 +43,22 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.CreationDraft
+import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.ManualMoveRejection
+import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.StudyAvailability
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.emptyWeek
+import com.swpp.licenseplanner.domain.hasInputBeyondDefaults
 import com.swpp.licenseplanner.domain.toEditorDays
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -167,6 +170,29 @@ enum class PlanStorage {
     SaveFailure,
 }
 
+/** What the learner chose for unfinished creation input. */
+enum class DraftChoice { Save, Discard }
+
+/** Where creation continues once the chosen draft change is saved on this device. */
+enum class DraftContinuation {
+    /** Leave creation for home. */
+    Home,
+    /** Start a new creation from fresh inputs in place of the saved draft. */
+    NewCreation,
+}
+
+enum class DraftPhase {
+    /** The draft change is being written; nothing is known about its durability yet. */
+    Writing,
+    /** The write failed; the earlier saved data and the shown inputs stay, and only [PlanFormViewModel.retrySave] or staying may follow. */
+    Failed,
+    /** The draft change is saved; navigation follows once, then reports it handled. */
+    Done,
+}
+
+/** A save or discard of the creation draft and how far it has got. */
+data class DraftDecision(val choice: DraftChoice, val continuation: DraftContinuation, val phase: DraftPhase)
+
 /** The plan and failed study row chosen for adjustment, with its outcome. */
 data class AdjustmentSelection(
     val planOrdinal: Int? = null,
@@ -267,7 +293,7 @@ class PlanFormViewModel(
     private val questionRepository: QuestionRepository,
     private val planningRepository: PlanningRepository,
     private val adjustmentRepository: AdjustmentRepository,
-    today: LocalDate = LocalDate.now(),
+    private val today: LocalDate = LocalDate.now(),
     private val planStore: LocalPlanStore,
     private val calendarExportRepository: CalendarExportRepository = UnavailableCalendarExport,
     private val calendarReadRepository: CalendarReadRepository = UnavailableCalendarRead,
@@ -335,6 +361,40 @@ class PlanFormViewModel(
     private val _checkIn = MutableStateFlow<CheckInEditor?>(null)
     val checkIn: StateFlow<CheckInEditor?> = _checkIn.asStateFlow()
 
+    /**
+     * The creation draft as last saved on this device, or null. It changes only when a write
+     * succeeds (or on restore), so it always matches the stored bytes.
+     */
+    private val _committedDraft = MutableStateFlow<CreationDraft?>(null)
+    val committedDraft: StateFlow<CreationDraft?> = _committedDraft.asStateFlow()
+
+    /**
+     * The input screen a saved draft reopens. Progress moves it forward and an actual edit moves it
+     * to the edited screen; going back through earlier screens leaves it where it was.
+     */
+    private val _creationStep = MutableStateFlow(CreationStep.CERTIFICATION)
+    val creationStep: StateFlow<CreationStep> = _creationStep.asStateFlow()
+
+    /** The question the assessment shows now. */
+    private val _questionIndex = MutableStateFlow(0)
+    val questionIndex: StateFlow<Int> = _questionIndex.asStateFlow()
+
+    /** The question a saved draft reopens; follows [_creationStep]'s rules, not going back. */
+    private var checkpointQuestion = 0
+
+    /** The open draft save or discard, or null. */
+    private val _draftDecision = MutableStateFlow<DraftDecision?>(null)
+    val draftDecision: StateFlow<DraftDecision?> = _draftDecision.asStateFlow()
+
+    /** The exact snapshot of a failed draft write; [retrySave] writes this again, never a rebuilt one. */
+    private var pendingDraftWrite: PlanSnapshot? = null
+
+    /**
+     * The exact snapshot of a new plan whose save also removes the saved draft, kept until it is
+     * saved; [retrySave] writes this again, so a retry still completes that draft.
+     */
+    private var pendingCompletion: PlanSnapshot? = null
+
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
@@ -365,12 +425,12 @@ class PlanFormViewModel(
         viewModelScope.launch { restore() }
     }
 
-    fun selectCertification(id: String) = edit { it.copy(certificationId = id) }
+    fun selectCertification(id: String) = edit(CreationStep.CERTIFICATION) { it.copy(certificationId = id) }
     fun setPreparationStart(date: LocalDate) = editDates { it.copy(preparationStart = date) }
     fun setExamDate(date: LocalDate) = editDates { it.copy(examDate = date) }
-    fun setLevel(level: CurrentLevel) = edit { it.copy(level = level) }
+    fun setLevel(level: CurrentLevel) = edit(CreationStep.LEVEL) { it.copy(level = level) }
 
-    fun answer(questionId: Int, choiceKey: String) = edit { state ->
+    fun answer(questionId: Int, choiceKey: String) = edit(CreationStep.QUESTIONS, _form.value.questions.indexOfFirst { it.id == questionId }) { state ->
         if (state.questions.none { it.id == questionId }) state
         else state.copy(answers = state.answers + (questionId to choiceKey))
     }
@@ -399,6 +459,32 @@ class PlanFormViewModel(
     fun showAvailabilityWeek(monday: LocalDate): Boolean {
         if (monday !in _form.value.studyWeeks) return false
         _availabilityWeek.value = monday
+        reachCreationStep(CreationStep.AVAILABILITY)
+        return true
+    }
+
+    /**
+     * Records that the learner moved forward to [step]. The resume position only moves forward
+     * here; going back through earlier screens never calls this.
+     */
+    fun reachCreationStep(step: CreationStep) {
+        if (step.ordinal > _creationStep.value.ordinal) _creationStep.value = step
+    }
+
+    /**
+     * Shows question [index] of the loaded set. Moving forward also moves the resume position;
+     * going back to earlier questions only changes the shown one. Returns whether it changed.
+     */
+    fun showQuestion(index: Int): Boolean {
+        if (index !in _form.value.questions.indices) return false
+        _questionIndex.value = index
+        when {
+            _creationStep.value.ordinal < CreationStep.QUESTIONS.ordinal -> {
+                _creationStep.value = CreationStep.QUESTIONS
+                checkpointQuestion = index
+            }
+            _creationStep.value == CreationStep.QUESTIONS && index > checkpointQuestion -> checkpointQuestion = index
+        }
         return true
     }
 
@@ -413,7 +499,7 @@ class PlanFormViewModel(
 
     private fun editWeek(monday: LocalDate, days: (PlanFormState) -> Map<Weekday, DayAvailability>?): Boolean {
         if (generating || monday !in _form.value.studyWeeks) return false
-        edit { state ->
+        edit(CreationStep.AVAILABILITY) { state ->
             val replacement = days(state)
             state.copy(
                 availabilityOverrides = if (replacement == null) state.availabilityOverrides - monday
@@ -445,7 +531,7 @@ class PlanFormViewModel(
     fun acceptProfile() {
         val preview = _profile.value as? ProfileState.Preview ?: return
         if (generating) return
-        edit { state ->
+        edit(CreationStep.AVAILABILITY) { state ->
             state.copy(
                 availability = preview.availability.base.toEditorDays(),
                 availabilityOverrides = preview.availability.overrides.mapValues { it.value.toEditorDays() },
@@ -533,7 +619,7 @@ class PlanFormViewModel(
     }
 
     private fun acceptBusySchedules(snapshot: CalendarBusySnapshot) {
-        edit { it.copy(busySchedules = snapshot.schedules) }
+        edit(CreationStep.AVAILABILITY) { it.copy(busySchedules = snapshot.schedules) }
         _calendarRead.value = if (snapshot.schedules.isEmpty()) {
             CalendarReadState.Empty
         } else {
@@ -546,7 +632,7 @@ class PlanFormViewModel(
     }
 
     private fun clearBusySchedules() {
-        edit { if (it.busySchedules.isEmpty()) it else it.copy(busySchedules = emptyList()) }
+        edit(CreationStep.AVAILABILITY) { if (it.busySchedules.isEmpty()) it else it.copy(busySchedules = emptyList()) }
     }
 
     /**
@@ -563,6 +649,9 @@ class PlanFormViewModel(
                 is QuestionOutcome.Loaded -> {
                     _form.update { it.copy(questions = outcome.questions, answers = emptyMap()) }
                     _questionLoad.value = QuestionLoadState.Loaded
+                    _questionIndex.value = 0
+                    checkpointQuestion = 0
+                    reachCreationStep(CreationStep.QUESTIONS)
                 }
                 is QuestionOutcome.Failure -> _questionLoad.value = QuestionLoadState.Failure(outcome.error)
             }
@@ -588,6 +677,8 @@ class PlanFormViewModel(
 
     private fun send(request: StudyPlanRequest) {
         lastRequest = request
+        // A failure, shortfall or unsaved result is corrected on the availability screen.
+        reachCreationStep(CreationStep.AVAILABILITY)
         _generation.value = GenerationState.Loading
         viewModelScope.launch {
             when (val outcome = planningRepository.generate(request)) {
@@ -598,7 +689,9 @@ class PlanFormViewModel(
                     _plans.update { it + plan }
                     _generatedPlan.value = plan.ordinal
                     _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
-                    commit(_plans.value)
+                    // The finished creation's saved draft goes in the same save as its plan; until
+                    // that save succeeds the earlier draft stays stored.
+                    completeCreation(PlanSnapshot(_plans.value, creationDraft = null))
                 }
                 is PlanOutcome.DemoShortfall -> _generation.value = GenerationState.DemoShortfall(outcome.required, outcome.available)
                 is PlanOutcome.Failure -> _generation.value = GenerationState.Failure(outcome.error)
@@ -999,17 +1092,154 @@ class PlanFormViewModel(
         viewModelScope.launch { restore() }
     }
 
-    /** Saves the shown collection again after a failed save; never repeats a request. */
+    /**
+     * Saves the shown collection again after a failed save; never repeats a request. After a failed
+     * draft save or discard it writes that same snapshot again and continues it once.
+     */
     fun retrySave() {
         if (_storage.value != PlanStorage.SaveFailure) return
+        pendingDraftWrite?.let { snapshot ->
+            val decision = _draftDecision.value?.takeIf { it.phase == DraftPhase.Failed } ?: return
+            writeDraft(snapshot, decision)
+            return
+        }
         _storage.value = PlanStorage.Saving
         _checkIn.update { if (it?.save == CheckInSave.Unsaved) it.copy(save = CheckInSave.Saving) else it }
         updateMoveSave(from = MoveSave.Unsaved, to = MoveSave.Saving)
         viewModelScope.launch {
-            val saved = commit(_plans.value)
+            val saved = pendingCompletion?.let { completeCreation(it) } ?: commit(_plans.value)
             finishCheckInSave(saved)
             finishMoveSave(saved)
         }
+    }
+
+    /**
+     * Whether leaving creation for home needs the save, discard or stay decision: any input beyond
+     * a fresh creation's defaults does. Untouched defaults leave directly.
+     */
+    fun creationExitNeedsDecision(): Boolean = _form.value.hasInputBeyondDefaults(today)
+
+    /**
+     * Saves the current inputs and resume position as this device's only creation draft, then
+     * leaves for home once it is saved. Saving what is already saved writes nothing. Refused while
+     * anything that changes the inputs or the stored collection runs. Returns whether it started.
+     */
+    fun saveDraftAndExit(): Boolean {
+        if (!canDecideDraft()) return false
+        val draft = CreationDraft(_form.value, _creationStep.value, checkpointQuestion, _availabilityWeek.value)
+        if (!draft.isValid) return false
+        val decision = DraftDecision(DraftChoice.Save, DraftContinuation.Home, DraftPhase.Writing)
+        if (draft == _committedDraft.value) {
+            _draftDecision.value = decision.copy(phase = DraftPhase.Done)
+            return true
+        }
+        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = draft), decision)
+        return true
+    }
+
+    /**
+     * Removes the saved draft and, once that is saved, resets the inputs, questions, shown
+     * question and week to a fresh creation; saved plans and their reports stay. Then continues
+     * to [continuation]. With no saved draft nothing is written. Returns whether it started.
+     */
+    fun discardDraft(continuation: DraftContinuation = DraftContinuation.Home): Boolean {
+        if (!canDecideDraft()) return false
+        val decision = DraftDecision(DraftChoice.Discard, continuation, DraftPhase.Writing)
+        if (_committedDraft.value == null) {
+            resetCreation()
+            _draftDecision.value = decision.copy(phase = DraftPhase.Done)
+            return true
+        }
+        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = null), decision)
+        return true
+    }
+
+    /**
+     * Keeps creation open with its inputs. After a failed draft write this drops that write; the
+     * stored collection is unchanged, so plan changes may continue. Refused while writing.
+     */
+    fun stayInCreation(): Boolean {
+        val decision = _draftDecision.value ?: return true
+        if (decision.phase != DraftPhase.Failed) return false
+        pendingDraftWrite = null
+        _draftDecision.value = null
+        _storage.value = PlanStorage.Ready
+        return true
+    }
+
+    /** Reports that navigation followed a saved draft decision, so it is not followed again. */
+    fun draftDecisionHandled() {
+        if (_draftDecision.value?.phase == DraftPhase.Done) _draftDecision.value = null
+    }
+
+    /**
+     * Reopens the saved draft as the current inputs, at its screen, question and week (or the first
+     * study week when that week no longer is one). Nothing is sent and the loaded questions are kept.
+     * Returns the screen to open, or null when there is nothing to resume or something still runs.
+     */
+    fun resumeDraft(): CreationStep? {
+        val draft = _committedDraft.value ?: return null
+        if (!canDecideDraft()) return null
+        _form.value = draft.form
+        _questionLoad.value = if (draft.form.questions.isEmpty()) QuestionLoadState.Idle else QuestionLoadState.Loaded
+        _creationStep.value = draft.step
+        checkpointQuestion = draft.questionIndex
+        _questionIndex.value = draft.questionIndex
+        // No saved week still means the first; a week that is no longer selectable falls back to it.
+        _availabilityWeek.value = draft.availabilityWeek?.let { draft.shownWeek }
+        clearCreationResults()
+        // Busy rows were imported with consent before saving; their per-kind counts were not kept.
+        _calendarRead.value = if (draft.form.busySchedules.isEmpty()) {
+            CalendarReadState.Idle
+        } else {
+            CalendarReadState.Loaded(draft.form.busySchedules.size, 0, 0)
+        }
+        return draft.step
+    }
+
+    /**
+     * A draft decision or resume waits for the stored collection, any generation, adjustment,
+     * reload, question load, calendar read or profile request, and any other draft decision.
+     */
+    private fun canDecideDraft(): Boolean =
+        storageReady && !generating && !adjusting && !reloading && !readingCalendar && !profileBusy &&
+            _questionLoad.value != QuestionLoadState.Loading && _draftDecision.value == null
+
+    private fun writeDraft(snapshot: PlanSnapshot, decision: DraftDecision) {
+        pendingDraftWrite = snapshot
+        _draftDecision.value = decision.copy(phase = DraftPhase.Writing)
+        // Held from now on, so a second tap or any plan change waits for this write.
+        _storage.value = PlanStorage.Saving
+        viewModelScope.launch {
+            if (!write(snapshot)) {
+                _draftDecision.value = decision.copy(phase = DraftPhase.Failed)
+                return@launch
+            }
+            pendingDraftWrite = null
+            if (decision.choice == DraftChoice.Discard) resetCreation()
+            _draftDecision.value = decision.copy(phase = DraftPhase.Done)
+        }
+    }
+
+    /** Fresh creation inputs; saved plans, their reports and the stored draft are untouched. */
+    private fun resetCreation() {
+        _form.value = PlanFormState(preparationStart = today)
+        _questionLoad.value = QuestionLoadState.Idle
+        _creationStep.value = CreationStep.CERTIFICATION
+        checkpointQuestion = 0
+        _questionIndex.value = 0
+        _availabilityWeek.value = null
+        clearCreationResults()
+        _calendarRead.value = CalendarReadState.Idle
+    }
+
+    /** Drops results and notices that describe earlier inputs; never a stored plan. */
+    private fun clearCreationResults() {
+        _generation.value = GenerationState.Idle
+        _generatedPlan.value = null
+        lastRequest = null
+        calendarReadId += 1
+        _profile.value = ProfileState.Idle
     }
 
     /** The target row as sent and as accepted; null only if a validated response lacked it. */
@@ -1037,6 +1267,7 @@ class PlanFormViewModel(
                 _plans.value = result.snapshot.plans
                 _savedPlans.value = result.snapshot.plans
                 nextOrdinal = result.snapshot.nextOrdinal
+                _committedDraft.value = result.snapshot.creationDraft
                 _storage.value = PlanStorage.Ready
             }
             is PlanStoreLoad.Failed -> _storage.value = PlanStorage.LoadFailure
@@ -1044,13 +1275,29 @@ class PlanFormViewModel(
     }
 
     /**
-     * Saves [plans] as the whole collection; [inFlightAdjustment] marks a live request about to be
-     * sent. Callers hold the operation locks, so saves never overlap. Returns whether it was saved.
+     * Saves [plans] as the whole collection with the saved draft unchanged; [inFlightAdjustment]
+     * marks a live request about to be sent. Callers hold the operation locks, so saves never
+     * overlap. Returns whether it was saved.
      */
-    private suspend fun commit(plans: List<SessionPlan>, inFlightAdjustment: Int? = null): Boolean {
+    private suspend fun commit(plans: List<SessionPlan>, inFlightAdjustment: Int? = null): Boolean =
+        write(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value))
+
+    /** Saves a new plan together with removing the saved draft; a failure keeps [snapshot] for [retrySave]. */
+    private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean {
+        pendingCompletion = snapshot
+        val saved = write(snapshot)
+        if (saved) pendingCompletion = null
+        return saved
+    }
+
+    /** Saves [snapshot] as the whole stored collection; what is known as saved follows only a success. */
+    private suspend fun write(snapshot: PlanSnapshot): Boolean {
         _storage.value = PlanStorage.Saving
-        val saved = planStore.save(PlanSnapshot(plans, inFlightAdjustment))
-        if (saved) _savedPlans.value = plans
+        val saved = planStore.save(snapshot)
+        if (saved) {
+            _savedPlans.value = snapshot.plans
+            _committedDraft.value = snapshot.creationDraft
+        }
         _storage.value = if (saved) PlanStorage.Ready else PlanStorage.SaveFailure
         return saved
     }
@@ -1063,12 +1310,17 @@ class PlanFormViewModel(
         else -> PlanRecovery.Ready
     }
 
-    /** Form edits are ignored during generation and clear any earlier result, never the stored plans. */
-    private fun edit(transform: (PlanFormState) -> PlanFormState) {
+    /**
+     * Form edits are ignored during generation and clear any earlier result, never the stored plans.
+     * A change made on [step] moves the resume position there ([question] for an answer).
+     */
+    private fun edit(step: CreationStep, question: Int = checkpointQuestion, transform: (PlanFormState) -> PlanFormState) {
         if (generating) return
         val before = _form.value
         _form.update(transform)
         if (_form.value != before) {
+            _creationStep.value = step
+            if (step == CreationStep.QUESTIONS) checkpointQuestion = question
             // A saved notice describes the earlier draft.
             if (_profile.value == ProfileState.Saved) _profile.value = ProfileState.Idle
             _generation.value = GenerationState.Idle
@@ -1081,13 +1333,13 @@ class PlanFormViewModel(
         val before = _form.value
         val changed = transform(before)
         if (changed == before) return
-        edit { changed.copy(busySchedules = emptyList()) }
+        edit(CreationStep.DATES) { changed.copy(busySchedules = emptyList()) }
         if (_form.value == before) return
         calendarReadId += 1
         _calendarRead.value = CalendarReadState.Idle
     }
 
-    private fun editDay(day: Weekday, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) = edit { state ->
+    private fun editDay(day: Weekday, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) = edit(CreationStep.AVAILABILITY) { state ->
         if (week == null) {
             val current = state.availability[day] ?: DayAvailability()
             state.copy(availability = state.availability + (day to transform(current)))

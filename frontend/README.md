@@ -3,7 +3,8 @@
 Android app for the License Planner MVP (Kotlin, Jetpack Compose, single `:app`
 module, minSdk 26, target SDK 36).
 
-**Flow:** home (계획 생성 / 계획 조정). Creation: select 컴퓨터활용능력 2급 →
+**Flow:** home (계획 생성 / 계획 조정). An explicitly saved draft adds 이어서 만들기.
+Creation: select 컴퓨터활용능력 2급 →
 enter preparation start and exam dates → choose current level and answer example
 questions → set weekday study windows (and optional per-week changes; see
 [Study availability](#study-availability)) → generate a plan → browse it by week and
@@ -89,7 +90,13 @@ changed; CI starts from a fresh checkout, so its tests always run.
 
 `app/src/androidTestDemo/.../ui/MainFlowUiTest.kt` mounts the real navigation,
 screens and ViewModel in a standard Compose test activity, using production demo
-repositories and the AtomicFile store in a fresh test-owned directory. Six cases cover:
+repositories and the AtomicFile store in a fresh test-owned directory. Sixteen cases cover:
+
+- Home-bound save/discard/stay for visible and system Back; untouched defaults,
+  delayed/failed saves and local retry, failed discard and explicit replacement.
+- Same-question resume without refetching, an earlier edit moving the checkpoint,
+  a replaced availability week with hidden windows and busy rows, and atomic
+  plan completion removing the draft. Fresh injected state is not process death.
 
 - Creation through all 18 loaded questions, unknown-answer scores, authored-example
   disclosure, weekday minutes entry, written/demo plan rows, week bounds and home count.
@@ -99,12 +106,28 @@ repositories and the AtomicFile store in a fresh test-owned directory. Six cases
   forward navigation and the activity's system Back dispatcher.
 - Generating, restoring from saved bytes with fresh navigation/ViewModel/store,
   selecting and automatically adjusting a row, and reopening the saved new time.
-  Saved-row comparisons confirm only the target times changed; restoration does not
-  replay adjustment or retain a transient success marker.
+  Saved-row comparisons confirm only the target times changed; the result card shows
+  the topic and the sent and saved rows' full times with 이 기기에 저장했어요;
+  restoration does not replay adjustment or retain the card or success marker.
 - Showing the outside-window question without manual scrolling, resubmitting the
-  retained time for fresh validation and applying only an explicitly confirmed move.
+  retained time for fresh validation and applying only an explicitly confirmed move,
+  with the chosen time in the result card.
 - Showing usable overnight carry-in during the first empty preparation week and
   a later replaced week.
+- Reporting a generated plan's session from a later week: no preselected status, a
+  status-required error, done suggesting the scheduled minutes then edited, partly
+  with overtime after a rejected nonnumeric entry, cancel keeping the saved report,
+  return to the same week, and no planning or adjustment request.
+- Reporting a reopened saved plan's session as missed (minutes disabled, zero saved)
+  without changing the session selected for adjustment, then reopening it.
+- A report save refused by the test-owned store: the edit stays shown as unsaved
+  with the earlier report kept on disk, a local 다시 저장하기 saves it once without a
+  request, and the report follows its session through an adjustment and reopening.
+- An adjustment whose save the test-owned store holds and then refuses: the result
+  card stays with 기기에 저장하는 중이에요 (no saved wording or retry yet), then
+  아직 이 기기에 저장하지 못했어요 with the single storage-alert 다시 저장하기 and the
+  old rows on disk, then 이 기기에 저장했어요 after a local retry with one adjustment
+  and no further request.
 
 No backend, model, calendar permissions, account or events are needed. Fixed input
 dates, manual-move clock and host locale/timezone make the cases repeatable. Each test removes only
@@ -367,13 +390,62 @@ trailing slash ignored) keep separate lists, so switching backends never shows
 another server's plans, and switching back restores the earlier list.
 Uninstalling or clearing app data removes the list; plans lost that way, or
 created before this storage existed, cannot be recovered from the server,
-whose list lacks the original creation inputs. Form drafts, navigation and the
-moved-session tag are not saved.
+whose list lacks the original creation inputs. Form input that was not
+explicitly saved as a draft, navigation and the moved-session tag are not saved.
 
-**Snapshot versions.** Saving writes version 3, with study-session reports keyed
-by study-row ID within each plan. Versions 1 and 2 load without reports and are
-not rewritten until the next save. Downgrading requires a compatible backup.
-Reports for rows no longer shown are retained without being assigned to another row.
+**Snapshot versions.** Saving writes snapshot version 4. Each entry keeps that
+plan's study-session reports (status and actual minutes) by study-row ID;
+identical IDs in two plans never share a report, and a report whose row is no
+longer in the plan is kept but not shown as a current session's. Next to the
+entries, version 4 has an optional slot for one unfinished plan creation: the
+entered inputs (incomplete or not yet valid ones included), the loaded example
+questions with their answers, the input screen to reopen, the question position
+and the selected availability week. Keeping it in the same file lets a generated
+plan and the removal of its draft be saved in one atomic replacement. A stored
+draft is checked only for values the input screens could hold; a missing exam
+date, dates in the wrong order or no study day stay editable input, while a
+damaged or unknown draft value makes the whole file fail to load like any other
+corruption.
+
+**Creation draft position and scope.** The resume position is the furthest
+input screen reached, or the screen of the latest actual edit: changing a level,
+date or answer after reaching availability moves it back to that screen (and
+question), while merely going back through earlier screens or questions to leave
+does not. A generation failure or demo shortfall counts as availability, and the
+selected availability week is kept with it. Only an explicit save is kept: there
+is no autosave, edits after the last save are lost if the process ends, and a
+save, discard or retry finishes writing before creation is left or reset. A
+failed write keeps the earlier saved file and the current inputs; 다시 시도
+writes the same draft again without any request, and staying drops that write.
+Resuming restores the saved inputs, loaded questions and answers without
+fetching them again, keeps dates that have since passed for correction, and opens
+the first study week if the saved week is no longer one. Imported calendar busy
+rows are restored as the saved snapshot and are not read again.
+Draft device acceptance uses the demo flavor on a disposable API 35 emulator,
+including normal-launcher force-stop checks for quiz and replaced-week drafts.
+Installed write failure/interruption remains unverified; those paths use controlled
+JVM and injected-host stores. Live provider, production, physical-device and calendar
+behavior are not established by these checks.
+Home offers 이어서 만들기 only when an explicitly saved draft exists; it does not
+count as a saved plan. 계획 생성 (also 새 계획 만들기 from saved plans) asks whether
+to resume, discard the saved inputs and start fresh, or cancel. Only Back from
+certification to Home asks 임시 저장하고 나가기 / 입력 버리고 나가기 / 계속 작성하기;
+ordinary step/question Back is unchanged. Visible and system Back agree, and
+Back on the decision means stay. Saving/discarding holds navigation until the
+local write succeeds; failure offers 다시 저장하기 or stay with the prior bytes intact.
+
+A successful generated plan and clearing its consumed draft are committed together.
+Generation failure or demo shortfall leaves the last saved draft available. If the
+outcome write fails, the result stays unsaved in memory and local retry writes the
+same plan plus draft removal without another generation. Ending the process before
+that succeeds restores the earlier saved draft, not the unsaved result or request.
+
+Version 1, 2 and 3 lists saved by earlier builds still load (versions 1 and 2
+as plans without reports), always without a draft, and the file is not
+rewritten until the next save of the list, which writes version 4. An older
+build cannot read a newer version and shows the load failure above without
+changing the file, so downgrading after a version 4 save needs a compatible
+backup of the earlier file; nothing is converted back automatically.
 
 At start the app reads the saved list before anything can change it. While it
 reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or

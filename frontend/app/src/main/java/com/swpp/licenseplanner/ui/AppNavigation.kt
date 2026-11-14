@@ -1,17 +1,22 @@
 package com.swpp.licenseplanner.ui
 
-import com.swpp.licenseplanner.ui.screens.CheckInRows
-import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,9 +26,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.swpp.licenseplanner.data.CalendarAccess
 import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
+import com.swpp.licenseplanner.ui.components.CreationExitDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityActions
+import com.swpp.licenseplanner.ui.screens.CheckInRows
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
@@ -38,6 +46,7 @@ import com.swpp.licenseplanner.ui.screens.ProfileActions
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
+import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
 
 /** One route per step, plus home, plan list and adjustment. */
 private object Routes {
@@ -69,6 +78,13 @@ private fun NavHostController.showResult(route: String) = navigate(route) {
 private fun NavHostController.fromHome(route: String) = navigate(route) {
     popUpTo(Routes.HOME)
     launchSingleTop = true
+}
+
+/** Rebuild only ordinary input destinations; requests and result routes never resume. */
+private fun NavHostController.resumeCreation(step: CreationStep) {
+    fromHome(Routes.CERTIFICATION)
+    val routes = listOf(Routes.CERTIFICATION, Routes.DATES, Routes.LEVEL, Routes.QUESTIONS, Routes.RESULTS, Routes.AVAILABILITY)
+    for (route in routes.drop(1).take(step.ordinal)) go(route)
 }
 
 private fun openAppSettings(context: Context) {
@@ -115,6 +131,69 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
     val exportBlocks by viewModel.exportBlocks.collectAsStateWithLifecycle()
+    val committedDraft by viewModel.committedDraft.collectAsStateWithLifecycle()
+    val draftDecision by viewModel.draftDecision.collectAsStateWithLifecycle()
+    // A draft write leaves the plan collection unchanged and owns its feedback in the dialog.
+    val planStorage = if (draftDecision == null) storage else PlanStorage.Ready
+    val questionIndex by viewModel.questionIndex.collectAsStateWithLifecycle()
+    var draftPrompt by rememberSaveable { mutableStateOf<String?>(null) }
+    var draftWaiting by rememberSaveable { mutableStateOf(false) }
+    var creationWaiting by rememberSaveable { mutableStateOf(false) }
+
+    fun resumeDraft() {
+        val step = viewModel.resumeDraft()
+        if (step == null) draftWaiting = true
+        else {
+            draftPrompt = null
+            draftWaiting = false
+            nav.resumeCreation(step)
+        }
+    }
+    fun createPlan() {
+        draftWaiting = false
+        if (committedDraft != null) draftPrompt = "new"
+        else if (!viewModel.discardDraft(DraftContinuation.NewCreation)) creationWaiting = true
+    }
+    fun leaveCreation() {
+        if (viewModel.creationExitNeedsDecision()) {
+            draftWaiting = false
+            draftPrompt = "exit"
+        } else nav.popBackStack()
+    }
+    LaunchedEffect(draftDecision) {
+        val decision = draftDecision ?: return@LaunchedEffect
+        if (decision.phase != DraftPhase.Done) return@LaunchedEffect
+        draftPrompt = null
+        draftWaiting = false
+        if (decision.continuation == DraftContinuation.NewCreation) nav.fromHome(Routes.CERTIFICATION)
+        else nav.popBackStack(Routes.HOME, inclusive = false)
+        viewModel.draftDecisionHandled()
+    }
+    if (draftPrompt != null || draftDecision != null) {
+        val startingNew = draftPrompt == "new" || draftDecision?.continuation == DraftContinuation.NewCreation
+        CreationExitDialog(
+            startingNew = startingNew,
+            decision = draftDecision,
+            waiting = draftWaiting,
+            onSave = { draftWaiting = !viewModel.saveDraftAndExit() },
+            onDiscard = { draftWaiting = !viewModel.discardDraft(if (startingNew) DraftContinuation.NewCreation else DraftContinuation.Home) },
+            onResume = ::resumeDraft,
+            onRetry = viewModel::retrySave,
+            onStay = {
+                if (viewModel.stayInCreation()) {
+                    draftPrompt = null
+                    draftWaiting = false
+                }
+            },
+        )
+    }
+    if (creationWaiting) {
+        AlertDialog(
+            onDismissRequest = { creationWaiting = false },
+            text = { Text("진행 중인 작업이 끝나거나 권한 창을 닫은 뒤 다시 선택해 주세요.") },
+            confirmButton = { TextButton(onClick = { creationWaiting = false }) { Text("확인") } },
+        )
+    }
 
     val context = LocalContext.current
     // The answer arrives here also after rotation; access is read again rather than taken from the result.
@@ -155,8 +234,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             HomeScreen(
                 plans = plans,
                 savedPlans = savedPlans,
-                storage = storage,
-                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                storage = planStorage,
+                hasDraft = committedDraft != null,
+                onResume = ::resumeDraft,
+                onCreate = ::createPlan,
                 onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
@@ -168,9 +249,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             PlanListScreen(
                 plans = plans,
                 savedPlans = savedPlans,
-                storage = storage,
+                storage = planStorage,
                 onOpen = { ordinal -> if (viewModel.selectPlan(ordinal)) nav.go(Routes.ADJUST) },
-                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                onCreate = ::createPlan,
                 onBack = { nav.popBackStack() },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
@@ -187,13 +268,13 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 PlanAdjustmentScreen(
                     plan = plan,
                     selection = selection,
-                    storage = storage,
+                    storage = planStorage,
                     onSelect = viewModel::selectFailedSession,
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
                     onBack = { nav.popBackStack() },
-                    onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                    onCreate = ::createPlan,
                     onRetrySave = viewModel::retrySave,
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
@@ -210,7 +291,11 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
         // The top-bar back, like system back, returns home from the first input step.
         composable(Routes.CERTIFICATION) {
-            CertificationScreen(form, viewModel::selectCertification, onBack = { nav.popBackStack() }) { nav.go(Routes.DATES) }
+            BackHandler(onBack = ::leaveCreation)
+            CertificationScreen(form, viewModel::selectCertification, onBack = ::leaveCreation) {
+                viewModel.reachCreationStep(CreationStep.DATES)
+                nav.go(Routes.DATES)
+            }
         }
         composable(Routes.DATES) {
             DatesScreen(
@@ -218,24 +303,33 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onStartChange = viewModel::setPreparationStart,
                 onExamChange = viewModel::setExamDate,
                 onBack = { nav.popBackStack() },
-                onContinue = { nav.go(Routes.LEVEL) },
+                onContinue = { viewModel.reachCreationStep(CreationStep.LEVEL); nav.go(Routes.LEVEL) },
             )
         }
         composable(Routes.LEVEL) {
-            LevelScreen(form, viewModel::setLevel, onBack = { nav.popBackStack() }) { nav.go(Routes.QUESTIONS) }
+            LevelScreen(form, viewModel::setLevel, onBack = { nav.popBackStack() }) {
+                viewModel.showQuestion(0)
+                viewModel.reachCreationStep(CreationStep.QUESTIONS)
+                nav.go(Routes.QUESTIONS)
+            }
         }
         composable(Routes.QUESTIONS) {
             QuestionsScreen(
                 form = form,
                 loadState = questionLoad,
+                index = questionIndex,
+                onShowQuestion = { viewModel.showQuestion(it) },
                 onLoad = viewModel::loadQuestions,
                 onAnswer = viewModel::answer,
                 onExit = { nav.popBackStack(Routes.LEVEL, inclusive = false) },
-                onFinished = { nav.go(Routes.RESULTS) },
+                onFinished = { viewModel.reachCreationStep(CreationStep.RESULTS); nav.go(Routes.RESULTS) },
             )
         }
         composable(Routes.RESULTS) {
-            ResultsScreen(form, onBack = { nav.popBackStack() }) { nav.go(Routes.AVAILABILITY) }
+            ResultsScreen(form, onBack = { nav.popBackStack() }) {
+                viewModel.reachCreationStep(CreationStep.AVAILABILITY)
+                nav.go(Routes.AVAILABILITY)
+            }
         }
         composable(Routes.AVAILABILITY) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()

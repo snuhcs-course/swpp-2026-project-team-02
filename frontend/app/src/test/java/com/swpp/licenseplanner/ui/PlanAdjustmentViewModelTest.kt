@@ -1384,6 +1384,55 @@ class PlanAdjustmentViewModelTest {
         assertEquals(3, adjustment.inputs.size)
     }
 
+    @Test fun chosenAutomaticAndFailedMovesKeepTheSavedDraftAndBothPlansReports() = runTest(dispatcher) {
+        val movedB = rowsB.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/21/18/00", endDate = "2026/10/21/19/00") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+            AdjustmentOutcome.Failure(ApiError.PlanConflict),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedB, "csv-b2", null, null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        report(vm, 1, "study-1", StudyCheckInStatus.Partly, "45")
+        report(vm, 2, "study-1", StudyCheckInStatus.Done, "20")
+        vm.setLevel(CurrentLevel.BEGINNER)
+        assertTrue(vm.saveDraftAndExit())
+        advanceUntilIdle()
+        vm.draftDecisionHandled()
+        val draft = vm.committedDraft.value!!
+        val reportA = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 45))
+        val reportB = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20))
+
+        fun assertSavedWithDraft() {
+            assertEquals(draft, vm.committedDraft.value)
+            assertEquals(vm.plans.value, vm.savedPlans.value)
+            assertEquals(reportA, vm.plan(1).checkIns)
+            assertEquals(reportB, vm.plan(2).checkIns)
+        }
+
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        assertTrue(vm.submitManualMove())
+        advanceUntilIdle()
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertSavedWithDraft()
+
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired to "study-2", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+        assertSavedWithDraft()
+
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(movedB, vm.plan(2).current.schedules)
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertSavedWithDraft()
+        assertEquals(3, adjustment.inputs.size)
+    }
+
     // --- Move feedback ---
 
     @Test fun moveFeedbackComesFromTheSentAndAcceptedRowsOfItsOwnPlan() = runTest(dispatcher) {

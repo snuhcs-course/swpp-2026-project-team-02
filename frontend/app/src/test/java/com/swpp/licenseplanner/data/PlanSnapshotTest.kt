@@ -233,7 +233,7 @@ class PlanSnapshotTest {
         for ((case, corrupted) in malformed) {
             assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Malformed), decode(corrupted))
         }
-        for (version in listOf(0, 4)) {
+        for (version in listOf(0, 5)) {
             assertEquals("version $version", PlanStoreLoad.Failed(PlanLoadFailure.Unsupported), decode(edit(text) { it.with("version", JsonPrimitive(version)) }))
         }
     }
@@ -252,7 +252,7 @@ class PlanSnapshotTest {
             Triple("unreadable", text.encodeToByteArray(), PlanLoadFailure.Unreadable),
             Triple("malformed", "{\"version\":1,".encodeToByteArray(), PlanLoadFailure.Malformed),
             Triple("invalid utf-8", byteArrayOf(0x7b, 0xff.toByte(), 0x7d), PlanLoadFailure.Malformed),
-            Triple("future version", edit(text) { it.with("version", JsonPrimitive(4)) }.encodeToByteArray(), PlanLoadFailure.Unsupported),
+            Triple("future version", edit(text) { it.with("version", JsonPrimitive(5)) }.encodeToByteArray(), PlanLoadFailure.Unsupported),
             Triple("other scope", encoded(scope = PlanStorageScope.of(false, "http://other/api/v1")).encodeToByteArray(), PlanLoadFailure.Invalid),
         )
         for ((case, saved, reason) in cases) {
@@ -290,8 +290,13 @@ class PlanSnapshotTest {
 
     // --- Version 1 compatibility and retained availability context ---
 
+    /** The same collection as an earlier build wrote it: version 3, without a creation draft. */
+    private fun versionThree(text: String = encoded()): String = edit(text) { root ->
+        JsonObject(root - "creation_draft").with("version", JsonPrimitive(3))
+    }
+
     /** The same collection as an earlier build wrote it: version 2, without study reports. */
-    private fun versionTwo(text: String = encoded()): String = edit(text) { root ->
+    private fun versionTwo(text: String = encoded()): String = edit(versionThree(text)) { root ->
         val entries = root.getValue("entries").jsonArray.map { JsonObject(it.jsonObject - "check_ins") }
         root.with("version", JsonPrimitive(2)).with("entries", JsonArray(entries))
     }
@@ -330,7 +335,7 @@ class PlanSnapshotTest {
         "d.csv",
     )
 
-    @Test fun versionOneCollectionLoadsWithoutRewriteAndTheNextSaveIsVersionThree() = runTest {
+    @Test fun versionOneCollectionLoadsWithoutRewriteAndTheNextSaveIsVersionFour() = runTest {
         val legacy = versionOne().encodeToByteArray()
         val bytes = MemoryPlanBytes(legacy.copyOf())
         val first = store(bytes)
@@ -341,11 +346,11 @@ class PlanSnapshotTest {
         val updated = PlanSnapshot(live.plans + contextPlan)
         assertTrue(first.save(updated))
         val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(3), saved["version"])
+        assertEquals(JsonPrimitive(4), saved["version"])
         assertEquals(PlanStoreLoad.Loaded(updated), store(bytes).load())
     }
 
-    @Test fun versionTwoCollectionLoadsUnreportedWithoutRewriteAndTheNextSaveIsVersionThree() = runTest {
+    @Test fun versionTwoCollectionLoadsUnreportedWithoutRewriteAndTheNextSaveIsVersionFour() = runTest {
         val legacy = versionTwo(encoded(PlanSnapshot(live.plans + contextPlan))).encodeToByteArray()
         val bytes = MemoryPlanBytes(legacy.copyOf())
         val first = store(bytes)
@@ -362,8 +367,30 @@ class PlanSnapshotTest {
         })
         assertTrue(first.save(reported))
         val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(3), saved["version"])
+        assertEquals(JsonPrimitive(4), saved["version"])
         assertEquals(PlanStoreLoad.Loaded(reported), store(bytes).load())
+    }
+
+    @Test fun versionThreeCollectionLoadsWithReportsAndNoDraftWithoutRewriteAndTheNextSaveIsVersionFour() = runTest {
+        val reportedPlans = PlanSnapshot(live.plans.map { plan ->
+            if (plan.ordinal == 2) plan.withCheckIn("study-1", StudyCheckIn(StudyCheckInStatus.Partly, 45))!! else plan
+        }, inFlightAdjustmentOrdinal = 2)
+        val legacy = versionThree(encoded(reportedPlans)).encodeToByteArray()
+        assertTrue(legacy.decodeToString().contains("\"version\":3"))
+        val bytes = MemoryPlanBytes(legacy.copyOf())
+        val first = store(bytes)
+        val loaded = (first.load() as PlanStoreLoad.Loaded).snapshot
+        assertNull(loaded.creationDraft)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), loaded.plans[1].checkInFor("study-1"))
+        assertEquals(PlanRecovery.ReloadRequired, loaded.plans[1].recovery)
+        assertEquals(0, bytes.writes)
+        assertArrayEquals(legacy, bytes.committed)
+
+        assertTrue(first.save(loaded))
+        val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
+        assertEquals(JsonPrimitive(4), saved["version"])
+        assertFalse("creation_draft" in saved)
+        assertEquals(PlanStoreLoad.Loaded(loaded), store(bytes).load())
     }
 
     @Test fun legacyVersionsCarryingReportsAreInvalid() {

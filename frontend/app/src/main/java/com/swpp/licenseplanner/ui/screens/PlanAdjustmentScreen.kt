@@ -175,7 +175,7 @@ fun PlanAdjustmentScreen(
             when (mode) {
                 AdjustmentMode.Missing -> {
                     PrimaryButton("목록으로", onBack)
-                    SecondaryButton("새 계획 만들기", onCreate)
+                    SecondaryButton("새 계획 만들기", onCreate, enabled = canSend)
                 }
                 AdjustmentMode.ReloadNeeded -> {
                     PrimaryButton("최신 계획 불러오기", onReload, enabled = canSend)
@@ -187,7 +187,7 @@ fun PlanAdjustmentScreen(
                     SecondaryButton("목록으로", onBack)
                 }
                 AdjustmentMode.NoIdentity -> {
-                    PrimaryButton("새 계획 만들기", onCreate)
+                    PrimaryButton("새 계획 만들기", onCreate, enabled = canSend)
                     exportAction()
                     SecondaryButton("목록으로", onBack)
                 }
@@ -203,7 +203,7 @@ fun PlanAdjustmentScreen(
                     manualAction()
                     exportAction()
                     SecondaryButton("목록으로", onBack)
-                    SecondaryButton("새 계획 만들기", onCreate)
+                    SecondaryButton("새 계획 만들기", onCreate, enabled = canSend)
                 } else {
                     PrimaryButton(
                         if (loading) "조정하는 중…" else "선택한 일정 조정하기",

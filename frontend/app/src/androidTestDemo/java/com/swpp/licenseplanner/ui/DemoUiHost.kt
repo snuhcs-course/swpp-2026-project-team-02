@@ -28,6 +28,7 @@ import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
+import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.UnavailableCalendarExport
 import com.swpp.licenseplanner.data.UnavailableCalendarRead
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
@@ -63,7 +64,11 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     private var owner: ViewModelStoreOwner? = null
     val adjustmentCalls = AtomicInteger()
     val planningCalls = AtomicInteger()
+    val questionCalls = AtomicInteger()
+    val reloadCalls = AtomicInteger()
     val saveCalls = AtomicInteger()
+    var storageScope = PlanStorageScope.DEMO
+    var reloadOutcome: ReloadOutcome? = null
     var returnedTopic: String? = null
     /** While set, every save is refused before any byte is written, as a failed device write. */
     val failSaves = AtomicBoolean(false)
@@ -103,6 +108,10 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
             override suspend fun adjust(input: AdjustmentInput) = adjustment.adjust(input).also {
                 adjustmentCalls.incrementAndGet()
             }
+            override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
+                reloadCalls.incrementAndGet()
+                return reloadOutcome ?: adjustment.reload(scheduleCsvFile)
+            }
         }
         val planning = FlavorRepositories.planningRepository()
         val countedPlanning = object : PlanningRepository {
@@ -117,7 +126,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 } else outcome
             }
         }
-        val store = AtomicFilePlanStore.open(storeContext, PlanStorageScope.DEMO)
+        val store = AtomicFilePlanStore.open(storeContext, storageScope)
         val failableStore = object : LocalPlanStore by store {
             override suspend fun save(snapshot: PlanSnapshot): Boolean {
                 saveCalls.incrementAndGet()
@@ -128,7 +137,11 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlanFormViewModel(
-                questionRepository = FlavorRepositories.questionRepository(),
+                questionRepository = object : com.swpp.licenseplanner.data.QuestionRepository {
+                    override suspend fun load(certificationId: String) = FlavorRepositories.questionRepository().load(certificationId).also {
+                        questionCalls.incrementAndGet()
+                    }
+                },
                 planningRepository = countedPlanning,
                 adjustmentRepository = countedAdjustment,
                 today = today,
@@ -161,9 +174,22 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
 
     /** A new store/codec read supplements on-screen assertions without priming app state. */
     fun snapshot(): PlanSnapshot = runBlocking {
-        val loaded = AtomicFilePlanStore.open(storeContext, PlanStorageScope.DEMO).load()
+        val loaded = AtomicFilePlanStore.open(storeContext, storageScope).load()
         check(loaded is PlanStoreLoad.Loaded) { "Test-owned snapshot could not be read: $loaded" }
         loaded.snapshot
+    }
+
+    fun seedDraft(draft: com.swpp.licenseplanner.domain.CreationDraft) = runBlocking {
+        val store = AtomicFilePlanStore.open(storeContext, storageScope)
+        val loaded = store.load() as PlanStoreLoad.Loaded
+        check(store.save(loaded.snapshot.copy(creationDraft = draft)))
+    }
+
+    fun seedSnapshot(snapshot: PlanSnapshot) = runBlocking {
+        val store = AtomicFilePlanStore.open(storeContext, storageScope)
+        check(store.load() is PlanStoreLoad.Loaded)
+        check(store.save(snapshot))
+        check((store.load() as PlanStoreLoad.Loaded).snapshot == snapshot)
     }
 
     fun capture(label: String) {

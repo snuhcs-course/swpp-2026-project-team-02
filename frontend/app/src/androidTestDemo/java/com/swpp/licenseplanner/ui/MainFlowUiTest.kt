@@ -11,9 +11,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.KeyEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.model.ScheduleRow
+import com.swpp.licenseplanner.data.ReloadOutcome
+import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.CreationStep
+import com.swpp.licenseplanner.domain.CreationDraft
+import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.Question
 import com.swpp.licenseplanner.domain.StudyCheckIn
@@ -38,6 +44,258 @@ import org.junit.runner.RunWith
 class MainFlowUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @get:Rule val testName = TestName()
+
+    @Test
+    fun newCreationWaitsForTheMissingPlanSaveAndItsLocalRetry() = withApp { host ->
+        generatePlan(host)
+        val saved = host.snapshot()
+        val plan = saved.plans.single()
+        val beforeReload = saved.copy(plans = listOf(plan.copy(
+            isDemo = false,
+            scheduleCsvFile = "owned-plan.csv",
+            recovery = PlanRecovery.ReloadRequired,
+            recoveryScheduleId = plan.current.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId,
+        )))
+        host.storageScope = PlanStorageScope.of(demo = false, apiBaseUrl = "http://test.invalid/api/v1")
+        host.seedSnapshot(beforeReload)
+        host.recreate()
+        openSavedPlan()
+        host.reloadOutcome = ReloadOutcome.Missing
+        host.failSaves.set(true)
+        val pending = CompletableDeferred<Unit>()
+        host.holdSaves.set(pending)
+        click("최신 계획 불러오기")
+        compose.waitUntil("The missing-plan result waits for its local save", 10_000) {
+            host.viewModel.storage.value == PlanStorage.Saving
+        }
+        compose.onNodeWithText("새 계획 만들기").assertIsNotEnabled().performClick()
+        assertEquals(beforeReload, host.snapshot())
+        val saves = host.saveCalls.get()
+        pending.complete(Unit)
+        waitForText("기기에 계획을 저장하지 못했어요")
+        compose.onNodeWithText("새 계획 만들기").assertIsNotEnabled().performClick()
+        show("이 계획은 더 이상 조정할 수 없어요")
+        assertEquals(beforeReload, host.snapshot())
+        assertEquals(saves, host.saveCalls.get())
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(0, host.adjustmentCalls.get())
+        assertEquals(1, host.reloadCalls.get())
+        host.capture("missing-plan-save-failed")
+
+        click("목록으로")
+        click("새 계획 만들기")
+        show("진행 중인 작업이 끝나거나 권한 창을 닫은 뒤 다시 선택해 주세요.")
+        host.capture("new-creation-waiting")
+        compose.onNodeWithText("임시 저장한 입력이 있어요.", substring = true).assertDoesNotExist()
+        assertEquals(beforeReload, host.snapshot())
+        assertEquals(saves, host.saveCalls.get())
+        click("확인")
+        click("계획 1 · $CERTIFICATION_NAME")
+        show("이 계획은 더 이상 조정할 수 없어요")
+
+        host.failSaves.set(false)
+        host.holdSaves.set(null)
+        click("다시 저장하기")
+        host.awaitSaved()
+        compose.onNodeWithText("새 계획 만들기").assertIsEnabled()
+        assertEquals(PlanRecovery.Missing, host.snapshot().plans.single().recovery)
+        assertEquals(saves + 1, host.saveCalls.get())
+        assertEquals(1, host.reloadCalls.get())
+        click("새 계획 만들기")
+        waitForText("어떤 시험을 준비하나요?")
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(0, host.adjustmentCalls.get())
+    }
+
+    @Test
+    fun creationExitOffersTheSameChoicesForBothBackActionsAndLeavesDefaultsDirectly() = withApp { host ->
+        click("계획 생성", substring = true)
+        clickDescription("뒤로")
+        show("무엇을 할까요?")
+        compose.onNodeWithText("이어서 만들기").assertDoesNotExist()
+        click("계획 생성", substring = true)
+        click(CERTIFICATION_NAME)
+        pressBack()
+        show("입력한 내용을 어떻게 할까요?")
+        click("계속 작성하기")
+        show("어떤 시험을 준비하나요?")
+        clickDescription("뒤로")
+        show("입력한 내용을 어떻게 할까요?")
+        pressBack()
+        show("어떤 시험을 준비하나요?")
+        assertTrue(host.snapshot().plans.isEmpty())
+        assertNull(host.snapshot().creationDraft)
+        clickDescription("뒤로")
+        click("입력 버리고 나가기")
+        show("무엇을 할까요?")
+        assertNull(host.viewModel.form.value.certificationId)
+        assertEquals(0, host.planningCalls.get())
+        assertEquals(0, host.questionCalls.get())
+    }
+
+    @Test
+    fun savedQuizResumesTheSameQuestionAfterAFailedWriteAndLocalRetry() = withApp { host ->
+        startQuestions(host)
+        click(UNKNOWN_LABEL)
+        click("다음")
+        click(UNKNOWN_LABEL)
+        click("다음")
+        click(UNKNOWN_LABEL)
+        val expected = host.viewModel.form.value
+        val question = expected.questions[2]
+        leaveQuizForCertification()
+        pressBack()
+        val gate = CompletableDeferred<Unit>()
+        host.failSaves.set(true)
+        host.holdSaves.set(gate)
+        click("임시 저장하고 나가기")
+        waitForText("기기에 저장하는 중이에요")
+        pressBack()
+        show("기기에 저장하는 중이에요")
+        assertNull(host.snapshot().creationDraft)
+        gate.complete(Unit)
+        waitForText("임시 저장하지 못했어요")
+        assertEquals(expected, host.viewModel.form.value)
+        assertNull(host.snapshot().creationDraft)
+        host.failSaves.set(false)
+        host.holdSaves.set(null)
+        click("다시 저장하기")
+        waitForText("무엇을 할까요?")
+        show("아직 만든 계획이 없어요.")
+        show("이어서 만들기")
+        val draft = host.snapshot().creationDraft!!
+        assertEquals(CreationStep.QUESTIONS, draft.step)
+        assertEquals(2, draft.questionIndex)
+        assertEquals(expected, draft.form)
+        host.capture("draft-home")
+        host.recreate()
+        click("계획 생성", substring = true)
+        show("새 계획을 만들까요?")
+        click("취소")
+        show("이어서 만들기")
+        click("이어서 만들기")
+        show(question.prompt)
+        show("${expected.questions.size}문항 중 3번째")
+        compose.onNodeWithText(UNKNOWN_LABEL).assertIsSelected()
+        assertEquals(expected, host.viewModel.form.value)
+        host.capture("draft-quiz-resumed")
+        pressBack()
+        show("${expected.questions.size}문항 중 2번째")
+        compose.onNodeWithText("입력한 내용을 어떻게 할까요?").assertDoesNotExist()
+        assertEquals(1, host.questionCalls.get())
+        assertEquals(0, host.planningCalls.get())
+        assertEquals(0, host.adjustmentCalls.get())
+        clickDescription("닫기")
+        val level = CurrentLevel.entries.first { it != expected.level }
+        click(level.label)
+        clickDescription("뒤로")
+        clickDescription("뒤로")
+        clickDescription("뒤로")
+        click("임시 저장하고 나가기")
+        waitForText("무엇을 할까요?")
+        click("이어서 만들기")
+        show("엑셀은 어느 정도 다뤄 봤나요?")
+        assertEquals(level, host.viewModel.form.value.level)
+        assertEquals(CreationStep.LEVEL, host.snapshot().creationDraft!!.step)
+        assertEquals(1, host.questionCalls.get())
+    }
+
+    @Test
+    fun replacingASavedDraftRequiresDiscardAndKeepsItWhenTheWriteFails() = withApp { host ->
+        click("계획 생성", substring = true)
+        click(CERTIFICATION_NAME)
+        clickDescription("뒤로")
+        click("임시 저장하고 나가기")
+        waitForText("무엇을 할까요?")
+        val saved = host.snapshot()
+        host.failSaves.set(true)
+        click("계획 생성", substring = true)
+        click("입력 버리고 새로 만들기")
+        waitForText("입력을 버리지 못했어요")
+        compose.onAllNodesWithText("다시 저장하기").assertCountEquals(1)
+        assertEquals(saved, host.snapshot())
+        host.capture("draft-discard-failed")
+        click("취소")
+        show("이어서 만들기")
+        host.failSaves.set(false)
+        click("계획 생성", substring = true)
+        click("입력 버리고 새로 만들기")
+        waitForText("어떤 시험을 준비하나요?")
+        assertNull(host.snapshot().creationDraft)
+        assertNull(host.viewModel.form.value.certificationId)
+        compose.onNodeWithText("다음").assertIsNotEnabled()
+        pressBack()
+        show("무엇을 할까요?")
+        compose.onNodeWithText("이어서 만들기").assertDoesNotExist()
+        assertEquals(0, host.planningCalls.get())
+    }
+
+    @Test
+    fun availabilityDraftResumesItsReplacedWeekAndDisappearsWhenThePlanIsSaved() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        val first = LocalDate.of(2026, 11, 16)
+        val replaced = first.plusWeeks(1)
+        compose.runOnIdle {
+            for (day in Weekday.entries.take(5)) host.viewModel.setDuration(day, 120)
+            host.viewModel.clearWeek(first)
+            host.viewModel.replaceWeek(replaced)
+            host.viewModel.setDayStart(Weekday.TUESDAY, LocalTime.of(19, 0), replaced)
+            host.viewModel.showAvailabilityWeek(replaced)
+        }
+        val form = host.viewModel.form.value
+        val monday = form.availability.getValue(Weekday.MONDAY)
+        host.seedDraft(CreationDraft(
+            form.copy(
+                availability = form.availability + (Weekday.MONDAY to monday.copy(extras = listOf(WindowSpec(LocalTime.of(6, 0), 30)))),
+                busySchedules = listOf(ScheduleRow("external-busy", "2026/11/16/08/00", "2026/11/16/09/00", "개인 일정")),
+            ),
+            CreationStep.AVAILABILITY,
+            host.viewModel.questionIndex.value,
+            replaced,
+        ))
+        host.recreate()
+        click("이어서 만들기")
+        compose.runOnIdle { host.viewModel.setDayStart(Weekday.TUESDAY, LocalTime.of(20, 0), replaced) }
+        val expected = host.viewModel.form.value
+        pressBack()
+        show("예시 문항 결과")
+        pressBack()
+        leaveQuizForCertification()
+        clickDescription("뒤로")
+        click("임시 저장하고 나가기")
+        waitForText("무엇을 할까요?")
+        assertEquals(CreationStep.AVAILABILITY, host.snapshot().creationDraft!!.step)
+        host.recreate()
+        click("이어서 만들기")
+        show("이번 주 공부 시간")
+        assertEquals(expected, host.viewModel.form.value)
+        assertEquals(replaced, host.viewModel.availabilityWeek.value)
+        assertEquals(1, host.questionCalls.get())
+        assertEquals(0, host.planningCalls.get())
+        host.capture("draft-availability-resumed")
+        click("계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        assertEquals(1, host.snapshot().plans.size)
+        assertNull(host.snapshot().creationDraft)
+        click("처음으로", lazy = true)
+        show("저장된 계획 1개가 있어요.")
+        compose.onNodeWithText("이어서 만들기").assertDoesNotExist()
+        host.recreate()
+        show("저장된 계획 1개가 있어요.")
+        compose.onNodeWithText("이어서 만들기").assertDoesNotExist()
+        assertEquals(1, host.planningCalls.get())
+    }
+
+    private fun leaveQuizForCertification() {
+        clickDescription("닫기")
+        clickDescription("뒤로")
+        clickDescription("뒤로")
+        show("어떤 시험을 준비하나요?")
+        compose.onNodeWithText("입력한 내용을 어떻게 할까요?").assertDoesNotExist()
+    }
 
     private fun pressBack() {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
