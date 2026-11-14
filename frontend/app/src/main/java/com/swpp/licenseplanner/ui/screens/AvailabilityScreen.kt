@@ -4,11 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,18 +20,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.DayAvailability
+import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.StudyAvailability
@@ -59,7 +60,6 @@ import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
-import com.swpp.licenseplanner.ui.components.StepperButton
 import com.swpp.licenseplanner.ui.theme.Divider
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkSecondary
@@ -71,10 +71,9 @@ import java.time.LocalTime
 
 /** Editing callbacks; a null week edits the recurring base, a Monday edits that week's replacement. */
 class AvailabilityActions(
-    val onEnable: (Weekday, Boolean, LocalDate?) -> Unit,
-    val onStep: (Weekday, Int, LocalDate?) -> Unit,
-    val onStart: (Weekday, LocalTime, LocalDate?) -> Unit,
-    val onDuration: (Weekday, Int, LocalDate?) -> Unit,
+    val onCapture: (Weekday, Int?, LocalDate?) -> AvailabilityWindowTarget?,
+    val onApply: (AvailabilityWindowTarget, LocalTime, Int) -> Boolean,
+    val onRemove: (AvailabilityWindowTarget) -> Boolean,
     val onShowWeek: (LocalDate) -> Unit,
     val onReplaceWeek: (LocalDate) -> Unit,
     val onClearWeek: (LocalDate) -> Unit,
@@ -90,9 +89,8 @@ class ProfileActions(
 )
 
 /**
- * One visible window per weekday (start plus duration, possibly ending the next day)
- * for the recurring base or one replaced week of the
- * preparation period, with a retained-window count for windows this editor does not show.
+ * Complete weekday window lists for the recurring base or one replaced preparation week.
+ * Each dialog edits a captured list entry and applies its start and duration together.
  * [profile] is null when the build has no server profile (demo); otherwise the live load-preview
  * and save actions appear with the shared-storage notice.
  */
@@ -117,8 +115,7 @@ fun AvailabilityScreen(
         else -> Unit
     }
 
-    var editingStart by rememberSaveable { mutableStateOf<Weekday?>(null) }
-    var editingDuration by rememberSaveable { mutableStateOf<Weekday?>(null) }
+    var editing by rememberSaveable(stateSaver = WindowTargetSaver) { mutableStateOf<AvailabilityWindowTarget?>(null) }
     // The week whose replacement was just removed, for the confirmation line.
     var resetWeek by rememberSaveable { mutableStateOf<Long?>(null) }
 
@@ -130,6 +127,12 @@ fun AvailabilityScreen(
     // The editor edits the shown week's replacement, or the base when the week inherits it.
     val editWeek = week?.takeIf { source == WeekSource.REPLACED }
     val days = if (editWeek != null) form.availabilityOverrides.getValue(editWeek) else form.availability
+    LaunchedEffect(week, form.availability, form.availabilityOverrides) {
+        editing?.let { target ->
+            val capturedDays = target.week?.let(form.availabilityOverrides::get) ?: form.availability
+            if (target.shownWeek != week || capturedDays[target.day]?.windows().orEmpty() != target.windows) editing = null
+        }
+    }
     val readingCalendar = calendarRead == CalendarReadState.RequestingPermission ||
         calendarRead == CalendarReadState.AwaitingPermission || calendarRead == CalendarReadState.Loading
 
@@ -203,10 +206,9 @@ fun AvailabilityScreen(
                     DayRow(
                         day = day,
                         entry = days[day] ?: DayAvailability(),
-                        onEnable = { actions.onEnable(day, it, editWeek) },
-                        onStep = { actions.onStep(day, it, editWeek) },
-                        onEditStart = { editingStart = day },
-                        onEditDuration = { editingDuration = day },
+                        enabled = !generating && !readingCalendar && plansSaved,
+                        onEdit = { index -> editing = actions.onCapture(day, index, editWeek) },
+                        onRemove = { index -> actions.onCapture(day, index, editWeek)?.let(actions.onRemove) },
                     )
                 }
             }
@@ -290,24 +292,34 @@ fun AvailabilityScreen(
         }
     }
 
-    editingStart?.let { day ->
-        StartTimeDialog(
-            initial = days[day]?.start ?: DayAvailability.DEFAULT_START,
-            onDismiss = { editingStart = null },
-            onPick = { actions.onStart(day, it, editWeek); editingStart = null },
-        )
-    }
-    editingDuration?.let { day ->
-        val entry = days[day] ?: DayAvailability()
-        DurationDialog(
-            day = day,
-            start = entry.start,
-            initial = entry.durationMinutes.takeIf { entry.enabled },
-            onDismiss = { editingDuration = null },
-            onConfirm = { actions.onDuration(day, it, editWeek); editingDuration = null },
-        )
+    editing?.let { target ->
+        key(target) {
+            StudyWindowDialog(
+                target = target,
+                onDismiss = { editing = null },
+                onConfirm = { start, minutes -> actions.onApply(target, start, minutes); editing = null },
+            )
+        }
     }
 }
+
+private val WindowTargetSaver = listSaver<AvailabilityWindowTarget?, Any>(
+    save = { target ->
+        if (target == null) emptyList() else listOf(
+            target.day.name, target.week?.toEpochDay() ?: Long.MIN_VALUE,
+            target.index ?: -1, target.shownWeek?.toEpochDay() ?: Long.MIN_VALUE,
+        ) + target.windows.flatMap { listOf(it.start.toSecondOfDay(), it.durationMinutes) }
+    },
+    restore = { values ->
+        if (values.isEmpty()) null else AvailabilityWindowTarget(
+            day = Weekday.valueOf(values[0] as String),
+            week = (values[1] as Long).takeUnless { it == Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
+            windows = values.drop(4).chunked(2).map { WindowSpec(LocalTime.ofSecondOfDay((it[0] as Int).toLong()), it[1] as Int) },
+            index = (values[2] as Int).takeUnless { it == -1 },
+            shownWeek = (values[3] as Long).takeUnless { it == Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
+        )
+    },
+)
 
 private const val SHARED_PROFILE_NOTICE = "서버의 공용 공부 시간이에요. 다른 사용자가 바꿀 수 있고, 이미 만든 계획은 바뀌지 않아요."
 
@@ -351,53 +363,46 @@ private fun ProfileSummary(availability: StudyAvailability, firstLabel: String) 
 private fun DayRow(
     day: Weekday,
     entry: DayAvailability,
-    onEnable: (Boolean) -> Unit,
-    onStep: (Int) -> Unit,
-    onEditStart: () -> Unit,
-    onEditDuration: () -> Unit,
+    enabled: Boolean,
+    onEdit: (Int?) -> Unit,
+    onRemove: (Int) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(day.label, style = MaterialTheme.typography.titleSmall, color = Ink, modifier = Modifier.width(44.dp))
-            Spacer(Modifier.weight(1f))
-            StepperButton(R.drawable.ic_minus, "${day.label}요일 시간 줄이기", enabled = entry.enabled) {
-                if (entry.durationMinutes <= DayAvailability.STEP_MINUTES) onEnable(false) else onStep(-1)
-            }
-            InputBox(
-                if (entry.enabled) "${entry.durationMinutes}분" else "0분",
-                onEditDuration,
-                Modifier.width(92.dp).testTag("study-duration-${day.key}"),
-            )
-            StepperButton(
-                R.drawable.ic_plus,
-                "${day.label}요일 시간 늘리기",
-                enabled = !entry.enabled || entry.durationMinutes < DayAvailability.MAX_DURATION_MINUTES,
-            ) {
-                if (entry.enabled) onStep(1) else onEnable(true)
-            }
-        }
-        if (entry.enabled) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 54.dp, bottom = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("시작", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
-                InputBox(WireDateTime.formatTime(entry.start), onEditStart, Modifier.width(96.dp))
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("${day.label}요일", style = MaterialTheme.typography.titleSmall, color = Ink)
+        val windows = entry.windows()
+        if (windows.isEmpty()) Note("등록한 시간대가 없어요.")
+        windows.forEachIndexed { index, window ->
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    if (WindowSpec.isValidDuration(entry.durationMinutes)) endLabel(WindowSpec(entry.start, entry.durationMinutes)) else "",
+                    "${WireDateTime.formatTime(window.start)} ${endLabel(window)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink,
                 )
+                InputBox(
+                    "${window.durationMinutes}분",
+                    { onEdit(index) },
+                    Modifier.fillMaxWidth().testTag(if (index == 0) "study-duration-${day.key}" else "study-duration-${day.key}-$index"),
+                    enabled = enabled,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(
+                        onClick = { onEdit(index) },
+                        enabled = enabled,
+                        modifier = Modifier.semantics { contentDescription = "${day.label}요일 시간대 ${index + 1} 수정" },
+                    ) { Text("수정", color = Ink) }
+                    TextButton(
+                        onClick = { onRemove(index) },
+                        enabled = enabled,
+                        modifier = Modifier.semantics { contentDescription = "${day.label}요일 시간대 ${index + 1} 삭제" },
+                    ) { Text("삭제", color = Ink) }
+                }
             }
         }
-        if (entry.extras.isNotEmpty()) {
-            Note("추가 공부 시간 ${entry.extras.size}개 유지", Modifier.padding(bottom = 10.dp))
-        }
+        TextButton(
+            onClick = { onEdit(null) },
+            enabled = enabled,
+            modifier = Modifier.semantics { contentDescription = "${day.label}요일 시간대 추가" },
+        ) { Text("시간대 추가", color = Ink) }
         HorizontalDivider(color = Divider)
     }
 }
@@ -410,15 +415,23 @@ internal fun StartTimeDialog(initial: LocalTime, onDismiss: () -> Unit, onPick: 
         onDismissRequest = onDismiss,
         title = { Text("시작 시간", style = MaterialTheme.typography.titleMedium) },
         text = { TimePicker(state = state) },
-        confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("확인", color = Ink) } },
+        confirmButton = { TextButton(modifier = Modifier.testTag("study-clock-confirm"), onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("확인", color = Ink) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소", color = Ink) } },
     )
 }
 
-/** Numeric entry for the whole supported range, showing the derived end before it is applied. */
+/** A complete candidate window stays local until the explicit confirmation. */
 @Composable
-private fun DurationDialog(day: Weekday, start: LocalTime, initial: Int?, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
-    var text by rememberSaveable { mutableStateOf(initial?.toString().orEmpty()) }
+private fun StudyWindowDialog(
+    target: AvailabilityWindowTarget,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalTime, Int) -> Unit,
+) {
+    val initial = target.index?.let(target.windows::get)
+    var startSeconds by rememberSaveable { mutableStateOf((initial?.start ?: DayAvailability.DEFAULT_START).toSecondOfDay()) }
+    var text by rememberSaveable { mutableStateOf((initial?.durationMinutes ?: DayAvailability.DEFAULT_DURATION_MINUTES).toString()) }
+    var pickingStart by rememberSaveable { mutableStateOf(false) }
+    val start = LocalTime.ofSecondOfDay(startSeconds.toLong())
     val minutes = parseDurationMinutes(text)
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = MaterialTheme.shapes.large, color = Paper) {
@@ -427,27 +440,35 @@ private fun DurationDialog(day: Weekday, start: LocalTime, initial: Int?, onDism
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Heading("공부 시간 입력")
-                Text("${day.label}요일 · 시작 ${WireDateTime.formatTime(start)}", style = MaterialTheme.typography.labelLarge, color = Ink)
+                Text("${target.day.label}요일 · ${if (target.week == null) "매주 기본 시간" else "${monthDay(target.week)} 주"}", style = MaterialTheme.typography.labelLarge, color = Ink)
+                FieldLabel("시작 시간")
+                InputBox(WireDateTime.formatTime(start), { pickingStart = true }, Modifier.fillMaxWidth().testTag("study-window-start"))
                 FieldLabel("공부 시간 (분)")
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { value -> text = value.filter(Char::isDigit).take(4) },
+                    onValueChange = { text = it },
                     singleLine = true,
+                    isError = minutes == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("study-window-minutes"),
                 )
                 Note("1~1439분을 입력해 주세요.")
                 if (minutes != null) Note("종료: ${endLabel(WindowSpec(start, minutes)).removePrefix("– ")}")
-                PrimaryButton("확인", { minutes?.let(onConfirm) }, enabled = minutes != null)
+                PrimaryButton("확인", { minutes?.let { onConfirm(start, it) } }, enabled = minutes != null)
                 SecondaryButton("취소", onDismiss)
             }
         }
     }
+    if (pickingStart) StartTimeDialog(
+        initial = start,
+        onDismiss = { pickingStart = false },
+        onPick = { startSeconds = it.toSecondOfDay(); pickingStart = false },
+    )
 }
 
 /** Minutes typed in the duration field, or null unless a whole number within 1–1439. */
 internal fun parseDurationMinutes(text: String): Int? =
-    text.toIntOrNull()?.takeIf { WindowSpec.isValidDuration(it) }
+    text.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toIntOrNull()?.takeIf { WindowSpec.isValidDuration(it) }
 
 /** “– 20:00”, or “– 다음 날 00:30” for an end on the following date. */
 internal fun endLabel(window: WindowSpec): String =

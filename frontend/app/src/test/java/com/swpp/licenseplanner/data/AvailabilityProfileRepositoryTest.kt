@@ -67,4 +67,29 @@ class AvailabilityProfileRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(500))
         assertEquals(ProfileOutcome.Failure(ApiError.ServerFailure(500)), runBlocking { repository().load() })
     }
+
+    @Test fun splitAndOvernightWindowsRoundTripWithChangedAndEmptyWeeks() {
+        val profile = StudyAvailability(
+            base = mapOf(
+                Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(8, 0), 60), WindowSpec(LocalTime.of(19, 0), 120)),
+                Weekday.SUNDAY to listOf(WindowSpec(LocalTime.of(23, 30), 60)),
+            ),
+            overrides = mapOf(
+                LocalDate.of(2026, 11, 23) to mapOf(Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(9, 0), 60), WindowSpec(LocalTime.of(19, 0), 120))),
+                LocalDate.of(2026, 11, 30) to emptyMap(),
+            ),
+        )
+        val response = """{"weekly_availability":{"monday":[{"start":"08:00","duration_minutes":60},{"start":"19:00","duration_minutes":120}],
+            "sunday":[{"start":"23:30","duration_minutes":60}]},"availability_overrides":{
+            "2026/11/23":{"monday":[{"start":"09:00","duration_minutes":60},{"start":"19:00","duration_minutes":120}]},"2026/11/30":{}}}"""
+        server.enqueue(MockResponse().setBody(response))
+        assertEquals(ProfileOutcome.Loaded(profile), runBlocking { repository().load() })
+        assertEquals("GET", server.takeRequest().method)
+        server.enqueue(MockResponse().setBody(response))
+        assertEquals(ProfileOutcome.Loaded(profile), runBlocking { repository().save(profile) })
+        val saved = server.takeRequest()
+        assertEquals("PUT", saved.method)
+        assertEquals(ApiJson.parseToJsonElement(response), ApiJson.parseToJsonElement(saved.body.readUtf8()))
+    }
+
 }

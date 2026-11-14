@@ -43,6 +43,7 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
 import com.swpp.licenseplanner.domain.CreationDraft
 import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.CurrentLevel
@@ -460,6 +461,43 @@ class PlanFormViewModel(
         editDay(day, week) { it.copy(enabled = true, durationMinutes = minutes) }
         return true
     }
+
+    /** Captures the exact list entry, or an append target, without editing the form. */
+    fun captureWindow(day: Weekday, index: Int?, week: LocalDate? = null): AvailabilityWindowTarget? {
+        if (!canEditWindow()) return null
+        val state = _form.value
+        val days = if (week == null) state.availability else {
+            if (week !in state.studyWeeks) return null
+            state.availabilityOverrides[week] ?: return null
+        }
+        val windows = days[day]?.windows().orEmpty()
+        if (index != null && index !in windows.indices) return null
+        return AvailabilityWindowTarget(day, week, windows, index, state.shownWeek(_availabilityWeek.value))
+    }
+
+    /** Applies only to the captured scope and list. Overlap stays editable in the form. */
+    fun applyWindow(target: AvailabilityWindowTarget, start: LocalTime, durationMinutes: Int): Boolean {
+        if (!WindowSpec.isValidDuration(durationMinutes) || start.second != 0 || start.nano != 0 || !windowTargetIsCurrent(target)) return false
+        val window = WindowSpec(start, durationMinutes)
+        editDay(target.day, target.week) { day ->
+            if (target.index == null) day.appendWindow(window) else day.replaceWindow(target.index, window) ?: day
+        }
+        return true
+    }
+
+    /** Removing the last window keeps an explicit replacement week present. */
+    fun removeWindow(target: AvailabilityWindowTarget): Boolean {
+        val index = target.index ?: return false
+        if (!windowTargetIsCurrent(target)) return false
+        editDay(target.day, target.week) { it.removeWindow(index) ?: it }
+        return true
+    }
+
+    private fun canEditWindow(): Boolean =
+        storageReady && !generating && !busy && !profileBusy && _draftDecision.value == null
+
+    private fun windowTargetIsCurrent(target: AvailabilityWindowTarget): Boolean =
+        captureWindow(target.day, target.index, target.week) == target
 
     fun showAvailabilityWeek(monday: LocalDate): Boolean {
         if (monday !in _form.value.studyWeeks) return false

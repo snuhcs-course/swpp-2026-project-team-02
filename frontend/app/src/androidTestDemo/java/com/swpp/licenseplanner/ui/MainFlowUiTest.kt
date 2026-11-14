@@ -47,6 +47,98 @@ class MainFlowUiTest {
     @get:Rule val testName = TestName()
 
     @Test
+    fun multipleWindowsCanBeAddedReorderedAndRemovedWithoutLosingOtherEntries() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        clickDescription("월요일 시간대 추가")
+        assertTrue(host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().isEmpty())
+        click("확인")
+        val first = host.viewModel.form.value
+        clickDescription("월요일 시간대 추가")
+        for (invalid in listOf("", "0", "1440", "-1", "1.5", "999999999999999")) {
+            compose.onNodeWithTag("study-window-minutes").performTextReplacement(invalid)
+            compose.onNodeWithTag("study-window-minutes").assertTextEquals(invalid)
+            compose.onNodeWithText("확인").assertIsNotEnabled()
+            assertEquals(first, host.viewModel.form.value)
+        }
+        host.capture("window-invalid-duration")
+        click("취소")
+        assertEquals(first, host.viewModel.form.value)
+        clickDescription("월요일 시간대 추가")
+        compose.onNodeWithTag("study-window-minutes").performTextReplacement("120")
+        click("확인")
+        show("월요일 공부 시간이 겹쳐요.")
+        compose.onNodeWithText("계획 만들기").assertIsNotEnabled()
+        assertEquals(0, host.planningCalls.get())
+        host.capture("window-overlap")
+        clickDescription("월요일 시간대 2 수정")
+        setWindowStartHour(17)
+        compose.onNodeWithTag("study-window-minutes").performTextReplacement("60")
+        click("확인")
+        assertEquals(listOf(LocalTime.of(17, 0), LocalTime.of(18, 0)), host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().map { it.start })
+        compose.onNodeWithText("계획 만들기").assertIsEnabled()
+        clickDescription("월요일 시간대 추가")
+        setWindowStartHour(23)
+        compose.onNodeWithTag("study-window-minutes").performTextReplacement("120")
+        click("확인")
+        show("23:00 – 다음 날 01:00")
+        compose.onNodeWithContentDescription("월요일 시간대 3 수정").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("월요일 시간대 3 삭제").performScrollTo().assertIsDisplayed()
+        host.capture("three-windows-overnight")
+        val third = host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().last()
+        clickDescription("월요일 시간대 2 삭제")
+        assertEquals(listOf(LocalTime.of(17, 0), LocalTime.of(23, 0)), host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().map { it.start })
+        clickDescription("월요일 시간대 1 삭제")
+        assertEquals(listOf(third), host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows())
+        clickDescription("월요일 시간대 1 삭제")
+        assertTrue(host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().isEmpty())
+        compose.onNodeWithText("계획 만들기").assertIsNotEnabled()
+        assertEquals(0, host.planningCalls.get())
+    }
+
+    @Test
+    fun windowEditorsKeepTheirWeekAndCancelBeforeChangingScope() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        setWeekdayMinutes(Weekday.MONDAY)
+        val base = host.viewModel.form.value.availability
+        clickDescription("월요일 시간대 추가")
+        compose.onNodeWithTag("study-window-minutes").performTextReplacement("90")
+        pressBack()
+        assertEquals(base, host.viewModel.form.value.availability)
+        clickDescription("다음 주")
+        val second = host.viewModel.availabilityWeek.value!!
+        click("이번 주 시간 바꾸기")
+        clickDescription("월요일 시간대 1 수정")
+        compose.onNodeWithTag("study-window-minutes").performTextReplacement("120")
+        click("확인")
+        assertEquals(base, host.viewModel.form.value.availability)
+        assertEquals(120, host.viewModel.form.value.availabilityOverrides.getValue(second).getValue(Weekday.MONDAY).windows().single().durationMinutes)
+        clickDescription("월요일 시간대 추가")
+        val captured = host.viewModel.form.value
+        compose.runOnIdle { host.viewModel.showAvailabilityWeek(second.plusWeeks(1)) }
+        compose.onNodeWithText("공부 시간 입력").assertDoesNotExist()
+        assertEquals(captured, host.viewModel.form.value)
+        clickDescription("이전 주")
+        clickDescription("월요일 시간대 1 삭제")
+        assertTrue(host.viewModel.form.value.availabilityOverrides.getValue(second).values.all { it.windows().isEmpty() })
+        show("이번 주 공부 안 함")
+        clickDescription("이전 주")
+        assertEquals(base, host.viewModel.form.value.availability)
+        compose.onNodeWithTag("study-duration-monday").performScrollTo().assertTextEquals("60분")
+        host.capture("window-week-scope")
+        assertEquals(0, host.planningCalls.get())
+    }
+
+    private fun setWindowStartHour(hour: Int) {
+        compose.onNodeWithTag("study-window-start").performClick()
+        compose.onNodeWithContentDescription("$hour hours", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("study-clock-confirm").performClick()
+    }
+
+    @Test
     fun newCreationWaitsForTheMissingPlanSaveAndItsLocalRetry() = withApp { host ->
         generatePlan(host)
         val saved = host.snapshot()
@@ -928,8 +1020,9 @@ class MainFlowUiTest {
 
     private fun setWeekdayMinutes(day: Weekday) {
         val field = hasTestTag("study-duration-${day.key}")
-        compose.onNode(field).performScrollTo().performClick()
-        compose.onNode(hasSetTextAction()).performTextReplacement("60")
+        if (compose.onAllNodes(field).fetchSemanticsNodes().isEmpty()) clickDescription("${day.label}요일 시간대 추가")
+        else compose.onNode(field).performScrollTo().performClick()
+        compose.onNode(hasTestTag("study-window-minutes")).performTextReplacement("60")
         click("확인")
         compose.onNode(field).assertTextEquals("60분")
     }

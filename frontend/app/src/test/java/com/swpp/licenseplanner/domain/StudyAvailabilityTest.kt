@@ -79,4 +79,17 @@ class StudyAvailabilityTest {
         assertNotNull(crossWeek.firstOverlap())
         assertFalse(StudyAvailability(emptyMap(), mapOf(LocalDate.of(2026, 11, 30) to emptyMap())).hasWindows())
     }
+
+    @Test fun removingPrimaryPromotesTheNextWindowAndKeepsOvernightCapacity() {
+        val original = DayAvailability.of(listOf(w("08:00", 60), w("19:00", 120), w("23:30", 60)))
+        val removed = original.removeWindow(0)!!
+        assertEquals(listOf(w("19:00", 120), w("23:30", 60)), removed.windows())
+        assertEquals(LocalTime.of(19, 0), removed.start)
+        val adjacent = removed.appendWindow(w("21:00", 60))
+        assertNull(StudyAvailability(mapOf(Weekday.MONDAY to adjacent.windows())).firstOverlap())
+        assertEquals(listOf(w("08:00", 60), w("19:00", 120), w("23:30", 60)), original.windows())
+        assertTrue(removed.removeWindow(0)!!.removeWindow(0)!!.windows().isEmpty())
+        assertNull(original.removeWindow(3))
+    }
+
 }

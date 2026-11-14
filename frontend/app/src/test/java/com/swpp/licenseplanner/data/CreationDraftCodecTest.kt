@@ -230,4 +230,34 @@ class CreationDraftCodecTest {
         }
         assertEquals(PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(text, PlanStorageScope.of(false, "http://other/api/v1")))
     }
+
+    @Test fun splitWindowsAndEmptyWeeksKeepIndependentPlansReportsAndRecovery() = runTest {
+        val split = defaultAvailability() +
+            (Weekday.MONDAY to DayAvailability.of(listOf(WindowSpec(LocalTime.of(8, 0), 60), WindowSpec(LocalTime.of(19, 0), 120)))) +
+            (Weekday.SUNDAY to DayAvailability.of(listOf(WindowSpec(LocalTime.of(23, 30), 60))))
+        val monday = LocalDate.of(2026, 11, 23)
+        val empty = monday.plusWeeks(1)
+        val input = draft.copy(form = form.copy(
+            availability = split,
+            availabilityOverrides = mapOf(
+                monday to split + (Weekday.MONDAY to DayAvailability.of(listOf(WindowSpec(LocalTime.of(9, 0), 60), WindowSpec(LocalTime.of(19, 0), 120)))),
+                empty to emptyWeek(),
+            ),
+        ), availabilityWeek = monday)
+        val snapshot = PlanSnapshot(plans, 2, input)
+        val bytes = MemoryPlanBytes()
+        val store = BytesPlanStore(bytes, live, StandardTestDispatcher(testScheduler))
+        store.load()
+        assertTrue(store.save(snapshot))
+        val committed = bytes.committed!!.copyOf()
+        val restored = (BytesPlanStore(bytes, live, StandardTestDispatcher(testScheduler)).load() as PlanStoreLoad.Loaded).snapshot
+        assertEquals(input, restored.creationDraft)
+        assertEquals(plans.map { it.original }, restored.plans.map { it.original })
+        assertEquals(plans.map { it.current }, restored.plans.map { it.current })
+        assertEquals(plans.map { it.checkIns }, restored.plans.map { it.checkIns })
+        assertEquals(PlanRecovery.ReloadRequired, restored.plans[1].recovery)
+        assertTrue(committed.contentEquals(bytes.committed!!))
+        assertEquals(emptyWeek(), restored.creationDraft!!.form.availabilityOverrides[empty])
+    }
+
 }

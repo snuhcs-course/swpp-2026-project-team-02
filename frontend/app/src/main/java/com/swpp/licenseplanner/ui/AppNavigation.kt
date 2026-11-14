@@ -344,10 +344,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 calendarRead = calendarRead,
                 profile = profile.takeIf { viewModel.profileAvailable },
                 actions = AvailabilityActions(
-                    onEnable = viewModel::setDayEnabled,
-                    onStep = viewModel::stepDuration,
-                    onStart = viewModel::setDayStart,
-                    onDuration = { day, minutes, week -> viewModel.setDuration(day, minutes, week) },
+                    onCapture = viewModel::captureWindow,
+                    onApply = viewModel::applyWindow,
+                    onRemove = viewModel::removeWindow,
                     onShowWeek = { viewModel.showAvailabilityWeek(it) },
                     onReplaceWeek = { viewModel.replaceWeek(it) },
                     onClearWeek = { viewModel.clearWeek(it) },

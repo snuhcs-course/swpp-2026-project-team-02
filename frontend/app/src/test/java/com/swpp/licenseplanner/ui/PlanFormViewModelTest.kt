@@ -617,4 +617,86 @@ class PlanFormViewModelTest {
         vm.setDayStart(Weekday.TUESDAY, LocalTime.of(0, 30)) // adjacent to the Monday spill
         assertEquals(null, vm.form.value.availabilityError)
     }
+
+    @Test fun fullListEditsStayScopedAndRejectStaleTargets() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        val original = vm.form.value
+        val append = vm.captureWindow(Weekday.MONDAY, null)!!
+        assertEquals(original, vm.form.value)
+        assertTrue(vm.applyWindow(append, LocalTime.of(22, 0), 60))
+        assertFalse(vm.applyWindow(append, LocalTime.of(23, 0), 60))
+        val second = vm.captureWindow(Weekday.MONDAY, 1)!!
+        assertTrue(vm.applyWindow(second, LocalTime.of(8, 0), 60))
+        assertEquals(listOf(LocalTime.of(8, 0), LocalTime.of(18, 0)), vm.form.value.availability.getValue(Weekday.MONDAY).windows().map { it.start })
+        val base = vm.form.value.availability
+        assertTrue(vm.replaceWeek(oct12))
+        val replacement = vm.captureWindow(Weekday.MONDAY, 0, oct12)!!
+        assertTrue(vm.removeWindow(replacement))
+        assertEquals(base, vm.form.value.availability)
+        assertEquals(listOf(LocalTime.of(18, 0)), vm.form.value.availabilityOverrides.getValue(oct12).getValue(Weekday.MONDAY).windows().map { it.start })
+        assertTrue(vm.removeWindow(vm.captureWindow(Weekday.MONDAY, 0, oct12)!!))
+        assertEquals(WeekSource.EMPTY, vm.form.value.weekSource(oct12))
+        assertTrue(oct12 in vm.form.value.availabilityOverrides)
+        val before = vm.form.value
+        val canceled = vm.captureWindow(Weekday.MONDAY, null, oct12)!!
+        assertEquals(before, vm.form.value)
+        assertTrue(vm.showAvailabilityWeek(oct19))
+        assertFalse(vm.applyWindow(canceled, LocalTime.of(9, 0), 60))
+        assertFalse(vm.removeWindow(second))
+        assertEquals(before, vm.form.value)
+        assertEquals(original.availabilityOverrides, vm.form.value.availabilityOverrides - oct12)
+    }
+
+    @Test fun fullListInvalidDurationsAndOverlapsRemainCorrectableWithoutSending() = runTest(dispatcher) {
+        val planning = FakePlanning()
+        val profile = FakeProfile()
+        val vm = loadedViewModel(planning, profile = profile)
+        val append = vm.captureWindow(Weekday.MONDAY, null)!!
+        val before = vm.form.value
+        for (minutes in listOf(0, -1, 1440, Int.MAX_VALUE)) {
+            assertFalse(vm.applyWindow(append, LocalTime.of(20, 0), minutes))
+            assertEquals(before, vm.form.value)
+        }
+        assertFalse(vm.applyWindow(append, LocalTime.of(20, 0, 1), 60))
+        assertTrue(vm.applyWindow(append, LocalTime.of(19, 0), 60))
+        assertTrue(vm.form.value.availabilityError != null)
+        assertFalse(vm.generate())
+        assertFalse(vm.saveProfile())
+        advanceUntilIdle()
+        assertTrue(planning.requests.isEmpty())
+        assertTrue(profile.saves.isEmpty())
+        assertEquals(2, vm.form.value.availability.getValue(Weekday.MONDAY).windows().size)
+        assertTrue(vm.applyWindow(vm.captureWindow(Weekday.MONDAY, 1)!!, LocalTime.of(20, 0), 60))
+        assertEquals(null, vm.form.value.availabilityError)
+    }
+
+    @Test fun splitWindowsSurviveProfileSaveAndRequestWithExplicitEmptyWeek() = runTest(dispatcher) {
+        val windows = StudyAvailability(
+            base = mapOf(
+                Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(8, 0), 60), WindowSpec(LocalTime.of(19, 0), 120)),
+                Weekday.SUNDAY to listOf(WindowSpec(LocalTime.of(23, 30), 60)),
+            ),
+            overrides = mapOf(
+                oct12 to mapOf(Weekday.MONDAY to listOf(WindowSpec(LocalTime.of(9, 0), 60), WindowSpec(LocalTime.of(19, 0), 120))),
+                oct19 to emptyMap(),
+            ),
+        )
+        val profile = FakeProfile(ProfileOutcome.Loaded(windows), ProfileOutcome.Loaded(windows))
+        val planning = FakePlanning(PlanOutcome.Success(plan, false))
+        val vm = loadedViewModel(planning, profile = profile)
+        assertTrue(vm.loadProfile())
+        advanceUntilIdle()
+        vm.acceptProfile()
+        assertEquals(windows, vm.form.value.studyAvailability)
+        assertTrue(vm.saveProfile())
+        advanceUntilIdle()
+        assertEquals(listOf(windows), profile.saves)
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        val sent = planning.requests.single()
+        assertEquals(2, sent.studyDaysPerWeek)
+        assertEquals(windows, AvailabilityWire.context(sent))
+        assertEquals(windows, AvailabilityWire.context(vm.plans.value.single().original))
+    }
+
 }

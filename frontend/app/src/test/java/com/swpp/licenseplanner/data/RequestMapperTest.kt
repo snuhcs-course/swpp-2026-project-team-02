@@ -54,8 +54,8 @@ class RequestMapperTest {
 
     @Test
     fun hiddenWindowsOvernightWindowsAndWeekReplacementsAreAllSent() {
-        val monday = DayAvailability(true, LocalTime.of(9, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
-        val sunday = DayAvailability(true, LocalTime.of(23, 0), 90)
+        val monday = DayAvailability(true, LocalTime.of(8, 0), 60, extras = listOf(WindowSpec(LocalTime.of(19, 0), 120)))
+        val sunday = DayAvailability(true, LocalTime.of(23, 30), 60)
         val replaced = mapOf(Weekday.TUESDAY to DayAvailability(true, LocalTime.of(20, 0), 60))
         val state = TestFixtures.completeState().copy(
             availability = defaultAvailability() + (Weekday.MONDAY to monday) + (Weekday.SUNDAY to sunday),
@@ -65,10 +65,10 @@ class RequestMapperTest {
         val windows = json["weekly_availability"]!!.jsonObject
         assertEquals(listOf("monday", "sunday"), windows.keys.toList())
         assertEquals(
-            """[{"start":"09:00","duration_minutes":60},{"start":"19:00","duration_minutes":120}]""",
+            """[{"start":"08:00","duration_minutes":60},{"start":"19:00","duration_minutes":120}]""",
             windows["monday"].toString(),
         )
-        assertEquals("""[{"start":"23:00","duration_minutes":90}]""", windows["sunday"].toString())
+        assertEquals("""[{"start":"23:30","duration_minutes":60}]""", windows["sunday"].toString())
         assertEquals(
             """{"2026/10/12":{},"2026/10/19":{"tuesday":[{"start":"20:00","duration_minutes":60}]}}""",
             json["availability_overrides"].toString(),

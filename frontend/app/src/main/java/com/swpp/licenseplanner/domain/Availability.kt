@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.domain
 
 import java.time.LocalTime
+import java.time.LocalDate
 
 /** Weekday keys used on the wire (`monday`…`sunday`) and their Korean labels. */
 enum class Weekday(val key: String, val label: String) {
@@ -21,9 +22,8 @@ enum class Weekday(val key: String, val label: String) {
 }
 
 /**
- * One weekday in the editor: the visible primary window (start and duration, possibly ending the
- * next day) plus [extras], windows this simple editor does not show but must keep. Disabling the
- * primary removes only it; the extras stay.
+ * One weekday in the editor: a primary window plus [extras]. Every list operation retains this
+ * representation and sorts only after the selected operation has been applied.
  */
 data class DayAvailability(
     val enabled: Boolean = false,
@@ -35,6 +35,20 @@ data class DayAvailability(
     fun windows(): List<WindowSpec> =
         ((if (enabled) listOf(WindowSpec(start, durationMinutes)) else emptyList()) + extras)
             .sortedWith(compareBy({ it.start }, { it.durationMinutes }))
+
+    fun appendWindow(window: WindowSpec): DayAvailability = of(windows() + window)
+
+    fun replaceWindow(index: Int, window: WindowSpec): DayAvailability? {
+        val current = windows()
+        if (index !in current.indices) return null
+        return of(current.mapIndexed { position, value -> if (position == index) window else value })
+    }
+
+    fun removeWindow(index: Int): DayAvailability? {
+        val current = windows()
+        if (index !in current.indices) return null
+        return of(current.filterIndexed { position, _ -> position != index })
+    }
 
     companion object {
         val DEFAULT_START: LocalTime = LocalTime.of(18, 0)
@@ -51,6 +65,15 @@ data class DayAvailability(
         }
     }
 }
+
+/** A transient editor target; the captured list prevents sorting or another edit retargeting it. */
+data class AvailabilityWindowTarget(
+    val day: Weekday,
+    val week: LocalDate?,
+    val windows: List<WindowSpec>,
+    val index: Int?,
+    val shownWeek: LocalDate?,
+)
 
 fun defaultAvailability(): Map<Weekday, DayAvailability> = Weekday.entries.associateWith { DayAvailability() }
 

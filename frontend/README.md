@@ -737,20 +737,21 @@ that detailed gate remains unverified. See [Verification](#verification).
 
 ## Study availability
 
-The study-time screen (공부 시간) edits one visible window per weekday: a start
-time (time picker) and a duration in minutes. The steppers change the duration in
-30-minute steps; tapping the minutes box opens 공부 시간 입력, which accepts any
-whole number from 1 to 1439 and shows the derived end before it is applied. A
-window that runs past midnight shows its end as `– 다음 날 00:30` and belongs to
-the weekday it starts on. Lowering a day to 30 minutes or less with − turns that
-day off (0분).
+Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. Snapshot version 4 and earlier supported readers are unchanged.
 
-**Retained windows.** A day can hold more windows than this editor shows (for
-example from a loaded profile). The earliest window is the visible one; the rest
-are kept unchanged and counted under the day as 추가 공부 시간 N개 유지. Editing
-or turning off the visible window never removes them, and they are included in
-validation, the generation request, an explicit profile save and the plan's saved
-original context. A full multi-window editor is not part of this screen.
+The study-time screen (공부 시간) shows every window for each weekday.
+시간대 추가 opens a candidate starting at 18:00 for 60 minutes. Tapping a
+window's minutes edits its start and duration together. 확인 applies it, while
+취소 or Back keeps the entered list. Minutes must be a whole number from 1 to
+1439, and invalid text stays available for correction. Start times use the
+existing time picker. A next-day end is labeled 다음 날. 삭제 removes only its
+identified window, promoting the next one when necessary. Removing the final
+window leaves that weekday empty.
+
+Every base and replacement-week window participates in totals, validation,
+requests, profile saves and creation drafts. Dialog targets retain their
+weekday, week and captured list. Changing week or replacing the profile cannot
+apply a pending edit to another window.
 
 **Weeks.** With valid dates, a Monday-based week picker (`N / M주`) covers the
 weeks from the preparation start to the day before the exam; other weeks cannot be
