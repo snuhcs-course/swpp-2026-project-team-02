@@ -22,17 +22,24 @@ import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
 import com.swpp.licenseplanner.data.DemoAdjustmentRepository
 import com.swpp.licenseplanner.data.FlavorRepositories
+import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.PlanSnapshot
+import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanStoreLoad
+import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.UnavailableCalendarExport
 import com.swpp.licenseplanner.data.UnavailableCalendarRead
+import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.ui.theme.LicensePlannerTheme
 import java.io.File
 import java.time.LocalDate
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
@@ -55,6 +62,13 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     private val current = mutableStateOf<PlanFormViewModel?>(null)
     private var owner: ViewModelStoreOwner? = null
     val adjustmentCalls = AtomicInteger()
+    val planningCalls = AtomicInteger()
+    val saveCalls = AtomicInteger()
+    var returnedTopic: String? = null
+    /** While set, every save is refused before any byte is written, as a failed device write. */
+    val failSaves = AtomicBoolean(false)
+    /** While set, every save waits for it to complete before writing or being refused. */
+    val holdSaves = AtomicReference<CompletableDeferred<Unit>?>(null)
     val viewModel: PlanFormViewModel get() = checkNotNull(current.value)
 
     @Suppress("DEPRECATION")
@@ -90,14 +104,35 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 adjustmentCalls.incrementAndGet()
             }
         }
+        val planning = FlavorRepositories.planningRepository()
+        val countedPlanning = object : PlanningRepository {
+            override suspend fun generate(request: StudyPlanRequest) = planning.generate(request).let { outcome ->
+                planningCalls.incrementAndGet()
+                val topic = returnedTopic
+                if (outcome is PlanOutcome.Success && topic != null) {
+                    val target = outcome.response.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId
+                    outcome.copy(response = outcome.response.copy(schedules = outcome.response.schedules.map {
+                        if (it.scheduleId == target) it.copy(topic = topic) else it
+                    }))
+                } else outcome
+            }
+        }
+        val store = AtomicFilePlanStore.open(storeContext, PlanStorageScope.DEMO)
+        val failableStore = object : LocalPlanStore by store {
+            override suspend fun save(snapshot: PlanSnapshot): Boolean {
+                saveCalls.incrementAndGet()
+                holdSaves.get()?.await()
+                return !failSaves.get() && store.save(snapshot)
+            }
+        }
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlanFormViewModel(
                 questionRepository = FlavorRepositories.questionRepository(),
-                planningRepository = FlavorRepositories.planningRepository(),
+                planningRepository = countedPlanning,
                 adjustmentRepository = countedAdjustment,
                 today = today,
-                planStore = AtomicFilePlanStore.open(storeContext, PlanStorageScope.DEMO),
+                planStore = failableStore,
                 calendarExportRepository = UnavailableCalendarExport,
                 calendarReadRepository = UnavailableCalendarRead,
                 availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),

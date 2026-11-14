@@ -4,6 +4,8 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -44,16 +46,16 @@ object PlanStorageScope {
 }
 
 /**
- * JSON form of a [PlanSnapshot]. Saving always writes version 2, whose creation requests may carry
- * `start` + `duration_minutes` windows and week replacements. Version 1 (same-day `start` + `end`
- * windows, no replacements) is still read, without rewriting the file; each creation request is
- * kept exactly as it was accepted. Decoding checks the
- * version, the scope and every entry; anything it cannot trust is a failure, never an empty or
- * repaired collection.
+ * JSON form of a [PlanSnapshot]. Saving writes version 3, adding per-session study reports.
+ * Versions 1 and 2 still load without reports and without rewriting the saved bytes.
+ * Decoding checks the version, scope and every entry; invalid data is never repaired.
+ * A report whose study row is no longer shown is kept as saved.
  */
 internal object PlanSnapshotCodec {
-    const val VERSION = 2
+    const val VERSION = 3
+    const val NO_CHECK_IN_VERSION = 2
     const val LEGACY_VERSION = 1
+    private val SUPPORTED_VERSIONS = setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION, VERSION)
 
     // Unlike the API JSON, unknown keys are rejected: this file is only ever written by this codec.
     private val json = Json {
@@ -76,6 +78,7 @@ internal object PlanSnapshotCodec {
                     scheduleCsvFile = plan.scheduleCsvFile,
                     recovery = StoredRecovery.of(plan.recovery),
                     recoveryScheduleId = plan.recoveryScheduleId,
+                    checkIns = plan.checkIns.mapValues { (_, checkIn) -> StoredCheckIn.of(checkIn) },
                 )
             },
             inFlightAdjustmentOrdinal = snapshot.inFlightAdjustmentOrdinal,
@@ -91,7 +94,7 @@ internal object PlanSnapshotCodec {
         val envelope = try {
             val root = json.parseToJsonElement(text).jsonObject
             val version = root["version"]?.jsonPrimitive?.intOrNull ?: return PlanStoreLoad.Failed(PlanLoadFailure.Malformed)
-            if (version != VERSION && version != LEGACY_VERSION) return PlanStoreLoad.Failed(PlanLoadFailure.Unsupported)
+            if (version !in SUPPORTED_VERSIONS) return PlanStoreLoad.Failed(PlanLoadFailure.Unsupported)
             json.decodeFromJsonElement(Envelope.serializer(), root)
         } catch (_: IllegalArgumentException) {
             // SerializationException is an IllegalArgumentException; so is a non-object root.
@@ -100,7 +103,8 @@ internal object PlanSnapshotCodec {
         if (envelope.scope != scope || !envelope.isValid()) return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
         val plans = envelope.entries.map { entry ->
             val recovery = if (entry.ordinal == envelope.inFlightAdjustmentOrdinal) PlanRecovery.ReloadRequired else entry.recovery.domain
-            val plan = SessionPlan(entry.ordinal, entry.original, entry.isDemo, entry.current, entry.scheduleCsvFile, recovery)
+            val checkIns = entry.checkIns.orEmpty().mapValues { (_, stored) -> stored.domain }
+            val plan = SessionPlan(entry.ordinal, entry.original, entry.isDemo, entry.current, entry.scheduleCsvFile, recovery, checkIns = checkIns)
             plan.copy(recoveryScheduleId = entry.recoveryScheduleId?.takeIf { recovery == PlanRecovery.ReloadRequired && plan.isStudy(it) })
         }
         return PlanStoreLoad.Loaded(PlanSnapshot(plans))
@@ -126,7 +130,12 @@ internal object PlanSnapshotCodec {
             original.availabilityOverrides.isEmpty() && current.availabilitySnapshot == null &&
                 original.weeklyAvailability.values.flatten().all { it.durationMinutes == null && it.end != null }
             )
-        return identityOk && legacyShapeOk && scheduleRowProblem(current.schedules) == null && original.isValid()
+        val checkInsOk = if (version < VERSION) {
+            checkIns == null
+        } else {
+            checkIns != null && checkIns.all { (id, stored) -> SessionPlan.isStudyId(id) && stored.domain.isValid }
+        }
+        return identityOk && legacyShapeOk && checkInsOk && scheduleRowProblem(current.schedules) == null && original.isValid()
     }
 
     /** Dates and the complete availability context of an accepted creation request, which later adjustments resend. */
@@ -155,7 +164,34 @@ internal object PlanSnapshotCodec {
         @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
         val recovery: StoredRecovery,
         @SerialName("recovery_schedule_id") val recoveryScheduleId: String? = null,
+        /** Required from version 3 on and absent before it. */
+        @SerialName("check_ins") val checkIns: Map<String, StoredCheckIn>? = null,
     )
+
+    @Serializable
+    private data class StoredCheckIn(
+        val status: StoredCheckInStatus,
+        @SerialName("actual_minutes") val actualMinutes: Int,
+    ) {
+        val domain: StudyCheckIn get() = StudyCheckIn(status.domain, actualMinutes)
+
+        companion object {
+            fun of(checkIn: StudyCheckIn) = StoredCheckIn(StoredCheckInStatus.of(checkIn.status), checkIn.actualMinutes)
+        }
+    }
+
+    /** Saved names stay fixed even if the domain enum is renamed. */
+    @Serializable
+    private enum class StoredCheckInStatus(val domain: StudyCheckInStatus) {
+        @SerialName("done") Done(StudyCheckInStatus.Done),
+        @SerialName("partly") Partly(StudyCheckInStatus.Partly),
+        @SerialName("missed") Missed(StudyCheckInStatus.Missed),
+        ;
+
+        companion object {
+            fun of(status: StudyCheckInStatus) = entries.single { it.domain == status }
+        }
+    }
 
     /** Saved names stay fixed even if the domain enum is renamed. */
     @Serializable

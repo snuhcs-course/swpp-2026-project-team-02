@@ -1,5 +1,8 @@
 package com.swpp.licenseplanner.ui
 
+import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -154,6 +157,59 @@ data class AdjustmentSelection(
  */
 data class ManualDraft(val newStart: LocalDateTime? = null, val confirmOutsideAvailability: Boolean = false)
 
+/** Why the report being edited cannot be saved as entered. */
+enum class CheckInInputError {
+    /** No status has been chosen yet. */
+    StatusRequired,
+    /** Done or partly needs a positive whole number of minutes that fits an [Int]. */
+    InvalidMinutes,
+}
+
+/** Where the explicit save of an edited report stands. */
+enum class CheckInSave {
+    /** Nothing has been written; cancelling keeps the earlier report. */
+    Editing,
+    Saving,
+    /** The edited report is part of the saved collection. */
+    Saved,
+    /** The edited report is shown but the save failed; only a local retry may follow. */
+    Unsaved,
+}
+
+/**
+ * The report editor for one study row of one plan, captured when it opened. [committed] is the
+ * saved report it started from (null: unreported) and [status] is null until the learner chooses
+ * one. [plannedMinutes] is the scheduled duration, only a suggestion for done. [minutesEdited]
+ * records that the minutes are the learner's own (or a saved report's), so choosing a status no
+ * longer replaces them.
+ */
+data class CheckInEditor(
+    val planOrdinal: Int,
+    val scheduleId: String,
+    val plannedMinutes: Int,
+    val committed: StudyCheckIn?,
+    val status: StudyCheckInStatus?,
+    val minutesText: String,
+    val minutesEdited: Boolean,
+    val error: CheckInInputError? = null,
+    val save: CheckInSave = CheckInSave.Editing,
+) {
+    /** Minutes can be typed only for done or partly, before saving. */
+    val minutesEnabled: Boolean get() = save == CheckInSave.Editing && status != null && status != StudyCheckInStatus.Missed
+
+    /** The report the current input would save, or null when it cannot be saved. */
+    val candidate: StudyCheckIn? get() = status?.let { StudyCheckIn.fromInput(it, minutesText) }
+}
+
+/**
+ * Whether plan [ordinal]'s report for [scheduleId] is shown in [shown] but differs from the saved
+ * collection [saved], so it must not be presented as saved.
+ */
+fun isCheckInUnsaved(shown: List<SessionPlan>, saved: List<SessionPlan>, ordinal: Int, scheduleId: String): Boolean {
+    val report = shown.firstOrNull { it.ordinal == ordinal }?.checkInFor(scheduleId)
+    return report != saved.firstOrNull { it.ordinal == ordinal }?.checkInFor(scheduleId)
+}
+
 /** Explicit load or save of the server's shared study-time profile (live only). */
 sealed interface ProfileState {
     data object Idle : ProfileState
@@ -240,6 +296,10 @@ class PlanFormViewModel(
     private val _calendarRead = MutableStateFlow<CalendarReadState>(CalendarReadState.Idle)
     val calendarRead: StateFlow<CalendarReadState> = _calendarRead.asStateFlow()
     private var calendarReadId = 0
+
+    /** The open study report editor, or null. It is never saved, so a restart never resumes it. */
+    private val _checkIn = MutableStateFlow<CheckInEditor?>(null)
+    val checkIn: StateFlow<CheckInEditor?> = _checkIn.asStateFlow()
 
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
@@ -666,6 +726,88 @@ class PlanFormViewModel(
     }
 
     /**
+     * Opens the report editor for study row [scheduleId] of plan [ordinal], prefilled with its saved
+     * report or with no status for an unreported row. External rows, unknown rows and plans that are
+     * being changed or not yet saved are refused. Opening writes nothing and leaves the adjustment
+     * selection and recovery state alone; a plan awaiting reload or missing may still be reported.
+     */
+    fun startCheckIn(ordinal: Int, scheduleId: String): Boolean {
+        if (generating || busy || !storageReady || _checkIn.value?.save == CheckInSave.Saving) return false
+        val plan = plan(ordinal)?.takeIf { it.isStudy(scheduleId) } ?: return false
+        val planned = PlanGrouping.sessions(plan.current.schedules)
+            .firstOrNull { it.scheduleId == scheduleId }?.durationMinutes ?: return false
+        val committed = plan.checkInFor(scheduleId)
+        val minutes = committed?.actualMinutes?.takeIf { committed.status != StudyCheckInStatus.Missed }
+        _checkIn.value = CheckInEditor(
+            planOrdinal = ordinal,
+            scheduleId = scheduleId,
+            plannedMinutes = planned.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+            committed = committed,
+            status = committed?.status,
+            minutesText = minutes?.toString().orEmpty(),
+            minutesEdited = minutes != null,
+        )
+        return true
+    }
+
+    /**
+     * Chooses the status being edited. Done suggests the scheduled minutes and partly asks for
+     * them, unless the learner already entered minutes; missed keeps them aside and saves zero.
+     */
+    fun chooseCheckInStatus(status: StudyCheckInStatus) = _checkIn.update { editor ->
+        if (editor == null || editor.save != CheckInSave.Editing) return@update editor
+        val minutes = when {
+            editor.minutesEdited || status == StudyCheckInStatus.Missed -> editor.minutesText
+            status == StudyCheckInStatus.Done -> editor.plannedMinutes.takeIf { it > 0 }?.toString().orEmpty()
+            else -> ""
+        }
+        editor.copy(status = status, minutesText = minutes, error = null)
+    }
+
+    /** Replaces the typed actual minutes for done or partly; the text is validated only on save. */
+    fun setCheckInMinutes(text: String) = _checkIn.update { editor ->
+        if (editor == null || !editor.minutesEnabled) editor else editor.copy(minutesText = text, minutesEdited = true, error = null)
+    }
+
+    /**
+     * Saves the edited report once, replacing only this plan's report for that row, through the
+     * whole-collection save. Invalid input shows its error and keeps the saved report; a row that
+     * left the plan, a second tap and any running plan change are refused. Nothing is sent to a
+     * server. On failure the edit stays shown as unsaved and [retrySave] saves it locally.
+     * Returns whether a save started.
+     */
+    fun saveCheckIn(): Boolean {
+        val editor = _checkIn.value?.takeIf { it.save == CheckInSave.Editing } ?: return false
+        if (generating || busy || !storageReady) return false
+        if (editor.status == null) {
+            _checkIn.value = editor.copy(error = CheckInInputError.StatusRequired)
+            return false
+        }
+        val report = editor.candidate ?: run {
+            _checkIn.value = editor.copy(error = CheckInInputError.InvalidMinutes)
+            return false
+        }
+        val updated = plan(editor.planOrdinal)?.withCheckIn(editor.scheduleId, report) ?: return false
+        updatePlan(editor.planOrdinal) { updated }
+        _checkIn.value = editor.copy(save = CheckInSave.Saving, error = null)
+        viewModelScope.launch {
+            val saved = commit(_plans.value)
+            finishCheckInSave(saved)
+        }
+        return true
+    }
+
+    /**
+     * Closes the editor. Before saving this discards the edit and writes nothing; after a save
+     * (confirmed or failed) the shown collection stays as it is. Refused while saving.
+     */
+    fun closeCheckIn() = _checkIn.update { if (it?.save == CheckInSave.Saving) it else null }
+
+    private fun finishCheckInSave(saved: Boolean) = _checkIn.update {
+        if (it?.save == CheckInSave.Saving) it.copy(save = if (saved) CheckInSave.Saved else CheckInSave.Unsaved) else it
+    }
+
+    /**
      * Opens a calendar export of plan [ordinal]'s current study rows, captured now. Refused unless the
      * plan has study rows, is saved, needs no reload and nothing else runs. Writes nothing; while the
      * flow is open the plan is held against generation, adjustment, reload and plan switching.
@@ -823,7 +965,10 @@ class PlanFormViewModel(
     fun retrySave() {
         if (_storage.value != PlanStorage.SaveFailure) return
         _storage.value = PlanStorage.Saving
-        viewModelScope.launch { commit(_plans.value) }
+        _checkIn.update { if (it?.save == CheckInSave.Unsaved) it.copy(save = CheckInSave.Saving) else it }
+        viewModelScope.launch {
+            finishCheckInSave(commit(_plans.value))
+        }
     }
 
     private suspend fun restore() {

@@ -34,6 +34,7 @@ import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.ExportBlock
+import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
 import com.swpp.licenseplanner.ui.components.EXPORT_SUBTITLE
@@ -62,7 +63,8 @@ import java.util.Locale
  * Adapted from frame 2007:253: one Monday-based week at a time with
  * bounded previous/next, seven day sections, returned session cards, the AI-authored
  * summary when present, and the demo statement for local plans. The phase timeline and
- * on-track status from the frame are omitted (no backing data). The calendar export action
+ * on-track status from the frame are omitted (no backing data). Study rows carry a separate
+ * report action ([checkIns]); a failed local save shows its retry here. The calendar export action
  * (2007:352) copies [exportCount] study sessions to a chosen device calendar; [exportBlock]
  * disables it with the reason. [onHome] and [onAdjust] lead to the home and plan-list screens.
  */
@@ -76,6 +78,9 @@ fun PlanScreen(
     onEdit: () -> Unit,
     onHome: () -> Unit,
     onAdjust: () -> Unit,
+    checkIns: CheckInRows,
+    storage: PlanStorage,
+    onRetrySave: () -> Unit,
 ) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -103,6 +108,13 @@ fun PlanScreen(
                 }
             }
             if (summary != null) item { PlanSummary(summary) }
+            if (storage == PlanStorage.SaveFailure) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        StorageAlert(storage, onRetryLoad = {}, onRetrySave = onRetrySave)
+                    }
+                }
+            }
             if (week == null) {
                 item {
                     OutlinedCard {
@@ -120,7 +132,7 @@ fun PlanScreen(
                         onNext = { weekIndex++ },
                     )
                 }
-                items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it]) }
+                items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it], checkIns = checkIns) }
             }
             item {
                 PrimaryButton(
@@ -168,12 +180,13 @@ private fun weekRange(week: WeekPlan): String {
 
 internal fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
 
-private fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
+internal fun dayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
 
 /**
  * One day of the plan. With [onSelect], study sessions become single-choice options with
  * [selectedId] marked; existing schedules stay plain rows. The study session [movedId] gets a
- * “옮긴 일정” tag.
+ * “옮긴 일정” tag. With [checkIns], every study session also shows its report and a separate
+ * action to record it, outside the selectable option.
  */
 @Composable
 internal fun DaySection(
@@ -182,6 +195,7 @@ internal fun DaySection(
     onSelect: ((String) -> Unit)? = null,
     selectionEnabled: Boolean = true,
     movedId: String? = null,
+    checkIns: CheckInRows? = null,
 ) {
     if (day.sessions.isEmpty()) {
         MutedBox {
@@ -198,8 +212,11 @@ internal fun DaySection(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (session in day.sessions) {
                     val moved = !session.isExternal && session.scheduleId == movedId
-                    if (onSelect == null || session.isExternal) SessionRow(session, moved)
-                    else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved) { onSelect(session.scheduleId) }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (onSelect == null || session.isExternal) SessionRow(session, moved)
+                        else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved) { onSelect(session.scheduleId) }
+                        if (checkIns != null && !session.isExternal) CheckInRowAction(session, sessionLabel(session, day.date), checkIns)
+                    }
                 }
             }
         }
@@ -223,7 +240,7 @@ private fun SelectableSession(
     moved: Boolean,
     onClick: () -> Unit,
 ) {
-    val label = "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}" +
+    val label = sessionLabel(session, date) +
         (if (moved) " $MOVED_TAG" else "") + (if (enabled) "" else " $SELECTION_LOCKED")
     ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -233,7 +250,11 @@ private fun SelectableSession(
     }
 }
 
-private fun sessionTime(session: PlanSession) =
+/** Date, weekday, time and topic that name one session to assistive technology. */
+internal fun sessionLabel(session: PlanSession, date: LocalDate) =
+    "${monthDay(date)} ${dayLabel(date)} ${sessionTime(session)} ${session.topic}"
+
+internal fun sessionTime(session: PlanSession) =
     "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"
 
 @Composable

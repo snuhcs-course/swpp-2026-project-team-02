@@ -1,5 +1,7 @@
 package com.swpp.licenseplanner.ui
 
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
@@ -254,10 +256,10 @@ class PlanPersistenceViewModelTest {
             .copy(weeklyAvailability = mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))))
         val legacyB = legacyA.copy(weeklyAvailability = mapOf("wednesday" to listOf(TimeWindow("18:00", "19:00"))))
         val plans = PlanSnapshot(listOf(SessionPlan.register(1, legacyA, planA, false), SessionPlan.register(2, legacyB, planB, false)))
-        val v2 = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(plans, liveScope)).jsonObject
-        val v1 = JsonObject(v2 + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(v2.getValue("entries").jsonArray.map { entry ->
+        val current = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(plans, liveScope)).jsonObject
+        val v1 = JsonObject(current + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(current.getValue("entries").jsonArray.map { entry ->
             val original = entry.jsonObject.getValue("original").jsonObject
-            JsonObject(entry.jsonObject + ("original" to JsonObject(original - "availability_overrides")))
+            JsonObject(entry.jsonObject - "check_ins" + ("original" to JsonObject(original - "availability_overrides")))
         })))
         val legacyBytes = v1.toString().encodeToByteArray()
         disk.committed = legacyBytes.copyOf()
@@ -271,7 +273,7 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.generate())
         advanceUntilIdle()
         val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(2), saved["version"])
+        assertEquals(JsonPrimitive(3), saved["version"])
         assertEquals(plans.plans + vm.plan(3), restoredNow())
         assertEquals(mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))), restoredNow()[0].original.weeklyAvailability)
     }
@@ -849,5 +851,140 @@ class PlanPersistenceViewModelTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    // --- Study reports ---
+
+    private fun TestScope.report(vm: PlanFormViewModel, ordinal: Int, scheduleId: String, status: StudyCheckInStatus, minutes: String? = null): Boolean {
+        assertTrue(vm.startCheckIn(ordinal, scheduleId))
+        vm.chooseCheckInStatus(status)
+        minutes?.let(vm::setCheckInMinutes)
+        assertTrue(vm.saveCheckIn())
+        advanceUntilIdle()
+        return vm.checkIn.value?.save == CheckInSave.Saved
+    }
+
+    @Test fun failedReportSaveStaysUnsavedAndRetryCommitsItOnceWithoutRequests() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val adjustment = FakeAdjustment()
+        val (vm, store) = open(planning, adjustment)
+        generateAB(vm)
+        assertTrue(report(vm, 2, "study-1", StudyCheckInStatus.Missed))
+        vm.closeCheckIn()
+        val committed = disk.committed
+        val missed = StudyCheckIn(StudyCheckInStatus.Missed, 0)
+        val done = StudyCheckIn(StudyCheckInStatus.Done, 20)
+
+        disk.failWrites = true
+        assertFalse(report(vm, 2, "study-1", StudyCheckInStatus.Done, "20"))
+        assertEquals(CheckInSave.Unsaved, vm.checkIn.value!!.save)
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(done, vm.plan(2).checkInFor("study-1")) // the edit stays shown
+        assertEquals(missed, vm.savedPlans.value.single { it.ordinal == 2 }.checkInFor("study-1"))
+        assertTrue(isCheckInUnsaved(vm.plans.value, vm.savedPlans.value, 2, "study-1"))
+        assertArrayEquals(committed, disk.committed)
+        assertEquals(missed, restoredNow()[1].checkInFor("study-1"))
+
+        // Until the local save succeeds nothing else may change plans or send anything.
+        assertFalse(vm.saveCheckIn())
+        assertFalse(vm.startCheckIn(1, "study-1"))
+        assertFalse(vm.generate())
+        vm.select(1, "study-1")
+        assertFalse(vm.submitAdjustment())
+        assertFalse(vm.reloadPlan())
+        assertFalse(vm.startCalendarExport(1))
+        vm.retrySave() // fails again
+        advanceUntilIdle()
+        assertEquals(CheckInSave.Unsaved, vm.checkIn.value!!.save)
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+
+        disk.failWrites = false
+        val savesBefore = store.saves
+        vm.retrySave()
+        vm.retrySave() // a second tap while saving does nothing
+        advanceUntilIdle()
+        assertEquals(savesBefore + 1, store.saves)
+        assertEquals(CheckInSave.Saved, vm.checkIn.value!!.save)
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertFalse(isCheckInUnsaved(vm.plans.value, vm.savedPlans.value, 2, "study-1"))
+        assertEquals(2, planning.requests.size)
+        assertTrue(adjustment.inputs.isEmpty() && adjustment.reloadCalls == 0)
+
+        val (second, _) = open()
+        assertEquals(mapOf("study-1" to done), second.plan(2).checkIns)
+        assertTrue(second.plan(1).checkIns.isEmpty())
+        assertEquals(vm.plans.value, second.plans.value)
+    }
+
+    @Test fun processEndingDuringAReportSaveRestoresTheEarlierReport() = runTest(dispatcher) {
+        val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)))
+        assertTrue(first.generate())
+        advanceUntilIdle()
+        assertTrue(report(first, 1, "study-1", StudyCheckInStatus.Partly, "10"))
+        first.closeCheckIn()
+        val committed = disk.committed
+
+        val (second, store) = open { saveGates[1] = CompletableDeferred() }
+        assertFalse(report(second, 1, "study-1", StudyCheckInStatus.Done, "40"))
+        assertEquals(CheckInSave.Saving, second.checkIn.value!!.save)
+        assertEquals(1, store.saves)
+        assertArrayEquals(committed, disk.committed)
+
+        val (third, _) = open()
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 10), third.plan(1).checkInFor("study-1"))
+    }
+
+    @Test fun movedAndReloadedPlansKeepReportsByIdentityAfterReopening() = runTest(dispatcher) {
+        val reloadedA = rowsA.filter { it.scheduleId != "study-1" }
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA), AdjustmentOutcome.Failure(ApiError.Connection)).apply {
+            reloads += ReloadOutcome.Loaded(reloadedA)
+        }
+        val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(first)
+        assertTrue(report(first, 1, "study-1", StudyCheckInStatus.Partly, "45"))
+        assertTrue(report(first, 1, "study-2", StudyCheckInStatus.Done, "60"))
+        first.closeCheckIn()
+        val partly = StudyCheckIn(StudyCheckInStatus.Partly, 45)
+        val done = StudyCheckIn(StudyCheckInStatus.Done, 60)
+
+        // An explicit move keeps study-1's report with its new time.
+        first.select(1, "study-1")
+        assertTrue(first.submitAdjustment())
+        advanceUntilIdle()
+        val (second, _) = open(adjustment = adjustment)
+        assertEquals(movedA, second.plan(1).current.schedules)
+        assertEquals(partly, second.plan(1).checkInFor("study-1"))
+        assertEquals(done, second.plan(1).checkInFor("study-2"))
+        assertEquals(mondayWindows, second.plan(1).original.weeklyAvailability)
+
+        // An uncertain failure keeps every report with the durable gate.
+        second.select(1, "study-2")
+        assertTrue(second.submitAdjustment())
+        advanceUntilIdle()
+        val (third, _) = open(adjustment = adjustment)
+        assertEquals(PlanRecovery.ReloadRequired to "study-2", third.plan(1).recovery to third.plan(1).recoveryScheduleId)
+        assertEquals(mapOf("study-1" to partly, "study-2" to done), third.plan(1).checkIns)
+
+        // A reload without study-1 hides its report without giving it to another row.
+        assertTrue(third.selectPlan(1))
+        assertTrue(third.reloadPlan())
+        advanceUntilIdle()
+        val (fourth, _) = open()
+        val a = fourth.plan(1)
+        assertEquals(reloadedA, a.current.schedules)
+        assertNull(a.checkInFor("study-1"))
+        assertEquals(done, a.checkInFor("study-2"))
+        assertEquals(1, a.studyCount)
+        assertFalse(fourth.startCheckIn(1, "study-1"))
+
+        // Reporting B's own study-1 leaves A's hidden record and B's rows alone.
+        assertTrue(report(fourth, 2, "study-1", StudyCheckInStatus.Missed))
+        val (fifth, _) = open()
+        assertEquals(mapOf("study-1" to partly, "study-2" to done), fifth.plan(1).checkIns)
+        assertNull(fifth.plan(1).checkInFor("study-1"))
+        assertEquals(mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Missed, 0)), fifth.plan(2).checkIns)
+        assertEquals(rowsB, fifth.plan(2).current.schedules)
+        assertEquals(2, adjustment.inputs.size)
+        assertEquals(1, adjustment.reloadCalls)
     }
 }

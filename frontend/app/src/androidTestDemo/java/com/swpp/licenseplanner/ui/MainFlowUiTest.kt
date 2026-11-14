@@ -1,5 +1,11 @@
 package com.swpp.licenseplanner.ui
 
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import android.view.KeyEvent
+import androidx.test.platform.app.InstrumentationRegistry
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -223,6 +229,267 @@ class MainFlowUiTest {
         host.capture("replaced-week-incoming")
     }
 
+    @Test
+    fun longReturnedTopicsKeepReportsAndEditorActionsReachable() = withApp { host ->
+        val topic = "스프레드시트의 복잡한 함수와 데이터 관리 및 조건부 서식을 함께 연습하고 " +
+            "여러 시트의 자료를 연결하여 검토하는 긴 학습 단원 이름 — 마지막 부분까지 확인"
+        host.returnedTopic = topic
+        generatePlan(host)
+        val target = PlanGrouping.sessions(host.snapshot().plans.single().current.schedules).first { !it.isExternal }
+        assertEquals(topic, target.topic)
+        show(topic, lazy = true)
+        host.capture("long-generated-row")
+        openReport(target, edit = false)
+        show(topic)
+        host.capture("long-generated-editor")
+        click("일부 했어요")
+        minutesField().performScrollTo().performClick().performTextReplacement("0")
+        compose.waitUntil("Minutes keyboard is visible", 5_000) {
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        host.capture("long-minutes-ime")
+        click("기록 저장하기")
+        show("실제로 공부한 시간을 1분 이상의 정수(분)로 적어 주세요.")
+        host.capture("long-error-ime")
+        scrollTo(hasText("취소") and hasClickAction())
+        host.capture("long-actions-ime")
+        click("취소")
+        returnTo("내 계획", host)
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+        host.recreate()
+        openSavedPlan()
+        openReport(target, edit = false)
+        show(topic)
+        host.capture("long-reopened-editor")
+        click("다 했어요")
+        minutesField().performTextReplacement("20")
+        click("기록 저장하기")
+        returnTo("실패한 일정 선택", host)
+        show("다 했어요 · 실제 20분")
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+        host.capture("long-reopened-row")
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        host.capture("long-move-result")
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(1, host.adjustmentCalls.get())
+    }
+
+    @Test
+    fun reportMinutesAndActionsRemainReachableWithTheKeyboardOpen() = withApp { host ->
+        generatePlan(host)
+        val target = PlanGrouping.sessions(host.snapshot().plans.single().current.schedules).first { !it.isExternal }
+        openReport(target, edit = false)
+        click("일부 했어요")
+        minutesField().performScrollTo().performClick()
+        compose.waitUntil("The minutes keyboard opens", 5_000) {
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        minutesField().assertIsDisplayed().assertIsFocused()
+        val field = minutesField().getUnclippedBoundsInRoot()
+        val viewport = compose.onNode(hasScrollAction()).getUnclippedBoundsInRoot()
+        assertTrue("The whole minutes field fits above the keyboard", field.top >= viewport.top && field.bottom <= viewport.bottom)
+        minutesField().performTextReplacement("0")
+        host.capture("report-minutes-keyboard")
+        click("기록 저장하기")
+        show("실제로 공부한 시간을 1분 이상의 정수(분)로 적어 주세요.")
+        assertTrue("Validation stays reachable with the keyboard open",
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true)
+        host.capture("report-error-keyboard")
+        compose.onNodeWithText("취소").performScrollTo().assertIsDisplayed()
+        val cancel = compose.onNodeWithText("취소").getUnclippedBoundsInRoot()
+        assertTrue("The whole cancel action fits above the keyboard", cancel.top >= viewport.top && cancel.bottom <= viewport.bottom)
+        host.capture("report-actions-keyboard")
+        click("취소")
+        returnTo("내 계획", host)
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+
+        openReport(target, edit = false)
+        click("일부 했어요")
+        minutesField().performScrollTo().performClick().performTextReplacement("45")
+        click("기록 저장하기")
+        returnTo("내 계획", host)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), reportOf(host, target))
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(0, host.adjustmentCalls.get())
+    }
+
+    @Test
+    fun reportsGeneratedSessionWithEditableMinutesOvertimeValidationAndCancel() = withApp { host ->
+        generatePlan(host)
+        val plan = host.snapshot().plans.single()
+        val weeks = PlanGrouping.weeks(plan.current.schedules)
+        assertTrue("Generated plan has more than one browsable week", weeks.size > 1)
+        val target = weeks[1].days.flatMap { it.sessions }.first { !it.isExternal }
+        clickDescription("다음 주")
+        showWeek(weeks[1].monday, 1, weeks.size)
+        openReport(target, edit = false)
+        show(target.topic)
+        show(time(target))
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        minutesField().assertIsNotEnabled()
+        click("기록 저장하기")
+        show("다 했어요, 일부 했어요, 못 했어요 중 하나를 골라 주세요.")
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+
+        click("다 했어요")
+        compose.onNodeWithText("다 했어요").assertIsSelected()
+        minutesField().assertIsEnabled().assertTextEquals(target.durationMinutes.toString())
+        minutesField().performTextReplacement("20")
+        click("기록 저장하기")
+        returnTo("내 계획", host)
+        showWeek(weeks[1].monday, 1, weeks.size)
+        show("다 했어요 · 실제 20분", lazy = true)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+
+        openReport(target, edit = true)
+        compose.onNodeWithText("다 했어요").assertIsSelected()
+        minutesField().assertTextEquals("20")
+        click("일부 했어요")
+        minutesField().performTextReplacement("abc")
+        click("기록 수정하기")
+        show("실제로 공부한 시간을 1분 이상의 정수(분)로 적어 주세요.")
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+        val overtime = (target.durationMinutes + 15).toInt()
+        minutesField().performTextReplacement(overtime.toString())
+        click("기록 수정하기")
+        returnTo("내 계획", host)
+        showWeek(weeks[1].monday, 1, weeks.size)
+        show("일부 했어요 · 실제 ${overtime}분", lazy = true)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, overtime), reportOf(host, target))
+
+        val committed = host.snapshot()
+        openReport(target, edit = true)
+        click("못 했어요")
+        minutesField().assertIsNotEnabled()
+        click("취소")
+        returnTo("내 계획", host)
+        showWeek(weeks[1].monday, 1, weeks.size)
+        show("일부 했어요 · 실제 ${overtime}분", lazy = true)
+        assertEquals(committed, host.snapshot())
+        assertEquals(plan.current, host.snapshot().plans.single().current)
+        assertEquals("Reporting sends no planning request", 1, host.planningCalls.get())
+        assertEquals("Reporting sends no adjustment request", 0, host.adjustmentCalls.get())
+        host.capture("report-generated")
+    }
+
+    @Test
+    fun reportsReopenedSavedSessionAsMissedWithoutChangingTheAdjustmentSelection() = withApp { host ->
+        generatePlan(host)
+        host.recreate()
+        openSavedPlan()
+        val plan = host.snapshot().plans.single()
+        val firstWeek = PlanGrouping.weeks(plan.current.schedules).first()
+        val study = firstWeek.days.flatMap { it.sessions }.filterNot { it.isExternal }
+        assertTrue("The first week has two study sessions", study.size >= 2)
+        val selected = study[0]
+        val reported = study[1]
+        compose.onAllNodes(hasContentDescription(" 공부 기록하기", substring = true)).assertCountEquals(study.size)
+        clickSession(selected)
+        compose.onNodeWithText(sessionLabel(selected)).assertIsSelected()
+
+        openReport(reported, edit = false)
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        click("못 했어요")
+        minutesField().assertIsNotEnabled().assertTextEquals("0")
+        show("못 했어요는 0분으로 기록돼요.")
+        click("기록 저장하기")
+        returnTo("실패한 일정 선택", host)
+        compose.onNodeWithText(sessionLabel(selected)).assertIsSelected()
+        compose.onNodeWithText(sessionLabel(reported)).assertIsNotSelected()
+        compose.onNodeWithText("선택한 일정 조정하기").assertIsEnabled()
+        show("못 했어요 · 실제 0분")
+        val saved = host.snapshot().plans.single()
+        assertEquals(mapOf(reported.scheduleId to StudyCheckIn(StudyCheckInStatus.Missed, 0)), saved.checkIns)
+        assertEquals(plan.current, saved.current)
+        assertEquals(0, host.adjustmentCalls.get())
+
+        host.recreate()
+        openSavedPlan()
+        show("못 했어요 · 실제 0분")
+        compose.onNodeWithContentDescription(reportAction(reported, edit = true)).assertIsEnabled()
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        assertEquals(saved, host.snapshot().plans.single())
+        assertEquals(0, host.adjustmentCalls.get())
+        host.capture("report-saved")
+    }
+
+    @Test
+    fun failedReportSaveStaysUnsavedUntilLocalRetryAndFollowsTheMovedSession() = withApp { host ->
+        generatePlan(host)
+        host.recreate()
+        openSavedPlan()
+        val before = host.snapshot().plans.single()
+        val target = PlanGrouping.sessions(before.current.schedules).first { !it.isExternal }
+        openReport(target, edit = false)
+        click("다 했어요")
+        minutesField().performTextReplacement("20")
+        click("기록 저장하기")
+        returnTo("실패한 일정 선택", host)
+        val done = StudyCheckIn(StudyCheckInStatus.Done, 20)
+        assertEquals(done, reportOf(host, target))
+
+        host.failSaves.set(true)
+        openReport(target, edit = true)
+        click("일부 했어요")
+        minutesField().performTextReplacement("45")
+        click("기록 수정하기")
+        waitForText("공부 기록을 저장하지 못했어요")
+        show("저장된 기록: 다 했어요 · 실제 20분")
+        compose.onNodeWithText("일부 했어요").assertIsSelected().assertIsNotEnabled()
+        compose.onNodeWithText("다시 저장하기").assertIsEnabled()
+        assertEquals(done, reportOf(host, target))
+        host.capture("report-save-failed")
+        click("계획으로 돌아가기")
+        waitForText("실패한 일정 선택")
+        show("일부 했어요 · 실제 45분")
+        show("저장 안 됨")
+        show("기기에 계획을 저장하지 못했어요")
+        compose.onNodeWithContentDescription(reportAction(target, edit = true)).assertIsNotEnabled()
+        assertEquals(done, reportOf(host, target))
+
+        host.failSaves.set(false)
+        click("다시 저장하기")
+        host.awaitSaved()
+        compose.onNodeWithText("저장 안 됨").assertDoesNotExist()
+        val partly = StudyCheckIn(StudyCheckInStatus.Partly, 45)
+        assertEquals(partly, reportOf(host, target))
+        assertEquals("Retrying a report save sends no request", 0, host.adjustmentCalls.get())
+        assertEquals(1, host.planningCalls.get())
+
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        val after = host.snapshot().plans.single()
+        val moved = PlanGrouping.sessions(after.current.schedules).single { it.scheduleId == target.scheduleId }
+        assertNotEquals(target.start, moved.start)
+        assertEquals(mapOf(target.scheduleId to partly), after.checkIns)
+        assertEquals(1, host.adjustmentCalls.get())
+        show("일부 했어요 · 실제 45분")
+
+        host.recreate()
+        openSavedPlan()
+        val weeks = PlanGrouping.weeks(after.current.schedules)
+        val destination = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == target.scheduleId } } }
+        for (index in 0 until destination) clickDescription("다음 주")
+        showWeek(weeks[destination].monday, destination, weeks.size)
+        show("일부 했어요 · 실제 45분")
+        compose.onNodeWithContentDescription(reportAction(moved, edit = true)).assertIsEnabled()
+        assertEquals(after, host.snapshot().plans.single())
+        assertEquals("Reopening never replays the adjustment", 1, host.adjustmentCalls.get())
+    }
+
+    private fun pressBack() {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+    }
+
     private fun withApp(block: (DemoUiHost) -> Unit) {
         val host = DemoUiHost(compose, testName.methodName)
         try {
@@ -352,6 +619,26 @@ class MainFlowUiTest {
 
     private fun clickSession(session: PlanSession) = click(sessionLabel(session))
 
+    private fun reportAction(session: PlanSession, edit: Boolean) =
+        "${sessionLabel(session)} ${if (edit) "기록 수정하기" else "공부 기록하기"}"
+
+    private fun openReport(session: PlanSession, edit: Boolean) {
+        clickDescription(reportAction(session, edit))
+        waitForText("공부는 어땠나요?")
+        show("공부 기록")
+    }
+
+    private fun returnTo(title: String, host: DemoUiHost) {
+        waitForText(title)
+        host.awaitSaved()
+        compose.onNodeWithText("공부는 어땠나요?").assertDoesNotExist()
+    }
+
+    private fun minutesField() = compose.onNode(hasTestTag("actual-minutes"))
+
+    private fun reportOf(host: DemoUiHost, session: PlanSession): StudyCheckIn? =
+        host.snapshot().plans.single().checkIns[session.scheduleId]
+
     private fun movedMarker() = hasText("옮긴 일정", substring = true) and
         SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
 
@@ -387,6 +674,13 @@ class MainFlowUiTest {
     }
 
     private fun click(text: String, substring: Boolean = false, lazy: Boolean = false) {
+        if (compose.onAllNodes(hasTestTag("actual-minutes") and isFocused() and isEnabled()).fetchSemanticsNodes().isNotEmpty()) {
+            compose.waitUntil("The report keyboard finishes opening before the next tap", 5_000) {
+                ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+            compose.waitForIdle()
+        }
         val matcher = hasText(text, substring = substring) and hasClickAction()
         scrollTo(matcher, lazy)
         compose.onNode(matcher).assertIsEnabled().performClick()

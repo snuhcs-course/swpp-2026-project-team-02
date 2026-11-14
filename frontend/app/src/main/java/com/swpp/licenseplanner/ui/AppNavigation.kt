@@ -1,5 +1,7 @@
 package com.swpp.licenseplanner.ui
 
+import com.swpp.licenseplanner.ui.screens.CheckInRows
+import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -52,6 +54,7 @@ private object Routes {
     const val PLAN = "plan"
     const val SHORTFALL = "shortfall"
     const val EDIT_EXAM_DATE = "edit-exam-date"
+    const val CHECK_IN = "check-in"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -76,6 +79,24 @@ private fun openAppSettings(context: Context) {
         // The dialog already says where to allow access.
     }
 }
+
+/**
+ * Report entries for [plan]'s study rows: the shown report, whether it differs from the saved
+ * collection, and the action that opens the editor on its own route above the originating screen.
+ */
+private fun checkInRows(
+    viewModel: PlanFormViewModel,
+    nav: NavHostController,
+    plan: SessionPlan,
+    plans: List<SessionPlan>,
+    savedPlans: List<SessionPlan>,
+    storage: PlanStorage,
+) = CheckInRows(
+    reportFor = { plan.checkInFor(it) },
+    isUnsaved = { isCheckInUnsaved(plans, savedPlans, plan.ordinal, it) },
+    enabled = storage == PlanStorage.Ready,
+    onOpen = { scheduleId -> if (viewModel.startCheckIn(plan.ordinal, scheduleId)) nav.go(Routes.CHECK_IN) },
+)
 
 /** Study sessions a plan's export would add. */
 private fun exportCount(plan: SessionPlan) = CalendarExport.studyRows(plan.current.schedules).size
@@ -157,6 +178,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
         composable(Routes.ADJUST) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val selection by viewModel.adjustment.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
             if (plan == null) {
@@ -182,6 +204,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onManualConfirm = { viewModel.confirmOutsideAvailability() },
                     onManualRevise = viewModel::reviseManualMove,
                     onManualCancel = viewModel::cancelManualMove,
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                 )
             }
         }
@@ -271,6 +294,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         // Reads the stored plan, so an adjustment made from the list is shown here too.
         composable(Routes.PLAN) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == generatedPlan }
             if (plan == null) {
@@ -285,6 +309,37 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
                     onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    storage = storage,
+                    onRetrySave = viewModel::retrySave,
+                )
+            }
+        }
+        // The report editor sits above the plan or saved-plan screen it was opened from, so closing
+        // it returns to the same week with the adjustment selection untouched. A confirmed save
+        // closes it; popping is idempotent, so a repeated empty frame cannot leave that screen.
+        composable(Routes.CHECK_IN) {
+            val editor by viewModel.checkIn.collectAsStateWithLifecycle()
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val current = editor
+            val plan = current?.let { open -> plans.firstOrNull { it.ordinal == open.planOrdinal } }
+            LaunchedEffect(current?.save) {
+                if (current?.save == CheckInSave.Saved) viewModel.closeCheckIn()
+            }
+            if (current == null || plan == null) {
+                LaunchedEffect(Unit) {
+                    viewModel.closeCheckIn()
+                    nav.popBackStack(Routes.CHECK_IN, inclusive = true)
+                }
+            } else {
+                StudyCheckInScreen(
+                    plan = plan,
+                    editor = current,
+                    onStatus = viewModel::chooseCheckInStatus,
+                    onMinutes = viewModel::setCheckInMinutes,
+                    onSave = { viewModel.saveCheckIn() },
+                    onRetrySave = viewModel::retrySave,
+                    onClose = viewModel::closeCheckIn,
                 )
             }
         }

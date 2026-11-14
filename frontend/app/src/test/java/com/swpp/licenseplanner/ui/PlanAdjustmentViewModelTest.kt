@@ -1,5 +1,7 @@
 package com.swpp.licenseplanner.ui
 
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -1316,5 +1318,61 @@ class PlanAdjustmentViewModelTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    // --- Study reports ---
+
+    private fun TestScope.report(vm: PlanFormViewModel, ordinal: Int, scheduleId: String, status: StudyCheckInStatus, minutes: String? = null) {
+        assertTrue(vm.startCheckIn(ordinal, scheduleId))
+        vm.chooseCheckInStatus(status)
+        minutes?.let(vm::setCheckInMinutes)
+        assertTrue(vm.saveCheckIn())
+        advanceUntilIdle()
+        vm.closeCheckIn()
+    }
+
+    @Test fun reportsFollowTheirRowsThroughAutomaticAndChosenMovesAndFailures() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(adjustedA),
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+            AdjustmentOutcome.Failure(ApiError.Connection),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        report(vm, 1, "study-1", StudyCheckInStatus.Partly, "45")
+        report(vm, 1, "study-2", StudyCheckInStatus.Missed)
+        report(vm, 2, "study-1", StudyCheckInStatus.Done, "20")
+        assertTrue(adjustment.inputs.isEmpty()) // reporting requested no adjustment
+        val reportsA = mapOf(
+            "study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 45),
+            "study-2" to StudyCheckIn(StudyCheckInStatus.Missed, 0),
+        )
+        val b = vm.plan(2)
+        assertEquals(mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20)), b.checkIns)
+
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(movedA, vm.plan(1).current.schedules)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), vm.plan(1).checkInFor("study-1"))
+        assertEquals(mondayWindows, adjustment.inputs[0].original.weeklyAvailability)
+
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        assertTrue(vm.submitManualMove())
+        advanceUntilIdle()
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired to "study-2", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+        assertEquals(mondayWindows, vm.plan(1).original.weeklyAvailability)
+        assertEquals(b, vm.plan(2))
+        assertEquals(3, adjustment.inputs.size)
     }
 }

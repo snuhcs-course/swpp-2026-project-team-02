@@ -10,6 +10,8 @@ questions → set weekday study windows (and optional per-week changes; see
 day. Adjustment: pick a plan saved on this device → mark one missed
 study session → see the updated plan, or move that session to a time you
 choose (시간 직접 옮기기). See [Plan adjustment](#plan-adjustment).
+Both the new plan and a reopened saved plan let you record how each study session
+went (공부 기록하기); see [Study reports](#study-reports).
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
 warning, “시험 일정 바꾸기” opens an editor with only the exam date. Confirming a
@@ -368,6 +370,11 @@ created before this storage existed, cannot be recovered from the server,
 whose list lacks the original creation inputs. Form drafts, navigation and the
 moved-session tag are not saved.
 
+**Snapshot versions.** Saving writes version 3, with study-session reports keyed
+by study-row ID within each plan. Versions 1 and 2 load without reports and are
+not rewritten until the next save. Downgrading requires a compatible backup.
+Reports for rows no longer shown are retained without being assigned to another row.
+
 At start the app reads the saved list before anything can change it. While it
 reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or
 an empty list. If the saved data cannot be read (damaged, or written by a newer
@@ -386,6 +393,20 @@ writes the local file; it never repeats the generation, adjustment or reload.
 A new plan whose save failed stays on the generation screen, which also offers
 저장하지 않은 계획 보기. Plans keep their numbers, and the next generation gets the
 next number after the highest saved one.
+
+**Saving a study report.** A report is written only by an explicit save of the
+report editor, which replaces that plan's report for that one study row and
+saves the whole list the same way; cancelling before saving writes nothing.
+Opening or saving a report never sends a generation, adjustment, reload or
+calendar request, and does not change the plan's rows, adjustment selection or
+reload/missing state, so a plan awaiting reload or missing can still be
+reported. A report cannot be saved while a generation, adjustment, reload,
+calendar export or another save is running, and a second tap while saving does
+nothing. If the save fails, the edited report stays shown but is not saved: the
+list is in the save-failure state above, other plan changes wait, and 다시 저장하기
+writes only the local file. Reports stay on this device in the same per-build
+list; they are not sent to the server, shared between devices or kept after
+uninstalling.
 
 **Closing the app during a request.** A live adjustment, including 다시 시도,
 is sent only after the plan has been saved as needing a reload, together with
@@ -998,6 +1019,32 @@ the returned `schedules` against the inputs: sessions inside the chosen windows,
 no overlaps, everything before the exam date, topic coverage, and response
 time. Live adjustment results mean nothing until the backend dependency in
 [Plan adjustment](#plan-adjustment) is met.
+
+## Study reports
+
+Every study session of the new plan (내 계획) and of a reopened saved plan
+(실패한 일정 선택) shows its report, or 아직 기록하지 않았어요, with a separate
+공부 기록하기 / 기록 수정하기 action under the row. Existing calendar rows have no
+action. The action does not select the session for adjustment, and closing the
+editor returns to the same week with any selection unchanged. It waits while a
+request or save runs (it is disabled during a save or an adjustment).
+
+The editor shows the plan, topic, scheduled time and planned duration, then the
+status (다 했어요 / 일부 했어요 / 못 했어요; none is preselected for a new report) and
+the actual minutes as a separate field. 다 했어요 suggests the planned minutes;
+both 다 했어요 and 일부 했어요 accept any positive whole number of minutes, including
+more than planned; 못 했어요 disables the field and saves 0. Invalid entries show
+an error and keep the saved report. 기록 저장하기 / 기록 수정하기 saves explicitly
+and returns to the plan; 취소 or back writes nothing. Rows show the saved status
+and actual minutes (for example 다 했어요 · 실제 20분) apart from the scheduled
+duration.
+
+If the save fails, the editor says 공부 기록을 저장하지 못했어요 and offers
+다시 저장하기; after closing it, the row shows the edit with 저장 안 됨 and the plan
+screen offers the same local retry. See **Saving a study report** above for
+blocking and device-local limits. Reports do not change the schedule, are not
+sent to the server or the calendar, and do not estimate mastery; there is no
+skip (이미 아는 내용이에요) action and no history of earlier reports.
 
 ## Known limitations
 

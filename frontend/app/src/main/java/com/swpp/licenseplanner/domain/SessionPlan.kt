@@ -20,6 +20,9 @@ enum class PlanRecovery {
  * [recovery] lives on the entry, so changing selection or plan never clears it.
  * [recoveryScheduleId] is the failed session whose uncertain adjustment requires the reload;
  * it is set only while [recovery] is [PlanRecovery.ReloadRequired].
+ * [checkIns] holds this plan's study reports by study-row ID; IDs repeat across plans, so a report
+ * belongs only to its own plan. A report whose row is no longer shown is kept but never treated as
+ * a current session's report.
  */
 data class SessionPlan(
     val ordinal: Int,
@@ -29,6 +32,7 @@ data class SessionPlan(
     val scheduleCsvFile: String?,
     val recovery: PlanRecovery = PlanRecovery.Ready,
     val recoveryScheduleId: String? = null,
+    val checkIns: Map<String, StudyCheckIn> = emptyMap(),
 ) {
     val studyCount: Int get() = current.schedules.count { !it.scheduleId.startsWith(EXTERNAL_PREFIX) }
 
@@ -41,8 +45,23 @@ data class SessionPlan(
     fun isStudy(scheduleId: String): Boolean =
         !scheduleId.startsWith(EXTERNAL_PREFIX) && current.schedules.any { it.scheduleId == scheduleId }
 
+    /** The report for a study row currently shown in this plan, or null when it is unreported. */
+    fun checkInFor(scheduleId: String): StudyCheckIn? = checkIns[scheduleId]?.takeIf { isStudy(scheduleId) }
+
+    /**
+     * This plan with [checkIn] replacing only [scheduleId]'s report, or null when the row is not a
+     * current study row or the report is invalid. Rows, recovery and other reports stay unchanged.
+     */
+    fun withCheckIn(scheduleId: String, checkIn: StudyCheckIn): SessionPlan? {
+        if (!isStudy(scheduleId) || !checkIn.isValid) return null
+        return copy(checkIns = checkIns + (scheduleId to checkIn))
+    }
+
     companion object {
         private const val EXTERNAL_PREFIX = "external-"
+
+        /** Whether [scheduleId] could name a study row at all: nonblank and not an external event. */
+        fun isStudyId(scheduleId: String): Boolean = scheduleId.isNotBlank() && !scheduleId.startsWith(EXTERNAL_PREFIX)
 
         fun register(ordinal: Int, request: StudyPlanRequest, response: StudyPlanResponse, isDemo: Boolean) = SessionPlan(
             ordinal = ordinal,

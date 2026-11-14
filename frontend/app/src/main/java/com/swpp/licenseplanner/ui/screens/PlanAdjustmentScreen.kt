@@ -108,6 +108,7 @@ fun PlanAdjustmentScreen(
     onManualConfirm: () -> Unit,
     onManualRevise: () -> Unit,
     onManualCancel: () -> Unit,
+    checkIns: CheckInRows,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
@@ -292,8 +293,16 @@ fun PlanAdjustmentScreen(
             val selectable = mode == AdjustmentMode.Adjustable && !loading
             val showChoices = selectable || selection.failedScheduleId != null
             val movedId = movedScheduleId(plan, state)
+            val reports = CheckInRows(checkIns.reportFor, checkIns.isUnsaved, checkIns.enabled && !busy, checkIns.onOpen)
             for (day in week.days) {
-                DaySection(day, selection.failedScheduleId, if (showChoices) onSelect else null, selectionEnabled = selectable, movedId = movedId)
+                DaySection(
+                    day,
+                    selection.failedScheduleId,
+                    if (showChoices) onSelect else null,
+                    selectionEnabled = selectable,
+                    movedId = movedId,
+                    checkIns = reports,
+                )
             }
         }
     }
