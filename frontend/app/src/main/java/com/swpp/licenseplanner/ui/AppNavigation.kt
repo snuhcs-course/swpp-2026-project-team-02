@@ -279,6 +279,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                 onRetrySave = viewModel::retrySave,
                 onShowPlan = { nav.showResult(Routes.PLAN) },
+                onCancelGeneration = {
+                    viewModel.cancelGeneration()
+                    nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+                },
             )
         }
         // Reads the stored plan, so an adjustment made from the list is shown here too.

@@ -1,7 +1,14 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.ui.GenerationState
 import com.swpp.licenseplanner.ui.PlanStorage
@@ -15,8 +22,8 @@ import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.userMessage
 
 /**
- * Loading while the single request is in flight (back is held so the result
- * is not lost), then an error with retry of the same request and a way back to edit.
+ * Loading while the single request is in flight; back asks whether to cancel generation or stay.
+ * Errors offer retry of the same request and a way back to edit.
  * A new plan is shown once it is saved on the device; the navigation host routes success and
  * the demo shortfall away. If saving fails, the plan can be saved again or viewed unsaved.
  */
@@ -28,9 +35,26 @@ fun GenerateScreen(
     onEdit: () -> Unit,
     onRetrySave: () -> Unit,
     onShowPlan: () -> Unit,
+    onCancelGeneration: () -> Unit,
 ) {
     val saving = state is GenerationState.Success && storage == PlanStorage.Saving
-    BackHandler(enabled = state == GenerationState.Loading || saving) {}
+    var showCancelDialog by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = state == GenerationState.Loading || saving) {
+        if (state == GenerationState.Loading) showCancelDialog = true
+    }
+    if (showCancelDialog && state == GenerationState.Loading) {
+        AlertDialog(
+            onDismissRequest = { showCancelDialog = false },
+            title = { Text("계획 생성을 취소할까요?") },
+            text = { Text("계획 생성을 취소하고 공부 시간 입력 화면으로 돌아가요. 입력한 내용은 유지돼요.") },
+            confirmButton = {
+                TextButton(onClick = onCancelGeneration) { Text("계획 생성 취소") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelDialog = false }) { Text("뒤로 돌아가기 취소") }
+            },
+        )
+    }
     val failure = state as? GenerationState.Failure
     val unsaved = state is GenerationState.Success && storage == PlanStorage.SaveFailure
     AppScreen(

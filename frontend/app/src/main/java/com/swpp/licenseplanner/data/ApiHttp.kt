@@ -1,12 +1,17 @@
 package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.data.model.ApiErrorEnvelope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import kotlin.coroutines.resume
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -56,6 +61,36 @@ internal suspend fun OkHttpClient.executeApi(
             HttpOutcome.Failed(classifyTransportError(error))
         }
     }
+
+/** Async counterpart that cancels the underlying OkHttp call when its coroutine is cancelled. */
+internal suspend fun OkHttpClient.executeApiCancellable(
+    request: Request,
+    io: CoroutineDispatcher = Dispatchers.IO,
+    planErrors: Boolean = false,
+): HttpOutcome = withContext(io) { suspendCancellableCoroutine { continuation ->
+    val call = newCall(request.newBuilder().header("Connection", "close").build())
+    continuation.invokeOnCancellation { call.cancel() }
+    call.enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            continuation.resume(HttpOutcome.Failed(classifyTransportError(e)))
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            val outcome = try {
+                response.outcome(planErrors)
+            } catch (error: Exception) {
+                HttpOutcome.Failed(classifyTransportError(error))
+            }
+            continuation.resume(outcome)
+        }
+    })
+} }
+
+private fun Response.outcome(planErrors: Boolean): HttpOutcome = use {
+    val body = body.string()
+    if (isSuccessful) HttpOutcome.Ok(body)
+    else HttpOutcome.Failed(errorForStatus(code, body, planErrors))
+}
 
 internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = false): ApiError {
     val error = try {

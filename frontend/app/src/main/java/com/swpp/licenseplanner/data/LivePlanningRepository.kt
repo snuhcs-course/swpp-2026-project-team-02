@@ -26,7 +26,7 @@ class LivePlanningRepository(
             .url(apiUrl(baseUrl, "/study-plans"))
             .post(body)
             .build()
-        return when (val outcome = client.executeApi(httpRequest, io)) {
+        return when (val outcome = client.executeApiCancellable(httpRequest, io)) {
             is HttpOutcome.Failed -> PlanOutcome.Failure(outcome.error)
             is HttpOutcome.Ok -> parse(outcome.body)
         }

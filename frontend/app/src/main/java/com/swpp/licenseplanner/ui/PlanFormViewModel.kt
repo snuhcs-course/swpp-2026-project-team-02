@@ -54,6 +54,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
@@ -159,6 +162,7 @@ class PlanFormViewModel(
 
     /** The request sent by the latest generate(); retry resends exactly this. */
     private var lastRequest: StudyPlanRequest? = null
+    private var generationJob: Job? = null
 
     /** Every successful generation saved on this device, oldest first; never removed. */
     private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
@@ -351,11 +355,24 @@ class PlanFormViewModel(
         send(lastRequest ?: return)
     }
 
+    /** Cancels an in-flight generation while keeping the user's form values available to edit. */
+    fun cancelGeneration(): Boolean {
+        if (_generation.value != GenerationState.Loading) return false
+        generationJob?.cancel()
+        generationJob = null
+        lastRequest = null
+        _generatedPlan.value = null
+        _generation.value = GenerationState.Idle
+        return true
+    }
+
     private fun send(request: StudyPlanRequest) {
         lastRequest = request
         _generation.value = GenerationState.Loading
-        viewModelScope.launch {
-            when (val outcome = planningRepository.generate(request)) {
+        generationJob = viewModelScope.launch {
+            val outcome = planningRepository.generate(request)
+            currentCoroutineContext().ensureActive()
+            when (outcome) {
                 is PlanOutcome.Success -> {
                     // Registered here, once per success; never from a screen. If saving fails, the
                     // same entry stays in memory and only saving is retried.

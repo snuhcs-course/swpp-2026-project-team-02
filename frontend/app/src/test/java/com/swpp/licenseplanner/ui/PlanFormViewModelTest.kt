@@ -207,6 +207,31 @@ class PlanFormViewModelTest {
         assertEquals(GenerationState.Success(plan, isDemo = false), vm.generation.value)
     }
 
+    @Test fun cancellingGenerationKeepsInputsAndAllowsAnotherRequest() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(plan, isDemo = false)).apply {
+            gate = CompletableDeferred()
+        }
+        val vm = loadedViewModel(planning)
+        val originalForm = vm.form.value
+
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(GenerationState.Loading, vm.generation.value)
+
+        assertTrue(vm.cancelGeneration())
+        assertFalse(vm.cancelGeneration())
+        advanceUntilIdle()
+        assertEquals(GenerationState.Idle, vm.generation.value)
+        assertEquals(originalForm, vm.form.value)
+        assertTrue(vm.plans.value.isEmpty())
+
+        planning.gate = null
+        assertTrue(vm.generate())
+        advanceUntilIdle()
+        assertEquals(2, planning.requests.size)
+        assertEquals(GenerationState.Success(plan, isDemo = false), vm.generation.value)
+    }
+
     /** The demo planner never suspends; on Main.immediate its result is set before generate() returns. */
     @Test fun immediateLocalResultStillReportsTheRequestAsSent() = runTest(dispatcher) {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
