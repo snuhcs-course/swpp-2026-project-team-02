@@ -579,7 +579,7 @@ class ProposalGuidanceTests(unittest.TestCase):
             self.assertEqual(build_item_schema(request)["date"]["enum"], list(self.USABLE))
         self.assertEqual(sum((b.end_datetime - b.start_datetime for b in tools.schedule), timedelta()),
                          timedelta(minutes=180))
-        self.assertTrue(summary.startswith("3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다."))
+        self.assertTrue(summary.startswith("3개 학습 주제에 학습 일정 6개, 총 180분을 배치했습니다."))
 
     def test_uncorrected_feasible_proposals_end_as_upstream_failures(self):
         varied = [minutes(("2026/10/19", CHARTS, 121 + extra)) for extra in range(5)]

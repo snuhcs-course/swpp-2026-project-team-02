@@ -271,9 +271,9 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
 
     def test_summary_sentences_are_separated_and_need_no_model_request(self):
         expected = {
-            "20:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
+            "20:00": "3개 학습 주제에 학습 일정 6개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
                      "공부 가능 시간의 일부는 여유 시간으로 남겼습니다.",
-            "19:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
+            "19:00": "3개 학습 주제에 학습 일정 6개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
         }
         for wednesday_end, text in expected.items():
             with self.subTest(wednesday_end):
@@ -283,7 +283,7 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
                 ], payload=three_topic_payload(wednesday_end))
                 self.assertEqual(summary, text)
                 self.assertEqual((len(provider.bodies), agent.api_request_count, len(provider.replies)), (2, 2, 1))
-                self.assertEqual(len(tools.schedule), 4)
+                self.assertEqual(len(tools.schedule), 6)
 
     def run_dense(self, busy):
         build = ("build_study_schedule", {"daily_topic_minutes": [

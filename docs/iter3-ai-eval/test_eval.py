@@ -79,6 +79,24 @@ class EvaluationTests(unittest.TestCase):
         request["availability_overrides"]["2026/11/09"] = {}
         self.assertEqual(run_eval.available_minutes(request), 0)
 
+    def test_pairwise_order_detects_a_nonweakest_inversion(self):
+        topics = ["weak", "middle", "strong"]
+        case = {"case_id": "order-oracle", "request": {
+            "preparation_start": "2026/11/09/00/00", "exam_date": "2026/11/10/00/00",
+            "weekly_availability": {"monday": [{"start": "09:00", "duration_minutes": 180}]}},
+            "expect": {"ordering_applies": True, "topic_scores": dict(zip(topics, [0, 50, 100])), "weakest_topics": ["weak"]}}
+        rows, start = [], run_eval.dt("2026/11/09/09/00")
+        for topic, minutes in zip(topics, [60, 10, 20]):
+            end = start + run_eval.timedelta(minutes=minutes)
+            rows.append({"schedule_id": "study-" + topic, "topic": topic,
+                         "start_date": start.strftime(run_eval.FMT), "end_date": end.strftime(run_eval.FMT)})
+            start = end
+        hard, quality, _ = run_eval.check_plan(case, rows, topics)
+        self.assertTrue(all(hard.values()))
+        self.assertTrue(quality["Q1"])
+        self.assertFalse(quality["Q7_weak_order"])
+        self.assertEqual(quality["Q7_inversions"], 1)
+
     def test_quality_detects_reversed_allocation_and_overlap(self):
         case = next(c for c in self.cases if c["case_id"] == "A03")
         weakest = case["expect"]["weakest_topics"][0]

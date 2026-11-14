@@ -7,6 +7,7 @@ from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
 from .scheduler import available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date
 from .settings import DATETIME_FORMAT
+from .topic_budget import POLICY_VERSION, rebalance_topic_minutes, validate_topic_budget
 
 
 def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool) -> None:
@@ -208,14 +209,28 @@ class PlannerTools:
             if set(minutes_by_topic) != topics:
                 missing, extra = sorted(topics - set(minutes_by_topic)), sorted(set(minutes_by_topic) - topics)
                 raise ValueError(f"daily_topic_minutes must cover assessed topics; missing={missing}, extra={extra}")
-            self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
-                                              normalized_plan)
+            # Validate the original model proposal before changing any topic
+            # labels: invalid dates, missing topics and over-capacity days stay errors.
+            schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan)
+            topic_budget = None
+            if self.topic_statistics:
+                normalized_plan, topic_budget = rebalance_topic_minutes(self.topic_statistics, normalized_plan)
+                schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan)
+                actual = {topic: 0 for topic in topic_budget}
+                for block in schedule:
+                    actual[block.topic] += int((block.end_datetime - block.start_datetime).total_seconds() // 60)
+                validate_topic_budget(self.topic_statistics, actual, sum(minutes_by_topic.values()))
+                if actual != topic_budget:
+                    raise ValueError("placed study minutes differ from the calculated topic budget")
+            self.schedule = schedule
         except ValueError as error:
             return f"SCHEDULE_ERROR: {error}"
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": sum(minutes_by_topic.values()),
                 "usable_minutes": available_minutes(self.request),
                 "daily_topic_minutes": normalized_plan,
+                "topic_budget": topic_budget,
+                "topic_budget_policy": POLICY_VERSION if topic_budget is not None else None,
                 "uses_personal_availability": self.request.weekly_availability is not None,
                 "schedule": [
                     {"schedule_id": b.schedule_id, "topic": b.topic,
@@ -283,7 +298,7 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
          "parameters": {"type": "object", "properties": {"certification_id": {"type": "string", "enum": sorted(CERTIFICATIONS)}}, "required": ["certification_id"]}},
         {"name": "analyze_exam_results", "description": "Questions listed in assessment_results are unresolved: examine each question, correct answer, user answer, and validated local correctness. Map every unresolved question, and no other question, to one or more of this certification's fixed topics with contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Questions counted in reviewed_question_count already have fixed topics; never include their IDs. When no question is unresolved, omit problem_topics. Do not infer an answer or correctness. The tool combines reviewed and mapped results into weighted earned/possible points per topic.",
          "parameters": {"type": "object", "properties": {"problem_topics": {"type": "array", "items": {"type": "object", "properties": {"problem_id": {"type": "integer"}, "topics": {"type": "array", "items": {"type": "object", "properties": {"topic": {"type": "string", "enum": known_topics}, "weight": {"type": "number"}}, "required": ["topic", "weight"]}}}, "required": ["problem_id", "topics"]}}}, "required": []}},
-        {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
+        {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the proposal, preserves total minutes and each date's total, then rebalances diagnosed topics using weight 2 - score_percent/100 after reserving one minute per topic. The returned topic_budget and daily_topic_minutes describe actual allocations; summarize those returned values. It places this workload within the user's available time. Call analyze_exam_results first.",
          "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": build_date, "topic": build_topic, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},
     ]
 
