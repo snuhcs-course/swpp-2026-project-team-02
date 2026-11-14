@@ -11,7 +11,8 @@ from license_planner.models import (
     AssessmentItem, BusyPeriod, InsufficientCapacityError, PlanRequest, ProblemResult,
 )
 from license_planner.scheduler import (
-    available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date,
+    available_minutes, generate_schedule, repeat_plan_for_review, summarize_topic_results,
+    usable_minutes_by_date,
 )
 from license_planner.tools import PlannerTools, check_initial_capacity
 from license_planner.user_availability import parse_weekly_availability
@@ -113,6 +114,47 @@ class UsableCapacityTests(unittest.TestCase):
         stats = summarize_topic_results((ProblemResult(1, CHARTS, 1, 0),))
         block, = generate_schedule(adjacent, CERT, stats, minutes(("2026/10/19", CHARTS, 60)))
         self.assertEqual((block.start_datetime, block.end_datetime), (at(MONDAY, 20), at(MONDAY, 21)))
+
+
+class ReviewRoundTests(unittest.TestCase):
+    def test_only_complete_rounds_are_added_and_remainder_stays_spare(self):
+        request = make_request(
+            start=at(MONDAY, 18), exam=at(MONDAY, 23),
+            windows={"monday": [{"start": "18:00", "end": "23:00"}]})
+        primary = minutes(("2026/10/19", CHARTS, 120))
+
+        expanded, review_minutes = repeat_plan_for_review(request, primary, [CHARTS])
+
+        self.assertEqual(sum(row["minutes"] for row in expanded), 240)
+        self.assertEqual(review_minutes, 120)
+        self.assertEqual(available_minutes(request) - sum(row["minutes"] for row in expanded), 60)
+
+    def test_exact_capacity_multiple_fills_only_whole_rounds(self):
+        request = make_request(
+            start=at(MONDAY, 18), exam=at(MONDAY, 23),
+            windows={"monday": [{"start": "18:00", "end": "23:00"}]})
+        primary = minutes(("2026/10/19", CHARTS, 100))
+
+        expanded, review_minutes = repeat_plan_for_review(request, primary, [CHARTS])
+
+        self.assertEqual(sum(row["minutes"] for row in expanded), 300)
+        self.assertEqual(review_minutes, 200)
+        self.assertEqual(available_minutes(request) - sum(row["minutes"] for row in expanded), 0)
+
+    def test_planner_tool_reports_base_and_added_review_minutes(self):
+        request = make_request(
+            start=at(MONDAY, 18), exam=at(MONDAY, 20),
+            windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        tools = PlannerTools(request)
+        tools.results_analyzed = True
+        tools.topic_statistics = summarize_topic_results((ProblemResult(1, CHARTS, 1, 0),))
+        result = tools.call("build_study_schedule", {"daily_topic_minutes": minutes(
+            ("2026/10/19", CHARTS, 60))})
+
+        self.assertEqual(result["agent_requested_minutes"], 60)
+        self.assertEqual(result["review_minutes"], 60)
+        self.assertEqual(result["total_planned_minutes"], 120)
+        self.assertEqual(result["usable_minutes"], 120)
 
     def test_disjoint_and_weekend_windows_count_only_dates_inside_the_period(self):
         windows = {"monday": [{"start": "18:00", "end": "19:00"}],
@@ -306,9 +348,9 @@ class TerminalBuildTests(unittest.TestCase):
 
         self.assertEqual(ask_model.call_count, 1)
         self.assertEqual(len(tools.schedule), 1)
-        self.assertTrue(summary.startswith("1개 학습 주제에 학습 일정 1개, 총 60분을 배치했습니다."))
+        self.assertTrue(summary.startswith("1개 학습 주제에 학습 일정 1개, 총 120분을 배치했습니다."))
         self.assertIn("총 120분입니다.", summary)
-        self.assertIn("공부 가능 시간의 일부는 여유 시간으로 남겼습니다.", summary)
+        self.assertIn("복습 60분을 추가했습니다.", summary)
 
     def test_build_on_the_last_permitted_request_is_returned(self):
         rejected = [model_reply(("build_study_schedule", {"daily_topic_minutes": minutes(
@@ -487,7 +529,7 @@ class ProposalGuidanceTests(unittest.TestCase):
                               [CHARTS, BASICS])
         self.assertCountEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS, BASICS])
         self.assertEqual(len(sent), 2)
-        self.assertEqual(len(tools.schedule), 2)
+        self.assertEqual(len(tools.schedule), 4)
 
     def test_varied_invalid_proposals_can_be_corrected_on_the_last_request(self):
         all_topics = mapping(BASICS, FUNCTIONS, CHARTS, questions=3)

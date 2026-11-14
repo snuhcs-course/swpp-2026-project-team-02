@@ -24,9 +24,16 @@ AGENT_SYSTEM_PROMPT = (
     "Use the user's validated local correctness as supplied. Use the user's free-form self-assessment and topic scores "
     "directly to choose study minutes per topic and date. Do not classify users into fixed readiness "
     "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
-    "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
-    "more time. For example, distribute 120 planned minutes across two equivalent available dates "
-    "as about 60 minutes per date, not all 120 on one date. If a tool reports an error, explain it. "
+    "limit. Keep each topic's study time together in as few contiguous blocks as practical: do not "
+    "alternate between topics within a day, and prefer adjacent available dates when one topic needs "
+    "more than one day. Balance overall weekly workload across available dates without fragmenting "
+    "a topic unnecessarily, while giving weaker topics more time. For example, distribute 120 planned "
+    "minutes across two equivalent dates as about 60 minutes per date, not all 120 on one date, but "
+    "keep each date's minutes for that topic in one contiguous block. Busy periods and availability "
+    "gaps may require a topic block to be split. If a tool reports an error, explain it. "
+    "Return only the primary evidence-based allocation. The application may add complete review rounds "
+    "using the same topic-minute mix when total capacity allows; any capacity smaller than a complete "
+    "round remains spare time. Do not pad the primary allocation. "
     "When tools succeed, briefly summarize that the application will return the CSV."
 )  # Agent role and tool-use constraints.
 
@@ -40,6 +47,10 @@ def _build_summary(result: dict) -> str:
     usable = result['usable_minutes']
     summary = (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
                f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
+    review_minutes = result.get("review_minutes", 0)
+    if review_minutes:
+        summary += (f" Agent 기본 배정 {result['agent_requested_minutes']}분을 기준으로 "
+                    f"복습 {review_minutes}분을 추가했습니다.")
     if planned < usable:
         summary += " 공부 가능 시간의 일부는 여유 시간으로 남겼습니다."
     return summary

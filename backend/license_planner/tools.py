@@ -5,7 +5,8 @@ from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
-from .scheduler import available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date
+from .scheduler import (available_minutes, generate_schedule, repeat_plan_for_review,
+                        summarize_topic_results, usable_minutes_by_date)
 from .settings import DATETIME_FORMAT
 
 
@@ -208,12 +209,28 @@ class PlannerTools:
             if set(minutes_by_topic) != topics:
                 missing, extra = sorted(topics - set(minutes_by_topic)), sorted(set(minutes_by_topic) - topics)
                 raise ValueError(f"daily_topic_minutes must cover assessed topics; missing={missing}, extra={extra}")
-            self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
-                                              normalized_plan)
+            # Validate the agent's primary allocation before deriving repeat rounds.
+            primary_schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                 normalized_plan)
+            agent_requested_minutes = sum(minutes_by_topic.values())
+            expanded_plan, review_minutes = repeat_plan_for_review(
+                self.request, normalized_plan, self.build_topics())
+            if review_minutes:
+                self.schedule = generate_schedule(self.request, cert, self.topic_statistics,
+                                                  expanded_plan)
+            else:
+                self.schedule = primary_schedule
+            normalized_plan = expanded_plan
+            minutes_by_topic = {}
+            for item in normalized_plan:
+                minutes_by_topic[item["topic"]] = (
+                    minutes_by_topic.get(item["topic"], 0) + item["minutes"])
         except ValueError as error:
             return f"SCHEDULE_ERROR: {error}"
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": sum(minutes_by_topic.values()),
+                "agent_requested_minutes": agent_requested_minutes,
+                "review_minutes": review_minutes,
                 "usable_minutes": available_minutes(self.request),
                 "daily_topic_minutes": normalized_plan,
                 "uses_personal_availability": self.request.weekly_availability is not None,
@@ -283,7 +300,7 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
          "parameters": {"type": "object", "properties": {"certification_id": {"type": "string", "enum": sorted(CERTIFICATIONS)}}, "required": ["certification_id"]}},
         {"name": "analyze_exam_results", "description": "Questions listed in assessment_results are unresolved: examine each question, correct answer, user answer, and validated local correctness. Map every unresolved question, and no other question, to one or more of this certification's fixed topics with contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Questions counted in reviewed_question_count already have fixed topics; never include their IDs. When no question is unresolved, omit problem_topics. Do not infer an answer or correctness. The tool combines reviewed and mapped results into weighted earned/possible points per topic.",
          "parameters": {"type": "object", "properties": {"problem_topics": {"type": "array", "items": {"type": "object", "properties": {"problem_id": {"type": "integer"}, "topics": {"type": "array", "items": {"type": "object", "properties": {"topic": {"type": "string", "enum": known_topics}, "weight": {"type": "number"}}, "required": ["topic", "weight"]}}}, "required": ["problem_id", "topics"]}}}, "required": []}},
-        {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
+        {"name": "build_study_schedule", "description": "Choose the primary dates and study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. The application may repeat the complete primary topic-minute mix as review rounds according to total usable time; do not pad the primary allocation to consume all available time. Any remainder smaller than one complete round stays spare. Keep each topic's time together in as few contiguous blocks as practical: do not alternate topics within a date, and prefer adjacent available dates if a topic spans multiple dates. Balance overall weekly workload across available dates without unnecessarily fragmenting a topic. Busy periods and availability gaps may require a topic block to split. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the plan and places it within the user's available time. Call analyze_exam_results first.",
          "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": build_date, "topic": build_topic, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},
     ]
 

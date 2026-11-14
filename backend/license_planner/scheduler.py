@@ -81,6 +81,96 @@ def available_minutes(request: PlanRequest) -> int:
     return sum(usable_minutes_by_date(request).values())
 
 
+def repeat_plan_for_review(
+    request: PlanRequest,
+    daily_topic_minutes: list[dict],
+    topic_order: list[str],
+) -> tuple[list[dict], int]:
+    """Repeat the accepted topic-minute mix in complete rounds that fit total capacity.
+
+    Additional minutes are packed into dates with remaining capacity, preferring dates
+    already assigned to the same topic and then nearby dates. Any capacity smaller than
+    another complete round remains spare time.
+    """
+    capacities = usable_minutes_by_date(request)
+    allocation: dict[date, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    base_topic_minutes: dict[str, int] = defaultdict(int)
+    base_minutes = 0
+    for item in daily_topic_minutes:
+        plan_date = datetime.strptime(item["date"], "%Y/%m/%d").date()
+        topic, minutes = item["topic"], item["minutes"]
+        allocation[plan_date][topic] += minutes
+        base_topic_minutes[topic] += minutes
+        base_minutes += minutes
+
+    total_available = sum(capacities.values())
+    if base_minutes <= 0 or total_available < base_minutes:
+        return list(daily_topic_minutes), 0
+
+    total_rounds = total_available // base_minutes
+    review_rounds = total_rounds - 1
+    if review_rounds <= 0:
+        return list(daily_topic_minutes), 0
+
+    remaining = {
+        plan_date: capacity - sum(allocation.get(plan_date, {}).values())
+        for plan_date, capacity in capacities.items()
+    }
+    completed_rounds = 0
+    for _ in range(review_rounds):
+        round_additions: list[tuple[date, str, int]] = []
+        round_remaining = remaining.copy()
+        round_topic_dates = {
+            topic: {day for day, by_topic in allocation.items() if by_topic.get(topic, 0) > 0}
+            for topic in topic_order
+        }
+        complete = True
+        for topic in topic_order:
+            needed = base_topic_minutes.get(topic, 0)
+            if needed <= 0:
+                continue
+            while needed > 0:
+                candidates = [day for day, capacity in round_remaining.items() if capacity > 0]
+                if not candidates:
+                    complete = False
+                    break
+                existing_dates = round_topic_dates.get(topic, set())
+                candidates.sort(key=lambda day: (
+                    0 if day in existing_dates else 1,
+                    min((abs((day - existing).days) for existing in existing_dates), default=0),
+                    day,
+                ))
+                day = candidates[0]
+                amount = min(needed, round_remaining[day])
+                round_additions.append((day, topic, amount))
+                round_remaining[day] -= amount
+                needed -= amount
+                round_topic_dates.setdefault(topic, set()).add(day)
+            if not complete:
+                break
+        if not complete:
+            break
+        for day, topic, amount in round_additions:
+            allocation[day][topic] += amount
+        remaining = round_remaining
+        completed_rounds += 1
+
+    if completed_rounds == 0:
+        return list(daily_topic_minutes), 0
+
+    topic_rank = {topic: index for index, topic in enumerate(topic_order)}
+    expanded = [
+        {"date": day.strftime("%Y/%m/%d"), "topic": topic, "minutes": minutes}
+        for day in sorted(allocation)
+        for topic, minutes in sorted(
+            allocation[day].items(),
+            key=lambda pair: (topic_rank.get(pair[0], len(topic_rank)), pair[0]),
+        )
+        if minutes > 0
+    ]
+    return expanded, completed_rounds * base_minutes
+
+
 def generate_schedule(request: PlanRequest, cert: Certification,
                       topic_statistics: tuple[TopicStatistics, ...],
                       daily_topic_minutes: list[dict]) -> list[StudyBlock]:
