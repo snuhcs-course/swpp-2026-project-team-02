@@ -40,6 +40,8 @@ import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
@@ -90,11 +92,13 @@ sealed interface CalendarReadState {
 }
 
 /** Failed-session adjustment lifecycle. */
+data class RemovedStudySchedule(val original: PlanSession, val destination: PlanSession?)
+
 sealed interface AdjustmentState {
     data object Idle : AdjustmentState
     data object Loading : AdjustmentState
     /** The selected plan was replaced; [targetScheduleId] is the moved row. */
-    data class Success(val targetScheduleId: String) : AdjustmentState
+    data class Success(val targetScheduleId: String, val removedSessions: List<RemovedStudySchedule> = emptyList()) : AdjustmentState
     data class Failure(val error: ApiError) : AdjustmentState
     /** Demo-only: no permitted interval fits before the exam. */
     data object DemoNoSlot : AdjustmentState
@@ -575,7 +579,21 @@ class PlanFormViewModel(
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
                     pendingAdjustment = null
-                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId)) }
+                    val updatedSessions = PlanGrouping.sessions(outcome.response.schedules)
+                    val removedSessions = PlanGrouping.sessions(input.schedules).filterNot { it.isExternal }.mapNotNull { old ->
+                        val oldRow = input.schedules.firstOrNull { it.scheduleId == old.scheduleId } ?: return@mapNotNull null
+                        val wasRemoved = outcome.response.schedules.none { row ->
+                            row.scheduleId == old.scheduleId &&
+                                row.startDate == oldRow.startDate &&
+                                row.endDate == oldRow.endDate
+                        }
+                        if (!wasRemoved) return@mapNotNull null
+                        val destination = updatedSessions.singleOrNull { it.scheduleId == old.scheduleId && it != old }
+                        RemovedStudySchedule(old, destination)
+                    }
+                    _adjustment.update {
+                        it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId, removedSessions))
+                    }
                     commit(_plans.value)
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }

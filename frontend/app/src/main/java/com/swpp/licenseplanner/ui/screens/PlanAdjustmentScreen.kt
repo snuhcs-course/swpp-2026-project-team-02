@@ -1,25 +1,39 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.PlanSession
+import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WeekPlan
+import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
 import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.PlanStorage
+import com.swpp.licenseplanner.ui.RemovedStudySchedule
 import com.swpp.licenseplanner.ui.adjustmentMessage
 import com.swpp.licenseplanner.ui.components.AlertCard
 import com.swpp.licenseplanner.ui.components.AppScreen
@@ -31,9 +45,13 @@ import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
+import com.swpp.licenseplanner.ui.components.Tag
 import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.reloadMessage
 import com.swpp.licenseplanner.ui.theme.Ink
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlin.math.roundToInt
 
 /**
  * What the adjustment screen offers. Recovery comes from the stored plan, so reopening a plan
@@ -74,6 +92,24 @@ internal fun shownSummary(plan: SessionPlan, state: AdjustmentState): String? =
 private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
     weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == scheduleId } } }
 
+/** Includes the removed source row for the duration of the successful adjustment state. */
+private fun adjustmentWeeks(plan: SessionPlan, removedSessions: List<RemovedStudySchedule>): List<WeekPlan> {
+    val sessions = (PlanGrouping.sessions(plan.current.schedules) + removedSessions.map { it.original }).sortedBy { it.start }
+    if (sessions.isEmpty()) return emptyList()
+    val byDate = sessions.groupBy { it.start.toLocalDate() }
+    val firstMonday = sessions.minOf { it.start.toLocalDate() }.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+    val lastMonday = sessions.maxOf { it.start.toLocalDate() }.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+    return generateSequence(firstMonday) { it.plusWeeks(1) }
+        .takeWhile { !it.isAfter(lastMonday) }
+        .map { monday ->
+            WeekPlan(monday, (0L..6L).map { offset ->
+                val date = monday.plusDays(offset)
+                com.swpp.licenseplanner.domain.DayPlan(date, byDate[date].orEmpty())
+            })
+        }
+        .toList()
+}
+
 /**
  * The selected plan's schedules by week with one selectable failed study
  * session, then progress, error with retry, or the updated rows. After an uncertain result the
@@ -107,24 +143,49 @@ fun PlanAdjustmentScreen(
     BackHandler(enabled = busy) {}
     val mode = adjustmentMode(plan, state)
 
-    val weeks = remember(plan.current.schedules) { PlanGrouping.weeks(plan.current.schedules) }
+    val removedSessions = (state as? AdjustmentState.Success)?.removedSessions.orEmpty()
+    val weeks = remember(plan.current.schedules, removedSessions) { adjustmentWeeks(plan, removedSessions) }
+    val scrollState = rememberScrollState()
+    val dayPositions = remember { mutableStateMapOf<java.time.LocalDate, Pair<Int, Int>>() }
+    var destinationToReveal by remember { mutableStateOf<PlanSession?>(null) }
+    var highlightedDestination by remember { mutableStateOf<PlanSession?>(null) }
     // Entering a plan that awaits reload opens its failed session's week; later browsing is free.
     var weekIndex by rememberSaveable(plan.ordinal) {
         val target = selection.failedScheduleId.takeIf { plan.recovery == PlanRecovery.ReloadRequired }
         mutableIntStateOf(weekIndexOf(weeks, target).coerceAtLeast(0))
     }
-    // Show the moved session's week after success, and the first week of reloaded rows.
+    val shownIndex = weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0))
+    // Reloaded rows start from their first week; a successful adjustment keeps the current week.
     LaunchedEffect(state, weeks) {
         when (state) {
-            is AdjustmentState.Success -> {
-                val index = weekIndexOf(weeks, state.targetScheduleId)
-                if (index >= 0) weekIndex = index
-            }
             AdjustmentState.Reloaded -> weekIndex = 0
             else -> Unit
         }
     }
-    val shownIndex = weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0))
+    LaunchedEffect(destinationToReveal, weeks) {
+        val destination = destinationToReveal ?: return@LaunchedEffect
+        val destinationDate = destination.start.toLocalDate()
+        val destinationWeek = weeks.indexOfFirst { week ->
+            week.days.any { day -> day.date == destinationDate && day.sessions.any { it == destination } }
+        }
+        if (destinationWeek < 0) return@LaunchedEffect
+        if (shownIndex != destinationWeek) {
+            // Animate to the edge of the currently visible week before replacing its rows.
+            scrollState.animateScrollTo(
+                if (destinationWeek > shownIndex) scrollState.maxValue else 0,
+            )
+            dayPositions.remove(destinationDate)
+            weekIndex = destinationWeek
+        }
+        highlightedDestination = destination
+        val measured = snapshotFlow { dayPositions[destinationDate] }
+            .first { it?.first == destinationWeek }
+            ?: return@LaunchedEffect
+        scrollState.animateScrollTo(measured.second.coerceAtLeast(0))
+        delay(1600)
+        highlightedDestination = null
+        destinationToReveal = null
+    }
     val week = weeks.getOrNull(shownIndex)
     val summary = shownSummary(plan, state)
     // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
@@ -136,6 +197,7 @@ fun PlanAdjustmentScreen(
         title = "실패한 일정 선택",
         navIcon = if (busy) null else NavIcon.Back,
         onNav = onBack,
+        scrollState = scrollState,
         footer = {
             when (mode) {
                 AdjustmentMode.Missing -> {
@@ -183,6 +245,7 @@ fun PlanAdjustmentScreen(
             "계획 ${plan.ordinal} · $CERTIFICATION_NAME",
             "준비 ${wireDate(plan.original.preparationStart)} – 시험 ${wireDate(plan.original.examDate)}",
         )
+        OriginalPlanInputs(plan)
         if (plan.isDemo) {
             MutedBox {
                 Text("로컬 시연 계산", style = MaterialTheme.typography.titleSmall, color = Ink)
@@ -228,6 +291,7 @@ fun PlanAdjustmentScreen(
                     MutedBox {
                         Text("계획이 조정됐어요", style = MaterialTheme.typography.titleSmall, color = Ink)
                         Note("옮긴 일정이 있는 주를 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
+                        if (removedSessions.isNotEmpty()) Note("취소선 표시는 조정 전 위치예요. 이동 위치도 함께 표시해요.")
                     }
                     if (summary != null) PlanSummary(summary)
                 }
@@ -259,9 +323,57 @@ fun PlanAdjustmentScreen(
             val selectable = mode == AdjustmentMode.Adjustable && !loading
             val showChoices = selectable || selection.failedScheduleId != null
             val movedId = movedScheduleId(plan, state)
+            val preparationStart = WireDateTime.parseOrNull(plan.original.preparationStart)?.toLocalDate()
+            val examDate = WireDateTime.parseOrNull(plan.original.examDate)?.toLocalDate()
             for (day in week.days) {
-                DaySection(day, selection.failedScheduleId, if (showChoices) onSelect else null, selectionEnabled = selectable, movedId = movedId)
+                val weekday = Weekday.entries.firstOrNull { it.dayOfWeek == day.date.dayOfWeek }
+                val windows = weekday?.let { plan.original.weeklyAvailability[it.key].orEmpty() }.orEmpty()
+                val availabilityLabel = if (windows.isEmpty()) "공부 가능 시간 없음" else
+                    "공부 가능 ${windows.joinToString(" · ") { "${it.start}–${it.end}" }}"
+                val dateMarkers = buildList {
+                    if (day.date == preparationStart) add("준비 시작일")
+                    if (day.date == examDate) add("시험일")
+                }
+                DaySection(
+                    day,
+                    selection.failedScheduleId,
+                    if (showChoices) onSelect else null,
+                    selectionEnabled = selectable,
+                    movedId = movedId,
+                    availabilityLabel = availabilityLabel,
+                    dateMarkers = dateMarkers,
+                    removedSchedules = removedSessions,
+                    highlightedDestination = highlightedDestination,
+                    onNavigateToDestination = { scheduleId ->
+                        destinationToReveal = PlanGrouping.sessions(plan.current.schedules)
+                            .firstOrNull { it.scheduleId == scheduleId }
+                    },
+                    modifier = androidx.compose.ui.Modifier.onGloballyPositioned { coordinates ->
+                        dayPositions[day.date] = shownIndex to coordinates.positionInParent().y.roundToInt()
+                    },
+                )
             }
         }
+    }
+}
+
+/** The immutable inputs from plan creation that are reused when the plan is adjusted. */
+@Composable
+private fun OriginalPlanInputs(plan: SessionPlan) {
+    val availability = Weekday.entries.mapNotNull { day ->
+        val windows = plan.original.weeklyAvailability[day.key].orEmpty()
+        if (windows.isEmpty()) return@mapNotNull null
+        "${day.label} ${windows.joinToString(" · ") { "${it.start}–${it.end}" }}"
+    }
+    MutedBox {
+        Text("처음 설정한 조건", style = MaterialTheme.typography.titleSmall, color = Ink)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Tag("시작 ${wireDate(plan.original.preparationStart)}")
+            Tag("시험 ${wireDate(plan.original.examDate)}")
+        }
+        Note(
+            if (availability.isEmpty()) "공부 가능 시간 정보가 없어요."
+            else "공부 가능 시간: ${availability.joinToString(" / ")}",
+        )
     }
 }
