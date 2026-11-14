@@ -48,5 +48,7 @@ The post-change screenshots supplied on 2026-11-14 are now stored in the reposit
 
 - [Example-question request error with developer details](evidence/he-12/01-question-error-detail.png)
 - [Plan-generation request error with developer details](evidence/he-12/02-generation-error-detail.png)
+- [Plan-generation error screen before opening details](evidence/he-12/03-generation-error-entry.png)
+- [Plan-generation error screen with details expanded](evidence/he-12/04-generation-error-details-expanded.png)
 
-These two captures demonstrate the visible recovery copy and the expanded original diagnostic for those screens. They do not document every selectable error category or the adjustment error flow.
+The additional 2026-11-14 20:52 recording shows the plan-generation failure screen and the transition to the expanded developer detail. The diagnostic shown is `HTTP 502 / Study plan generation failed. Try again later.` The Android Studio frame shows the `liveDebug` build variant; the recording does not include enough backend/log context to establish whether this 502 came from the live server or a test injector. These captures document the generation error flow, but do not document every selectable error category or the adjustment error flow.

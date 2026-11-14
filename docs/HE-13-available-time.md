@@ -23,16 +23,20 @@ The finding must be read with the user's existing pre-change capture: the genera
 
 ## Evidence record
 
-On 2026-11-14, the user supplied two post-change **Demo** screenshots for the selected week of Nov 16–22 (week 2 of 12):
+On 2026-11-14, the user supplied post-change screenshots and a screen recording of the adjustment screen:
 
 - **Plan screen:** graph shows Monday Nov 16 (1 h assigned / 4 h available), Wednesday Nov 18 (1 h / 3 h), and Sunday Nov 22 (1 h / 3 h). The other days, with no availability, are omitted. The note identifies available and assigned bars and says some available time may remain unused.
 - **Plan adjustment screen:** the same week and values appear; its day cards also display the configured availability windows. The same zero-availability days are absent from the graph.
-- Together, these screenshots demonstrate the graph on both screens and the explanatory note. They show one selected week; they do not independently demonstrate that advancing the arrows changes the values. They are Demo evidence, not evidence of the Live backend-generated summary.
+- The 20:55 recording steps through weeks 1, 2, and 3 (Nov 9–15, Nov 16–22, and Nov 23–29). The selected-week label, available-day rows, and graph update as the right arrow is pressed. Weeks 2 and 3 visibly show different date/hour data; week 1 contains only its available date. This closes the earlier evidence gap about arrow navigation changing the graph.
+- The recording is an Android Studio emulator capture and the IDE shows `liveDebug` as the selected build variant. It demonstrates the adjustment screen's week navigation and graph behavior in that run; it does not verify the Live backend-generated overall summary or establish that the displayed plan was server-generated.
 
 The supplied screenshots are now checked into the repository:
 
 - [Plan screen weekly graph](evidence/he-13/01-plan-weekly-time-graph.png)
 - [Adjustment screen weekly graph](evidence/he-13/02-adjustment-weekly-time-graph.png)
+- [Adjustment screen, week 1](evidence/he-13/03-adjustment-week-1.png)
+- [Adjustment screen, week 2](evidence/he-13/04-adjustment-week-2.png)
+- [Adjustment screen, week 3](evidence/he-13/05-adjustment-week-3.png)
 
 No Live-only test is required to verify this UI behavior. If reporting Live backend integration as verified, separately capture the Live overall summary with the request's available total, actual assigned total, and spare-time explanation. The evaluator's distribution comment is a separate product-policy question, not a requirement to schedule every available minute or every weekday. No UAT sheet edit is required for this implementation note.
 
