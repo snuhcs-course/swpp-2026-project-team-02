@@ -159,12 +159,14 @@ class StudyCheckInViewModelTest {
         vararg plans: SessionPlan,
         planning: FakePlanning = FakePlanning(),
         adjustment: FakeAdjustment = FakeAdjustment(),
+        currentDate: () -> LocalDate = { LocalDate.of(2026, 10, 31) },
     ): Opened {
         disk.committed = PlanSnapshotCodec.encode(PlanSnapshot(plans.toList()), scope).encodeToByteArray()
         val store = GatedStore()
         val calendar = CountingCalendar()
         val vm = PlanFormViewModel(
             FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store, calendarExportRepository = calendar,
+            currentDate = currentDate,
         )
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
@@ -457,5 +459,71 @@ class StudyCheckInViewModelTest {
         assertTrue(vm.plan(1).checkIns.isEmpty())
         assertEquals(1, adjustment.reloadCalls)
         assertTrue(adjustment.inputs.isEmpty())
+    }
+
+    @Test fun aSessionLaterTheSameDayCanBeReported() = runTest(dispatcher) {
+        // study-1 starts at 18:00 on October 5; the gate compares dates only.
+        val opened = open(planA, currentDate = { LocalDate.of(2026, 10, 5) })
+        val vm = opened.vm
+        assertTrue(vm.canReport(1, "study-1"))
+        assertTrue(vm.startCheckIn(1, "study-1"))
+        assertEquals(1 to "study-1", vm.checkIn.value!!.planOrdinal to vm.checkIn.value!!.scheduleId)
+    }
+
+    @Test fun anUnreportedSessionOnALaterDateIsRefusedUntilItsDayArrives() = runTest(dispatcher) {
+        var date = LocalDate.of(2026, 10, 5)
+        val opened = open(planA, planB, currentDate = { date })
+        val vm = opened.vm
+        val before = vm.plans.value
+
+        assertFalse(vm.canReport(1, "study-2")) // October 6
+        assertFalse(vm.startCheckIn(1, "study-2"))
+        assertNull(vm.checkIn.value)
+        assertFalse(vm.canReport(2, "study-1")) // October 8 in the other plan
+        assertFalse(vm.startCheckIn(2, "study-1"))
+        assertNull(vm.checkIn.value)
+        assertEquals(before, vm.plans.value)
+        assertEquals(0, opened.store.saves)
+        assertTrue(opened.noRequests)
+
+        date = LocalDate.of(2026, 10, 6) // the device date moves on while the app stays open
+        assertTrue(vm.canReport(1, "study-2"))
+        assertTrue(vm.startCheckIn(1, "study-2"))
+        assertEquals("study-2", vm.checkIn.value!!.scheduleId)
+        assertFalse(vm.canReport(2, "study-1"))
+    }
+
+    @Test fun aReportedSessionMovedToALaterDateStaysEditable() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(movedA, "csv", null, null)))
+        val opened = open(planA, adjustment = adjustment, currentDate = { LocalDate.of(2026, 10, 5) })
+        val vm = opened.vm
+        saveReport(vm, 1, "study-1", StudyCheckInStatus.Partly, "45")
+        assertTrue(vm.selectPlan(1))
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(movedA, vm.plan(1).current.schedules) // study-1 now on October 12
+
+        assertTrue(vm.canReport(1, "study-1"))
+        assertTrue(vm.startCheckIn(1, "study-1"))
+        val editor = vm.checkIn.value!!
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), editor.committed)
+        assertEquals(StudyCheckInStatus.Partly to "45", editor.status to editor.minutesText)
+        vm.chooseCheckInStatus(StudyCheckInStatus.Done)
+        vm.setCheckInMinutes("30")
+        assertTrue(vm.saveCheckIn())
+        advanceUntilIdle()
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 30), vm.plan(1).checkInFor("study-1"))
+        assertEquals(vm.plans.value, restoredNow())
+        assertFalse(vm.canReport(1, "study-2")) // the unreported October 6 row is still gated
+    }
+
+    @Test fun externalAndUnknownRowsAreNeverReportable() = runTest(dispatcher) {
+        val opened = open(planA, currentDate = { LocalDate.of(2027, 1, 1) })
+        val vm = opened.vm
+        assertFalse(vm.canReport(1, "external-1"))
+        assertFalse(vm.canReport(1, "study-9"))
+        assertFalse(vm.canReport(9, "study-1"))
+        assertTrue(vm.canReport(1, "study-1"))
     }
 }

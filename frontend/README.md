@@ -1141,6 +1141,15 @@ action. The action does not select the session for adjustment, and closing the
 editor returns to the same week with any selection unchanged. It waits while a
 request or save runs (it is disabled during a save or an adjustment).
 
+A new report starts on the session's scheduled day, by the device's local date
+(a 19:00 session can be reported earlier that day). An unreported session on a
+later date shows 일정 당일부터 기록할 수 있어요 instead of the action, and the
+editor does not open for it. The date is read again whenever the rows are shown
+and when the editor opens, so after midnight the session offers 공부 기록하기
+once its week is shown again (for example after changing weeks or reopening the
+plan). A session that already has a report keeps it and stays editable, even
+after an adjustment or move places it on a later date.
+
 The editor shows the plan, topic, scheduled time and planned duration, then the
 status (다 했어요 / 일부 했어요 / 못 했어요; none is preselected for a new report) and
 the actual minutes as a separate field. 다 했어요 suggests the planned minutes;
