@@ -71,7 +71,8 @@ class AvailabilityTextTest {
     }
 
     @Test fun incomingTextShowsBothEndpoints() {
-        val interval = StudyInterval(LocalDate.of(2026, 11, 29).atTime(23, 30), LocalDate.of(2026, 11, 30).atTime(0, 30))
-        assertEquals("11월 29일(일) 23:30에 시작한 공부 시간이 11월 30일(월) 00:30까지 이어져요.", incomingText(interval))
+        val monday = LocalDate.of(2026, 11, 30)
+        val interval = StudyInterval(monday.atStartOfDay(), monday.atTime(0, 30))
+        assertEquals("11월 30일(월) 00:00–00:30 공부 시간이 지난주 설정에서 이어져요.", incomingText(interval))
     }
 }

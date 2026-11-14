@@ -3,13 +3,19 @@ package com.swpp.licenseplanner.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.domain.ManualMoveRejection
@@ -85,7 +91,7 @@ private fun dayText(date: LocalDate) = "${monthDay(date)}(${weekdayLabel(date)})
 private fun weekdayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
 
 /**
- * Chosen-time move of one study session (frames 2303:3199, 2303:3265 and the refusal states).
+ * Chosen-time move of one study session, including confirmation and refusal states.
  * The date and start time open the native pickers; the duration stays as it is. The old and new
  * intervals are shown before anything is sent, and a time outside the study windows is sent only
  * after the learner confirms that exact time once. Back or cancel discards the draft and sends
@@ -117,6 +123,7 @@ internal fun ManualMoveScreen(
     val rejection = (error as? ApiError.ManualMoveRejected)?.reason
     val errorField = rejection?.field()
     val confirming = selection.canConfirmOutsideAvailability
+    val questionRequester = remember { BringIntoViewRequester() }
     var picking by rememberSaveable { mutableStateOf<String?>(null) }
 
     AppScreen(
@@ -170,12 +177,18 @@ internal fun ManualMoveScreen(
                 "일정을 옮기는 중이에요",
                 if (plan.isDemo) "로컬 시연 계산이에요." else "결과가 올 때까지 기다려 주세요. 같은 요청을 다시 보내지 않아요.",
             )
-            confirming && destination != null -> MutedBox {
-                Text("설정한 공부 시간 밖이에요.", style = MaterialTheme.typography.titleSmall, color = Ink)
-                Note(
-                    "${manualIntervalText(destination, destination.plusMinutes(duration))}에 이번 일정만 옮길까요? " +
-                        "설정한 공부 시간은 그대로예요.",
-                )
+            confirming && destination != null -> {
+                LaunchedEffect(destination) {
+                    withFrameNanos { }
+                    questionRequester.bringIntoView()
+                }
+                MutedBox(Modifier.bringIntoViewRequester(questionRequester)) {
+                    Text("설정한 공부 시간 밖이에요.", style = MaterialTheme.typography.titleSmall, color = Ink)
+                    Note(
+                        "${manualIntervalText(destination, destination.plusMinutes(duration))}에 이번 일정만 옮길까요? " +
+                            "설정한 공부 시간은 그대로예요.",
+                    )
+                }
             }
             error != null && rejection == null -> {
                 AlertCard("일정을 옮기지 못했어요", error.adjustmentMessage())

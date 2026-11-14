@@ -87,7 +87,7 @@ changed; CI starts from a fresh checkout, so its tests always run.
 
 `app/src/androidTestDemo/.../ui/MainFlowUiTest.kt` mounts the real navigation,
 screens and ViewModel in a standard Compose test activity, using production demo
-repositories and the AtomicFile store in a fresh test-owned directory. Four cases cover:
+repositories and the AtomicFile store in a fresh test-owned directory. Six cases cover:
 
 - Creation through all 18 loaded questions, unknown-answer scores, authored-example
   disclosure, weekday minutes entry, written/demo plan rows, week bounds and home count.
@@ -99,9 +99,13 @@ repositories and the AtomicFile store in a fresh test-owned directory. Four case
   selecting and automatically adjusting a row, and reopening the saved new time.
   Saved-row comparisons confirm only the target times changed; restoration does not
   replay adjustment or retain a transient success marker.
+- Showing the outside-window question without manual scrolling, resubmitting the
+  retained time for fresh validation and applying only an explicitly confirmed move.
+- Showing usable overnight carry-in during the first empty preparation week and
+  a later replaced week.
 
 No backend, model, calendar permissions, account or events are needed. Fixed input
-dates and host locale/timezone make the cases repeatable. Each test removes only
+dates, manual-move clock and host locale/timezone make the cases repeatable. Each test removes only
 its own plan directory after disposing navigation and clearing its ViewModel owner.
 This injected host bypasses `MainActivity.Factory`; it does not verify production
 activity wiring, process death, live Compose behavior or physical-device behavior.
@@ -495,7 +499,7 @@ again, because the draft lives in the ViewModel.
 The app first sends the chosen time without the exception. If the time is
 otherwise valid but outside the plan's study windows, the screen asks
 설정한 공부 시간 밖이에요. with the exact interval (… 이번 일정만 옮길까요? 설정한 공부
-시간은 그대로예요.): 이번 한 번만 옮기기 resends that same time once with the
+시간은 그대로예요.) and scrolls the question into view. 이번 한 번만 옮기기 resends that same time once with the
 exception, and 시간 다시 고르기 returns to the fields with the time kept and
 nothing sent (sending the same time again is checked from the start). Any
 change to the date or time clears an earlier question or exception. Other
@@ -627,9 +631,14 @@ shown or changed. Each week is one of:
   empties it; 기본 시간으로 되돌리기 removes the change so the week follows the
   base again.
 - Empty (이번 주 공부 안 함): no window starts in that week. A window that starts
-  on the previous Sunday (inside the preparation period) and runs into Monday is
-  still used and shown as 지난주에서 이어지는 시간. 이번 주 시간 바꾸기 and
+  on the previous Sunday and runs into Monday is
+  still used. 이번 주 시간 바꾸기 and
   기본 시간으로 되돌리기 are offered.
+
+Every week shows 지난주에서 이어지는 시간 when the previous Sunday's window
+continues into it, including replaced weeks and the first preparation week. The
+notice shows only the part inside the preparation/exam period, such as 월요일
+00:00–00:30, using the previous week's settings even when the new week is empty.
 
 An empty week is sent as an explicit empty `availability_overrides` entry, while a
 reset week has no entry, so the two are never confused. Changing the dates keeps

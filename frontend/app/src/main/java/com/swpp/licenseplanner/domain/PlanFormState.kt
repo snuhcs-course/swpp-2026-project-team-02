@@ -60,13 +60,18 @@ data class PlanFormState(
     }
 
     /**
-     * Windows that start on the day before [monday] and run into it, when that day is in the
-     * preparation period. They belong to the previous week, so emptying [monday]'s week keeps them.
+     * Usable portions of the previous Sunday's windows that run into [monday], clipped to the
+     * preparation period. They belong to the previous week even when this week is replaced.
      */
     fun incomingWindows(monday: LocalDate): List<StudyInterval> {
-        val sunday = monday.minusDays(1)
-        if (sunday.isBefore(preparationStart)) return emptyList()
-        return studyAvailability.windowsStarting(sunday).map { it.intervalOn(sunday) }.filter { it.end.isAfter(monday.atStartOfDay()) }
+        val exam = examDate?.takeIf { datesError == null } ?: return emptyList()
+        val weekStart = monday.atStartOfDay()
+        val lower = maxOf(weekStart, preparationStart.atStartOfDay())
+        val upper = exam.atStartOfDay()
+        return studyAvailability.windowsFor(monday)
+            .filter { it.start.isBefore(weekStart) }
+            .map { StudyInterval(maxOf(it.start, lower), minOf(it.end, upper)) }
+            .filter { it.start.isBefore(it.end) }
     }
 }
 

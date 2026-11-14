@@ -90,8 +90,8 @@ class ProfileActions(
 )
 
 /**
- * Adapted from frames 2302:5505 and 2302:5504: one visible window per weekday (start plus
- * duration, possibly ending the next day) for the recurring base or one replaced week of the
+ * One visible window per weekday (start plus duration, possibly ending the next day)
+ * for the recurring base or one replaced week of the
  * preparation period, with a retained-window count for windows this editor does not show.
  * [profile] is null when the build has no server profile (demo); otherwise the live load-preview
  * and save actions appear with the shared-storage notice.
@@ -164,6 +164,12 @@ fun AvailabilityScreen(
                 onPrevious = { resetWeek = null; actions.onShowWeek(weeks[index - 1]) },
                 onNext = { resetWeek = null; actions.onShowWeek(weeks[index + 1]) },
             )
+            for (incoming in form.incomingWindows(week)) {
+                MutedBox {
+                    Text("지난주에서 이어지는 시간", style = MaterialTheme.typography.labelLarge, color = Ink)
+                    Text(incomingText(incoming), style = MaterialTheme.typography.bodyMedium, color = InkSecondary)
+                }
+            }
             when (source) {
                 WeekSource.BASE -> {
                     Note("이번 주는 기본 시간을 사용해요.")
@@ -180,12 +186,6 @@ fun AvailabilityScreen(
                     )
                 }
                 WeekSource.EMPTY -> {
-                    for (incoming in form.incomingWindows(week)) {
-                        MutedBox {
-                            Text("지난주에서 이어지는 시간", style = MaterialTheme.typography.labelLarge, color = Ink)
-                            Text(incomingText(incoming), style = MaterialTheme.typography.bodyMedium, color = InkSecondary)
-                        }
-                    }
                     SecondaryButton("이번 주 시간 바꾸기", { actions.onReplaceWeek(week) }, enabled = !generating)
                     SecondaryButton(
                         "기본 시간으로 되돌리기",
@@ -498,8 +498,8 @@ internal fun conflictText(availability: StudyAvailability): ConflictText? {
 
 /** A window from the previous week that runs into the shown week. */
 internal fun incomingText(interval: StudyInterval): String =
-    "${dayWithWeekday(interval.start)} ${WireDateTime.formatTime(interval.start.toLocalTime())}에 시작한 공부 시간이 " +
-        "${dayWithWeekday(interval.end)} ${WireDateTime.formatTime(interval.end.toLocalTime())}까지 이어져요."
+    "${dayWithWeekday(interval.start)} ${WireDateTime.formatTime(interval.start.toLocalTime())}–" +
+        "${WireDateTime.formatTime(interval.end.toLocalTime())} 공부 시간이 지난주 설정에서 이어져요."
 
 private fun dayWithWeekday(at: LocalDateTime): String =
     "${monthDay(at.toLocalDate())}(${Weekday.of(at.dayOfWeek).label})"

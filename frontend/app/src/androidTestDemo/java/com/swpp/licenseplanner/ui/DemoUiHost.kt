@@ -20,6 +20,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
+import com.swpp.licenseplanner.data.DemoAdjustmentRepository
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.PlanStorageScope
@@ -82,7 +83,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
 
     private fun freshState() {
         val nextOwner = object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() }
-        val adjustment = FlavorRepositories.adjustmentRepository()
+        val today = LocalDate.of(2026, 11, 16)
+        val adjustment = DemoAdjustmentRepository { today.atStartOfDay() }
         val countedAdjustment = object : AdjustmentRepository by adjustment {
             override suspend fun adjust(input: AdjustmentInput) = adjustment.adjust(input).also {
                 adjustmentCalls.incrementAndGet()
@@ -94,7 +96,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 questionRepository = FlavorRepositories.questionRepository(),
                 planningRepository = FlavorRepositories.planningRepository(),
                 adjustmentRepository = countedAdjustment,
-                today = LocalDate.of(2026, 11, 16),
+                today = today,
                 planStore = AtomicFilePlanStore.open(storeContext, PlanStorageScope.DEMO),
                 calendarExportRepository = UnavailableCalendarExport,
                 calendarReadRepository = UnavailableCalendarRead,

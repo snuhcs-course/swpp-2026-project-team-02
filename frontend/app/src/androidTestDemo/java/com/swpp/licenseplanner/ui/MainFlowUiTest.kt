@@ -17,6 +17,7 @@ import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.Duration
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -151,6 +152,75 @@ class MainFlowUiTest {
         assertSession(moved, selectable = true)
         assertEquals(after, host.snapshot().plans.single())
         assertEquals("Restoring and opening never submits another adjustment", 1, host.adjustmentCalls.get())
+    }
+
+    @Test
+    fun outsideWindowQuestionScrollsIntoViewBeforeConfirming() = withApp { host ->
+        generatePlan(host)
+        val before = host.snapshot().plans.single()
+        val target = PlanGrouping.sessions(before.current.schedules).first()
+        host.recreate()
+        openSavedPlan()
+        clickSession(target)
+        click("시간 직접 옮기기")
+        val destination = target.start.withHour(14)
+        compose.runOnIdle { host.viewModel.setManualStart(destination) }
+        click("이 시간으로 옮기기")
+        compose.waitUntil("The outside-window destination needs confirmation", 10_000) {
+            host.viewModel.adjustment.value.canConfirmOutsideAvailability
+        }
+        compose.waitForIdle()
+        val question = "11월 16일(월) 14:00–15:00에 이번 일정만 옮길까요? 설정한 공부 시간은 그대로예요."
+        compose.onNodeWithText(question).assertIsDisplayed()
+        compose.onNodeWithText("이번 한 번만 옮기기").assertIsEnabled()
+        assertEquals(1, host.adjustmentCalls.get())
+        host.awaitSaved()
+        assertEquals(before.current.schedules, host.snapshot().plans.single().current.schedules)
+        host.capture("outside-window-question")
+        click("시간 다시 고르기")
+        click("이 시간으로 옮기기")
+        compose.waitUntil("The same time is checked afresh", 10_000) {
+            host.viewModel.adjustment.value.canConfirmOutsideAvailability && host.adjustmentCalls.get() == 2
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText(question).assertIsDisplayed()
+        click("이번 한 번만 옮기기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        assertEquals(3, host.adjustmentCalls.get())
+        val after = host.snapshot().plans.single()
+        assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
+        assertEquals(WireDateTime.format(destination), after.current.schedules.single { it.scheduleId == target.scheduleId }.startDate)
+    }
+
+    @Test
+    fun incomingOvernightTimeIsShownInFirstEmptyAndReplacedWeeks() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        val first = LocalDate.of(2026, 11, 16)
+        val replaced = first.plusWeeks(1)
+        compose.runOnIdle {
+            host.viewModel.setDayEnabled(Weekday.SUNDAY, true)
+            host.viewModel.setDayStart(Weekday.SUNDAY, LocalTime.of(23, 0))
+            host.viewModel.setDuration(Weekday.SUNDAY, 90)
+            host.viewModel.clearWeek(first)
+        }
+        show("이번 주 공부 안 함")
+        show("지난주에서 이어지는 시간")
+        show("11월 16일(월) 00:00–00:30 공부 시간이 지난주 설정에서 이어져요.")
+        host.capture("first-week-incoming")
+        click("기본 시간으로 되돌리기")
+        clickDescription("다음 주")
+        click("이번 주 시간 바꾸기")
+        compose.runOnIdle {
+            host.viewModel.setDayEnabled(Weekday.SUNDAY, false, replaced)
+            host.viewModel.setDayEnabled(Weekday.TUESDAY, true, replaced)
+        }
+        show("이번 주 공부 시간")
+        show("지난주에서 이어지는 시간")
+        show("11월 23일(월) 00:00–00:30 공부 시간이 지난주 설정에서 이어져요.")
+        host.capture("replaced-week-incoming")
     }
 
     private fun withApp(block: (DemoUiHost) -> Unit) {
