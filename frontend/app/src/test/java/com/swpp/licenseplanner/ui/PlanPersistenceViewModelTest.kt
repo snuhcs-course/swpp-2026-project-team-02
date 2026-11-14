@@ -1,7 +1,5 @@
 package com.swpp.licenseplanner.ui
 
-import com.swpp.licenseplanner.domain.StudyCheckIn
-import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
@@ -36,6 +34,8 @@ import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -512,7 +512,7 @@ class PlanPersistenceViewModelTest {
             markerGate.complete(Unit)
             advanceUntilIdle()
             assertEquals(1, server.requestCount)
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Saved), vm.adjustment.value.state)
             assertEquals(PlanStorage.Ready, vm.storage.value)
             assertEquals(listOf("save", "save", "save unresolved 1", "save"), events)
             assertEquals(vm.plans.value, restoredNow())
@@ -628,7 +628,7 @@ class PlanPersistenceViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Unsaved), vm.adjustment.value.state)
             assertEquals(movedA, vm.plan(1).current.schedules)
             assertEquals(PlanStorage.SaveFailure, vm.storage.value)
             val ifRestartedNow = restoredNow()
@@ -823,7 +823,7 @@ class PlanPersistenceViewModelTest {
             assertTrue(vm.submitManualMove())
             assertFalse(vm.submitManualMove())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], manualA[0]), MoveSave.Unsaved), vm.adjustment.value.state)
             assertEquals(manualA, vm.plan(1).current.schedules)
             assertEquals(PlanStorage.SaveFailure, vm.storage.value)
 
@@ -986,5 +986,150 @@ class PlanPersistenceViewModelTest {
         assertEquals(rowsB, fifth.plan(2).current.schedules)
         assertEquals(2, adjustment.inputs.size)
         assertEquals(1, adjustment.reloadCalls)
+    }
+
+    // --- Saving a shown move ---
+
+    private val moveA = SessionMove(rowsA[0], movedA[0])
+
+    @Test fun acceptedMoveIsSavingUntilItsOwnSaveFinishes() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val (vm, store) = open(planning, adjustment)
+        generateAB(vm)
+        val outcomeSave = CompletableDeferred<Unit>()
+        store.saveGates[store.saves + 2] = outcomeSave // the save after the response
+
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saving), vm.adjustment.value.state)
+        assertEquals(PlanStorage.Saving, vm.storage.value)
+        assertEquals(movedA, vm.plan(1).current.schedules)
+        assertFalse(vm.plans.value == vm.savedPlans.value)
+        assertFalse(vm.generate())
+        assertFalse(vm.startCheckIn(1, "study-2"))
+        vm.retrySave() // nothing has failed
+        advanceUntilIdle()
+        assertEquals(MoveSave.Saving, (vm.adjustment.value.state as AdjustmentState.Success).save)
+
+        outcomeSave.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(vm.plans.value, restoredNow())
+        assertEquals(listOf("save", "save", "save unresolved 1", "adjust study-1", "save"), events)
+        assertEquals(2, planning.requests.size)
+    }
+
+    @Test fun unsavedMoveStaysShownAndOnlyALocalRetryMarksItSaved() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
+        val (vm, store) = open(planning, adjustment)
+        generateAB(vm)
+        assertTrue(report(vm, 1, "study-1", StudyCheckInStatus.Partly, "30"))
+        vm.closeCheckIn()
+        val reports = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 30))
+        val planBBefore = vm.plan(2)
+        store.failingSaves += listOf(store.saves + 2, store.saves + 3) // the outcome save and the first retry
+
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved), vm.adjustment.value.state)
+        assertEquals(movedA, vm.plan(1).current.schedules)
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        val ifRestartedNow = restoredNow()
+        assertEquals(PlanRecovery.ReloadRequired to "study-1", ifRestartedNow[0].recovery to ifRestartedNow[0].recoveryScheduleId)
+        assertEquals(reports, ifRestartedNow[0].checkIns)
+        assertFalse(vm.generate())
+        assertFalse(vm.startCheckIn(1, "study-2"))
+        assertFalse(vm.startManualMove())
+
+        vm.retrySave()
+        assertEquals(MoveSave.Saving, (vm.adjustment.value.state as AdjustmentState.Success).save)
+        advanceUntilIdle()
+        assertEquals(MoveSave.Unsaved, (vm.adjustment.value.state as AdjustmentState.Success).save)
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        val resolved = restoredNow()
+        assertEquals(vm.plans.value, resolved)
+        assertEquals(PlanRecovery.Ready to null, resolved[0].recovery to resolved[0].recoveryScheduleId)
+        assertEquals(movedA, resolved[0].current.schedules)
+        assertEquals(reports, resolved[0].checkIns)
+        assertEquals(planBBefore, resolved[1])
+        assertEquals(1, adjustment.inputs.size) // the retries only saved
+        assertEquals(2, planning.requests.size)
+
+        // A later failed save of something else does not change what was said about this move.
+        store.failingSaves += store.saves + 1
+        assertFalse(report(vm, 1, "study-2", StudyCheckInStatus.Missed))
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun uncertainOrUnsavedOutcomesRestartBehindAnExplicitReloadWithoutAMove() = runTest(dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
+            val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), live)
+            generateAB(vm)
+            assertTrue(report(vm, 1, "study-2", StudyCheckInStatus.Missed))
+            vm.closeCheckIn()
+            val reports = mapOf("study-2" to StudyCheckIn(StudyCheckInStatus.Missed, 0))
+            val planBBefore = vm.plan(2)
+
+            // A failed preflight save sends nothing and shows no move.
+            store.failingSaves += store.saves + 1
+            vm.select(1, "study-1")
+            assertTrue(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(0, server.requestCount)
+            assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+            vm.retrySave()
+            advanceUntilIdle()
+            assertEquals(PlanStorage.Ready, vm.storage.value)
+
+            // The accepted outcome is shown as unsaved; the device still holds the preflight marker.
+            server.enqueue(MockResponse().setBody(adjustedJson(movedA, "study-1")))
+            store.failingSaves += store.saves + 2
+            assertTrue(vm.submitAdjustment())
+            advanceUntilIdle()
+            assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved), vm.adjustment.value.state)
+
+            // A fresh start restores that marker with the pre-request rows and no move or replay.
+            val (restarted, _) = open(adjustment = live)
+            assertTrue(restarted.selectPlan(1))
+            assertEquals(AdjustmentSelection(1, "study-1"), restarted.adjustment.value)
+            assertEquals(PlanRecovery.ReloadRequired, restarted.plan(1).recovery)
+            assertEquals(rowsA, restarted.plan(1).current.schedules)
+            assertEquals(reports, restarted.plan(1).checkIns)
+            assertEquals(planBBefore, restarted.plan(2))
+            restarted.retryAdjustment()
+            assertFalse(restarted.submitAdjustment())
+            assertFalse(restarted.startManualMove())
+            advanceUntilIdle()
+            assertEquals(1, server.requestCount)
+
+            // Only an explicit reload reads the server's copy, and it is not shown as a move.
+            server.enqueue(MockResponse().setBody(listJson(fileA, movedA)))
+            assertTrue(restarted.reloadPlan())
+            advanceUntilIdle()
+            assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), restarted.adjustment.value)
+            assertEquals(movedA, restarted.plan(1).current.schedules)
+            assertEquals(reports, restarted.plan(1).checkIns)
+            assertEquals(planBBefore, restarted.plan(2))
+            assertEquals(listOf("POST", "GET"), List(server.requestCount) { server.takeRequest().method })
+        } finally {
+            server.shutdown()
+        }
     }
 }

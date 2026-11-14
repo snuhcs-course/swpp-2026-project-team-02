@@ -79,6 +79,8 @@ private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
  * The selected plan's schedules by week with one selectable failed study
  * session, then progress, error with retry, or the updated rows. After an uncertain result the
  * shown rows stay as an unconfirmed copy and only reading the latest saved plan is offered.
+ * An accepted move shows its old and new times and whether it is saved on this device; a failed
+ * save keeps the result and is retried only through the storage alert.
  * Day and session cards reuse the plan screen's rendering (frame 2007:253). While a request
  * runs, back and every other action are held so it is neither abandoned nor repeated.
  * Requests wait while the plans are being saved or after a failed save; viewing does not.
@@ -86,6 +88,8 @@ private fun weekIndexOf(weeks: List<WeekPlan>, scheduleId: String?): Int =
  * [exportCount] study sessions, beside the adjustment actions; [exportBlock] disables it.
  * The selected session can instead be moved to a chosen time ([onManual]); while that draft is
  * open its editor replaces this screen, and the shown week is kept for the return.
+ * Each study session also has a separate report action ([checkIns]) that leaves the selection
+ * alone; it waits while a request runs.
  */
 @Composable
 fun PlanAdjustmentScreen(
@@ -259,10 +263,7 @@ fun PlanAdjustmentScreen(
                     if (plan.isDemo) "로컬 시연 계산이에요." else "서버가 일정을 조정하는 데 최대 2분까지 걸릴 수 있어요.",
                 )
                 state is AdjustmentState.Success -> {
-                    MutedBox {
-                        Text("계획이 조정됐어요", style = MaterialTheme.typography.titleSmall, color = Ink)
-                        Note("옮긴 일정이 있는 주를 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
-                    }
+                    state.move?.let { MoveResult(it, state.save) }
                     if (summary != null) PlanSummary(summary)
                 }
                 state is AdjustmentState.Failure -> {

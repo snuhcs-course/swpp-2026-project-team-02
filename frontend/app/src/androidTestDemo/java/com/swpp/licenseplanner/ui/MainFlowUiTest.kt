@@ -1,23 +1,23 @@
 package com.swpp.licenseplanner.ui
 
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import android.view.KeyEvent
-import androidx.test.platform.app.InstrumentationRegistry
-import com.swpp.licenseplanner.domain.StudyCheckIn
-import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.view.KeyEvent
+import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.Question
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.UNKNOWN_LABEL
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
@@ -27,6 +27,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -37,6 +38,11 @@ import org.junit.runner.RunWith
 class MainFlowUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @get:Rule val testName = TestName()
+
+    private fun pressBack() {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+    }
 
     @Test
     fun createsWrittenDemoPlanThroughEveryQuestionAndBrowsesWeeks() = withApp { host ->
@@ -142,6 +148,11 @@ class MainFlowUiTest {
         assertEquals(target.topic, moved.topic)
         assertEquals(target.durationMinutes, moved.durationMinutes)
         assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
+        assertMoveResult(
+            before.current.schedules.single { it.scheduleId == target.scheduleId },
+            after.current.schedules.single { it.scheduleId == target.scheduleId },
+            saved = "이 기기에 저장했어요",
+        )
         val weeks = PlanGrouping.weeks(after.current.schedules)
         val destinationIndex = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == target.scheduleId } } }
         showWeek(weeks[destinationIndex].monday, destinationIndex, weeks.size)
@@ -152,6 +163,7 @@ class MainFlowUiTest {
         openSavedPlan()
         compose.onNodeWithText("선택한 일정 조정하기").assertIsNotEnabled()
         compose.onNodeWithText("계획이 조정됐어요").assertDoesNotExist()
+        compose.onNodeWithText("이 기기에 저장했어요").assertDoesNotExist()
         compose.onAllNodes(movedMarker()).assertCountEquals(0)
         for (index in 0 until destinationIndex) clickDescription("다음 주")
         showWeek(weeks[destinationIndex].monday, destinationIndex, weeks.size)
@@ -197,6 +209,12 @@ class MainFlowUiTest {
         val after = host.snapshot().plans.single()
         assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
         assertEquals(WireDateTime.format(destination), after.current.schedules.single { it.scheduleId == target.scheduleId }.startDate)
+        assertMoveResult(
+            before.current.schedules.single { it.scheduleId == target.scheduleId },
+            after.current.schedules.single { it.scheduleId == target.scheduleId },
+            saved = "이 기기에 저장했어요",
+        )
+        show("바뀐 시간: 2026년 11월 16일(월) 14:00–15:00")
     }
 
     @Test
@@ -273,6 +291,8 @@ class MainFlowUiTest {
         click("선택한 일정 조정하기")
         waitForText("계획이 조정됐어요")
         host.awaitSaved()
+        val move = (host.viewModel.adjustment.value.state as AdjustmentState.Success).move!!
+        assertMoveResult(move.before, move.after, "이 기기에 저장했어요")
         host.capture("long-move-result")
         assertEquals(1, host.planningCalls.get())
         assertEquals(1, host.adjustmentCalls.get())
@@ -485,9 +505,52 @@ class MainFlowUiTest {
         assertEquals("Reopening never replays the adjustment", 1, host.adjustmentCalls.get())
     }
 
-    private fun pressBack() {
-        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-        compose.waitForIdle()
+    @Test
+    fun moveResultStaysWhileItsSaveIsPendingFailsAndIsRetriedLocally() = withApp { host ->
+        generatePlan(host)
+        host.recreate()
+        openSavedPlan()
+        val before = host.snapshot().plans.single()
+        val target = PlanGrouping.sessions(before.current.schedules).first { !it.isExternal }
+        val sent = before.current.schedules.single { it.scheduleId == target.scheduleId }
+        clickSession(target)
+        val pending = CompletableDeferred<Unit>()
+        host.holdSaves.set(pending)
+        click("선택한 일정 조정하기")
+        waitForText("기기에 저장하는 중이에요")
+        val accepted = checkNotNull((host.viewModel.adjustment.value.state as AdjustmentState.Success).move).after
+        assertMoveResult(sent, accepted, saved = "기기에 저장하는 중이에요")
+        compose.onNodeWithText("이 기기에 저장했어요").assertDoesNotExist()
+        compose.onNodeWithText("아직 이 기기에 저장하지 못했어요").assertDoesNotExist()
+        compose.onNodeWithText("다시 저장하기").assertDoesNotExist()
+        compose.onNodeWithText("시간 직접 옮기기").assertIsNotEnabled()
+        host.capture("move-saving")
+
+        host.failSaves.set(true)
+        host.holdSaves.set(null)
+        pending.complete(Unit)
+        waitForText("아직 이 기기에 저장하지 못했어요")
+        assertMoveResult(sent, accepted, saved = "아직 이 기기에 저장하지 못했어요")
+        show("기기에 계획을 저장하지 못했어요")
+        compose.onAllNodesWithText("다시 저장하기").assertCountEquals(1)
+        compose.onNodeWithText("이 기기에 저장했어요").assertDoesNotExist()
+        compose.onAllNodes(movedMarker()).assertCountEquals(1)
+        assertEquals(before.current.schedules, host.snapshot().plans.single().current.schedules)
+        host.capture("move-unsaved")
+
+        host.failSaves.set(false)
+        click("다시 저장하기")
+        host.awaitSaved()
+        waitForText("이 기기에 저장했어요")
+        assertMoveResult(sent, accepted, saved = "이 기기에 저장했어요")
+        compose.onNodeWithText("다시 저장하기").assertDoesNotExist()
+        compose.onNodeWithText("기기에 계획을 저장하지 못했어요").assertDoesNotExist()
+        val after = host.snapshot().plans.single()
+        assertEquals(accepted, after.current.schedules.single { it.scheduleId == target.scheduleId })
+        assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
+        assertEquals("Retrying the save sends no adjustment", 1, host.adjustmentCalls.get())
+        assertEquals("Retrying the save sends no generation", 1, host.planningCalls.get())
+        host.capture("move-saved")
     }
 
     private fun withApp(block: (DemoUiHost) -> Unit) {
@@ -654,6 +717,25 @@ class MainFlowUiTest {
         }
     }
 
+    private fun assertMoveResult(sent: ScheduleRow, accepted: ScheduleRow, saved: String) {
+        val lines = listOf("계획이 조정됐어요", accepted.topic, "원래 시간: ${resultInterval(sent)}", "바뀐 시간: ${resultInterval(accepted)}", saved)
+        for (line in lines) {
+            val inResult = hasText(line) and hasParent(hasTestTag("move-result"))
+            scrollTo(inResult)
+            compose.onNode(inResult).assertIsDisplayed()
+        }
+    }
+
+    private fun resultInterval(row: ScheduleRow): String {
+        val start = checkNotNull(WireDateTime.parseOrNull(row.startDate))
+        val end = checkNotNull(WireDateTime.parseOrNull(row.endDate))
+        val endDay = if (end.toLocalDate() == start.toLocalDate()) "" else "${resultDay(end.toLocalDate())} "
+        return "${resultDay(start.toLocalDate())} ${WireDateTime.formatTime(start.toLocalTime())}–$endDay${WireDateTime.formatTime(end.toLocalTime())}"
+    }
+
+    private fun resultDay(date: LocalDate) =
+        "${date.year}년 ${monthDay(date)}(${date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)})"
+
     private fun showWeek(monday: LocalDate, index: Int, count: Int) {
         show("${index + 1} / ${count}주")
         val sunday = monday.plusDays(6)
@@ -693,7 +775,8 @@ class MainFlowUiTest {
     }
 
     private fun scrollTo(matcher: SemanticsMatcher, lazy: Boolean = false) {
-        if (compose.onNode(matcher).isDisplayed()) return
+        if (compose.onNode(matcher).isDisplayed() &&
+            compose.onAllNodes(matcher and hasAnyAncestor(hasScrollAction())).fetchSemanticsNodes().isEmpty()) return
         if (lazy || compose.onAllNodes(hasScrollToIndexAction()).fetchSemanticsNodes().isNotEmpty()) {
             compose.onNode(hasScrollToIndexAction()).performScrollToNode(matcher)
         } else compose.onNode(matcher).performScrollTo()

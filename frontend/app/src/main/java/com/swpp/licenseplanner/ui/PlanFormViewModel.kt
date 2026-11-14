@@ -42,6 +42,7 @@ import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.RequestMapper
 import com.swpp.licenseplanner.data.UnavailableCalendarExport
 import com.swpp.licenseplanner.data.UnavailableCalendarRead
+import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.CalendarExport
@@ -105,8 +106,20 @@ sealed interface CalendarReadState {
 sealed interface AdjustmentState {
     data object Idle : AdjustmentState
     data object Loading : AdjustmentState
-    /** The selected plan was replaced; [targetScheduleId] is the moved row. */
-    data class Success(val targetScheduleId: String) : AdjustmentState
+    /**
+     * The selected plan was replaced; [targetScheduleId] is the moved row. [move] is the row as it
+     * was sent and as accepted, and [save] tells whether this outcome is saved on this device.
+     * Both exist only while this result is shown; they are never saved or rebuilt from a summary.
+     */
+    data class Success(
+        val targetScheduleId: String,
+        val move: SessionMove? = null,
+        val save: MoveSave = MoveSave.Saving,
+    ) : AdjustmentState {
+        init {
+            require(move == null || move.after.scheduleId == targetScheduleId)
+        }
+    }
     data class Failure(val error: ApiError) : AdjustmentState
     /** Demo-only: no permitted interval fits before the exam. */
     data object DemoNoSlot : AdjustmentState
@@ -116,6 +129,27 @@ sealed interface AdjustmentState {
     data class ReloadFailure(val error: ApiError) : AdjustmentState
     /** The latest saved rows replaced the plan; a fresh selection is needed. */
     data object Reloaded : AdjustmentState
+}
+
+/**
+ * One accepted move of a study row: [before] is the row from the plan's rows as they were sent,
+ * so an earlier move is the starting point, and [after] is the same row from the accepted
+ * response, whose topic is authoritative.
+ */
+data class SessionMove(val before: ScheduleRow, val after: ScheduleRow) {
+    init {
+        require(before.scheduleId == after.scheduleId)
+    }
+}
+
+/** Whether the plan changed by a shown move is part of the saved collection. */
+enum class MoveSave {
+    /** The changed plan is being written; nothing is known about its durability yet. */
+    Saving,
+    /** The changed plan is part of the collection saved on this device. */
+    Saved,
+    /** The changed plan is shown but its save failed; only a local retry may follow. */
+    Unsaved,
 }
 
 /**
@@ -575,7 +609,7 @@ class PlanFormViewModel(
     /**
      * Opens [ordinal] for adjustment. A different plan starts with no outcome and no selection,
      * except that a plan awaiting reload shows its own failed session again; the same plan keeps
-     * both, and every plan keeps its [SessionPlan.recovery].
+     * both except a shown move, and every plan keeps its [SessionPlan.recovery].
      * Refused while an adjustment or reload is in flight.
      */
     fun selectPlan(ordinal: Int): Boolean {
@@ -586,6 +620,9 @@ class PlanFormViewModel(
                 ?.takeIf { plan.recovery == PlanRecovery.ReloadRequired && plan.isStudy(it) }
             _adjustment.value = AdjustmentSelection(planOrdinal = ordinal, failedScheduleId = retained)
             pendingAdjustment = null
+        } else if (_adjustment.value.state is AdjustmentState.Success) {
+            // A shown move describes the last visit only; reopening the plan starts without it.
+            _adjustment.update { it.copy(state = AdjustmentState.Idle) }
         }
         return true
     }
@@ -926,8 +963,9 @@ class PlanFormViewModel(
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
                     pendingAdjustment = null
-                    _adjustment.update { it.copy(failedScheduleId = null, state = AdjustmentState.Success(input.scheduleId), manual = null) }
-                    commit(_plans.value)
+                    val success = AdjustmentState.Success(input.scheduleId, sessionMove(input, outcome.response.schedules))
+                    _adjustment.update { it.copy(failedScheduleId = null, state = success, manual = null) }
+                    finishMoveSave(commit(_plans.value))
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
                 is AdjustmentOutcome.Failure -> {
@@ -966,9 +1004,31 @@ class PlanFormViewModel(
         if (_storage.value != PlanStorage.SaveFailure) return
         _storage.value = PlanStorage.Saving
         _checkIn.update { if (it?.save == CheckInSave.Unsaved) it.copy(save = CheckInSave.Saving) else it }
+        updateMoveSave(from = MoveSave.Unsaved, to = MoveSave.Saving)
         viewModelScope.launch {
-            finishCheckInSave(commit(_plans.value))
+            val saved = commit(_plans.value)
+            finishCheckInSave(saved)
+            finishMoveSave(saved)
         }
+    }
+
+    /** The target row as sent and as accepted; null only if a validated response lacked it. */
+    private fun sessionMove(input: AdjustmentInput, returned: List<ScheduleRow>): SessionMove? {
+        val before = input.schedules.firstOrNull { it.scheduleId == input.scheduleId } ?: return null
+        val after = returned.firstOrNull { it.scheduleId == input.scheduleId } ?: return null
+        return SessionMove(before, after)
+    }
+
+    /**
+     * Settles a shown move whose save was running. Saves never overlap and plan changes wait for
+     * them, so a move still saving is the one this save wrote; a cleared result stays cleared.
+     */
+    private fun finishMoveSave(saved: Boolean) =
+        updateMoveSave(from = MoveSave.Saving, to = if (saved) MoveSave.Saved else MoveSave.Unsaved)
+
+    private fun updateMoveSave(from: MoveSave, to: MoveSave) = _adjustment.update { selection ->
+        val success = selection.state as? AdjustmentState.Success
+        if (success?.save == from) selection.copy(state = success.copy(save = to)) else selection
     }
 
     private suspend fun restore() {

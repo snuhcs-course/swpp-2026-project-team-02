@@ -428,9 +428,39 @@ A plan with no study sessions explains that and offers a way back. After a
 successful adjustment the same entry is updated in place, the view jumps to the
 moved session's week, and another session can be adjusted from the new rows.
 The moved session carries a “옮긴 일정” tag on this screen only. The tag stays
-through rotation and clears when another session is chosen or another plan is
-opened. Nothing about it is stored, and the generated-plan screen never shows it.
+through rotation and clears when another session is chosen, the plan is opened
+again from the list, or another plan is opened. Nothing about it is stored, and
+the generated-plan screen never shows it.
 Other plans never change, even when they share schedule IDs.
+
+**Accepted versus saved.** An accepted move (automatic or chosen time) and
+saving it on this device are separate steps. With the result, the app keeps the
+moved session's row as it was sent (so a session moved earlier starts from its
+latest time, not its generated one) and as it was accepted, with the returned
+topic, full dates and start/end times; it never reads them from the server's
+summary. That pair has the same lifetime as the tag above, and a restart, a
+reload or a failure never recreates it. The result also tracks its own local
+save: saving while the automatic save of the changed list runs, saved only once
+that save has written this result, and not saved when it failed. A failed save
+keeps the moved rows on screen, holds other plan changes, and 다시 저장하기
+writes only the local file, without another adjustment or generation; a later
+save of something else (for example a study report) never changes what is
+known about this move. Lost or invalid live responses, failed pre-request saves
+and missing plans never produce a move result: they follow the recovery rules
+below. If the app ends before the result is saved, the plan restarts behind
+최신 계획 불러오기 with its pre-request rows, as described above, without
+claiming either rows are on the server and without resending. These rules are
+checked by JVM tests that start a fresh view model over the same stored bytes;
+they do not kill a real process.
+
+On screen, the adjustment result card under 계획이 조정됐어요 shows the returned
+topic, 원래 시간 and 바뀐 시간 as full dates with weekday and start–end times (an
+end on another day names its own date), and the save line 기기에 저장하는 중이에요,
+이 기기에 저장했어요 or 아직 이 기기에 저장하지 못했어요. The server summary stays a
+separate 계획 요약 box. There is no save button on the card: a failure is explained
+by the storage alert above it, whose 다시 저장하기 is the only retry. The demo UI
+tests delay and refuse saves only in their own injected store; they do not show
+a real disk failure, process death or the live flavor.
 
 While an adjustment request runs, the screen shows progress; system back,
 the top-bar back, and every other action are held, and rotation keeps the same

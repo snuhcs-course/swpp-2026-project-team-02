@@ -1,7 +1,5 @@
 package com.swpp.licenseplanner.ui
 
-import com.swpp.licenseplanner.domain.StudyCheckIn
-import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -31,6 +29,8 @@ import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.StudyAvailability
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.ui.screens.movedScheduleId
 import kotlinx.coroutines.CompletableDeferred
@@ -171,6 +171,10 @@ class PlanAdjustmentViewModelTest {
         selectFailedSession(scheduleId)
     }
 
+    /** The saved result of moving [id] from its row in [sent] to its row in [returned]. */
+    private fun savedMove(sent: List<ScheduleRow>, returned: List<ScheduleRow>, id: String = "study-1") =
+        AdjustmentState.Success(id, SessionMove(sent.single { it.scheduleId == id }, returned.single { it.scheduleId == id }), MoveSave.Saved)
+
     // --- Canonical session collection ---
 
     @Test fun twoPlansSharingStudy1StaySeparateWithOriginalWindows() = runTest(dispatcher) {
@@ -301,7 +305,7 @@ class PlanAdjustmentViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(savedMove(rowsA, movedA), vm.adjustment.value.state)
             assertTrue(vm.selectPlan(2))
             assertTrue(vm.selectPlan(1))
             assertEquals(AdjustmentSelection(1), vm.adjustment.value)
@@ -345,7 +349,7 @@ class PlanAdjustmentViewModelTest {
         adjustment.gate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
-        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1")), vm.adjustment.value)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, movedA)), vm.adjustment.value)
         val updated = vm.plan(1)
         assertEquals(movedA, updated.current.schedules)
         assertEquals("csv-a2", updated.current.scheduleCsv)
@@ -469,7 +473,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(mondayWindows, adjustment.inputs[1].original.weeklyAvailability)
         assertEquals(fileA, adjustment.inputs[1].scheduleCsvFile)
         assertEquals(1, vm.plans.value.size)
-        assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+        assertEquals(savedMove(rowsA, movedA), vm.adjustment.value.state)
     }
 
     @Test fun changingSelectionAfterFailureBuildsANewRequest() = runTest(dispatcher) {
@@ -941,6 +945,8 @@ class PlanAdjustmentViewModelTest {
             vm.submitAdjustment()
             advanceUntilIdle()
             assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+            assertTrue(vm.adjustment.value.state is AdjustmentState.Failure) // no move is claimed
+            assertEquals(rowsA, vm.plan(1).current.schedules)
             vm.retryAdjustment()
             vm.selectFailedSession("study-2")
             assertFalse(vm.submitAdjustment())
@@ -964,6 +970,7 @@ class PlanAdjustmentViewModelTest {
             assertTrue(vm.reloadPlan())
             advanceUntilIdle()
             assertEquals(savedA, vm.plan(1).current.schedules)
+            assertEquals(AdjustmentState.Reloaded, vm.adjustment.value.state) // a reload is not a move
             assertEquals(planBBefore, vm.plan(2))
             assertEquals(2, vm.plans.value.size)
             assertFalse(vm.submitAdjustment())
@@ -974,6 +981,7 @@ class PlanAdjustmentViewModelTest {
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
             assertEquals(final, vm.plan(1).current.schedules)
+            assertEquals(savedMove(savedA, final, "study-2"), vm.adjustment.value.state) // from the reloaded rows
 
             val requests = server.requests()
             assertEquals(listOf("POST", "GET", "GET", "POST"), requests.map { it.method })
@@ -1109,7 +1117,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(3, adjustment.inputs.size)
         assertEquals(ManualMove(chosen, confirmOutsideAvailability = true), adjustment.inputs[2].manualMove)
         assertEquals(first.copy(manualMove = ManualMove(chosen, true)), adjustment.inputs[2])
-        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1")), vm.adjustment.value)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
         assertEquals(manualA, vm.plan(1).current.schedules)
         assertEquals(rowsB, vm.plan(2).current.schedules)
     }
@@ -1193,7 +1201,7 @@ class PlanAdjustmentViewModelTest {
         advanceUntilIdle()
         assertEquals(2, adjustment.inputs.size)
         assertEquals(adjustment.inputs[0], adjustment.inputs[1])
-        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1")), vm.adjustment.value)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
         assertEquals(manualA, vm.plan(1).current.schedules)
     }
 
@@ -1373,6 +1381,107 @@ class PlanAdjustmentViewModelTest {
         assertEquals(reportsA, vm.plan(1).checkIns)
         assertEquals(mondayWindows, vm.plan(1).original.weeklyAvailability)
         assertEquals(b, vm.plan(2))
+        assertEquals(3, adjustment.inputs.size)
+    }
+
+    // --- Move feedback ---
+
+    @Test fun moveFeedbackComesFromTheSentAndAcceptedRowsOfItsOwnPlan() = runTest(dispatcher) {
+        val yearEnd = rowsB.map { if (it.scheduleId == "study-1") ScheduleRow("study-1", "2026/12/31/23/30", "2027/01/01/00/30", "셀 참조 심화") else it }
+        val monthEnd = yearEnd.map { if (it.scheduleId == "study-1") it.copy(startDate = "2027/01/31/23/40", endDate = "2027/02/01/00/40") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(StudyPlanResponse(yearEnd, "csv-b2", "", null)),
+            AdjustmentOutcome.Success(StudyPlanResponse(monthEnd, "csv-b3", "study-1을 10월 12일 18:00으로 옮겼습니다.", null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        val planABefore = vm.plan(1)
+
+        // A shares study-1, but only B's row moves; a blank summary does not matter.
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val first = SessionMove(
+            ScheduleRow("study-1", "2026/10/07/18/00", "2026/10/07/19/00", "셀 참조"),
+            ScheduleRow("study-1", "2026/12/31/23/30", "2027/01/01/00/30", "셀 참조 심화"),
+        )
+        assertEquals(AdjustmentSelection(2, null, AdjustmentState.Success("study-1", first, MoveSave.Saved)), vm.adjustment.value)
+        assertEquals("study-1", movedScheduleId(vm.plan(2), vm.adjustment.value.state))
+        assertEquals(planABefore, vm.plan(1))
+
+        // The next move starts from the moved row, not the generated one; the summary is not read.
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val second = SessionMove(first.after, ScheduleRow("study-1", "2027/01/31/23/40", "2027/02/01/00/40", "셀 참조 심화"))
+        assertEquals(AdjustmentState.Success("study-1", second, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(yearEnd, adjustment.inputs[1].schedules)
+        assertEquals(monthEnd, vm.plan(2).current.schedules)
+        assertEquals(planABefore, vm.plan(1))
+        assertEquals(2, adjustment.inputs.size)
+    }
+
+    @Test fun chosenTimeFeedbackShowsTheWholeOvernightInterval() = runTest(dispatcher) {
+        val overnight = rowsA.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/31/23/30", endDate = "2026/11/01/00/30") else it }
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(overnight, "csv", "요약 A", null)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(LocalDateTime.of(2026, 10, 31, 23, 30))
+        assertTrue(vm.submitManualMove())
+        advanceUntilIdle()
+
+        val move = SessionMove(
+            ScheduleRow("study-1", "2026/10/05/18/00", "2026/10/05/19/00", "함수"),
+            ScheduleRow("study-1", "2026/10/31/23/30", "2026/11/01/00/30", "함수"),
+        )
+        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1", move, MoveSave.Saved)), vm.adjustment.value)
+        assertEquals(rowsB, vm.plan(2).current.schedules)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun moveFeedbackStaysUntilAnotherSelectionOrReopening() = runTest(dispatcher) {
+        val movedTwice = movedA.map { if (it.scheduleId == "study-2") it.copy(startDate = "2026/10/12/19/00", endDate = "2026/10/12/20/00") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(adjustedA),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedTwice, "csv", null, null)),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedTwice, "csv", null, null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val shown = AdjustmentSelection(1, null, savedMove(rowsA, movedA))
+        assertEquals(shown, vm.adjustment.value)
+
+        // A report on the same plan is a separate change and leaves the shown move alone.
+        report(vm, 1, "study-1", StudyCheckInStatus.Done, "60")
+        assertEquals(shown, vm.adjustment.value)
+
+        // Choosing another session clears it without sending anything.
+        vm.selectFailedSession("study-2")
+        assertEquals(AdjustmentSelection(1, "study-2"), vm.adjustment.value)
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(movedA, vm.plan(1).current.schedules)
+
+        // Reopening the same plan clears it, and so does leaving for another plan.
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(savedMove(movedA, movedTwice, "study-2"), vm.adjustment.value.state)
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertNull(movedScheduleId(vm.plan(1), vm.adjustment.value.state))
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertTrue(vm.adjustment.value.state is AdjustmentState.Success)
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertEquals(movedTwice, vm.plan(1).current.schedules)
+        assertEquals(mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 60)), vm.plan(1).checkIns)
         assertEquals(3, adjustment.inputs.size)
     }
 }

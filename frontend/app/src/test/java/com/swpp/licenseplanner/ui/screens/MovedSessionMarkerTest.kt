@@ -8,6 +8,8 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.AdjustmentState
+import com.swpp.licenseplanner.ui.MoveSave
+import com.swpp.licenseplanner.ui.SessionMove
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -25,6 +27,15 @@ class MovedSessionMarkerTest {
     @Test
     fun successMarksItsReturnedStudyRow() {
         assertEquals("study-1", movedScheduleId(plan, AdjustmentState.Success("study-1")))
+    }
+
+    @Test
+    fun theMarkerFollowsTheMoveShownInTheResultWhateverItsSaveState() {
+        val before = ScheduleRow("study-2", "2026/09/28/19/00", "2026/09/28/20/00", "차트")
+        val move = SessionMove(before, rows[1])
+        for (save in MoveSave.entries) {
+            assertEquals("study-2", movedScheduleId(plan, AdjustmentState.Success("study-2", move, save)))
+        }
     }
 
     @Test
