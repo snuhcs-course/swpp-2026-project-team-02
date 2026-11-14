@@ -15,7 +15,14 @@ General guidance was difficult to find when it was concentrated in one place, wh
 
 ## Evidence
 
-The images below are the screenshots supplied with the HE-01 review and copied into this evidence folder. They show the DEMO badge; they document the UI content and placement in the captured build, not a separately verified Live release.
+The first two images are the user's session-supplied pre-change captures. They show the home and availability screens before the contextual-help entries were added. The remaining screenshots were supplied with the HE-01 review and show the updated help placement. The post-change images show the DEMO badge; they document the UI content and placement in the captured build, not a separately verified Live release.
+
+### Before
+
+- [Home screen before contextual help](evidence/he-01/00-before-home-no-contextual-help.png)
+- [Availability screen before contextual help](evidence/he-01/00-before-availability-no-contextual-help.png)
+
+### After
 
 1. [Home screen help entry](evidence/he-01/01-home-context-help.png)
 2. [Home screen start guide](evidence/he-01/02-home-start-help-dialog.png)

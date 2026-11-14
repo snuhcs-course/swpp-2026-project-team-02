@@ -16,7 +16,13 @@ The evaluator could interpret the change of week after schedule adjustment as a 
 
 ## Evidence
 
-The following images are cropped frames extracted from the screen recording supplied on 2026-11-14. The recording shows the DEMO build (including the `DEMO` badge and `로컬 시연 계산` label), so these frames document the UI flow and are not evidence of Live backend behavior.
+The first image is a frame extracted at 16 seconds from the user's 2026-11-14 pre-change recording. It shows a successful adjustment summary and the screen already displaying week 2, while the moved session was originally in week 1. This records the automatic week jump that prompted the issue. The remaining images are cropped frames extracted from the post-change recording. Those recordings show the DEMO build (including the `DEMO` badge and `로컬 시연 계산` label), so they document the UI flow and are not evidence of Live backend behavior.
+
+### Before
+
+- [Adjustment result automatically opens the destination week](evidence/he-11/00-before-adjustment-auto-week-jump.png)
+
+### After
 
 1. [Adjustment result and current week](evidence/he-11/01-adjustment-result.png)
 2. [Temporary original position and destination link](evidence/he-11/02-temporary-source-and-destination.png)
@@ -24,7 +30,9 @@ The following images are cropped frames extracted from the screen recording supp
 4. [Destination schedule highlighted](evidence/he-11/05-destination-highlight.png)
 5. [Destination schedule after the highlight](evidence/he-11/03-destination-schedule.png)
 
-Source recording: `C:\Users\junwo\Videos\Captures\LicensePlanner 2026-11-14 16-01-53.mp4` (kept at the supplied local path; not copied into the repository).
+Pre-change source recording: `C:\Users\junwo\Downloads\Screen_Recording_20261114_153014_License Planner.mp4` (kept at the supplied local path; not copied into the repository).
+
+Post-change source recording: `C:\Users\junwo\Videos\Captures\LicensePlanner 2026-11-14 16-01-53.mp4` (kept at the supplied local path; not copied into the repository).
 
 ## Verification status
 

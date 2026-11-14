@@ -23,6 +23,10 @@ The finding must be read with the user's existing pre-change capture: the genera
 
 ## Evidence record
 
+The user also supplied this pre-change plan screenshot in the conversation. It shows the overall available and assigned totals plus spare-time text, but no per-week graph. This confirms which transparency was already present before HE-13 and why the new graph is complementary.
+
+- [Plan screen before weekly graph](evidence/he-13/00-before-weekly-time-graph.png)
+
 On 2026-11-14, the user supplied post-change screenshots and a screen recording of the adjustment screen:
 
 - **Plan screen:** graph shows Monday Nov 16 (1 h assigned / 4 h available), Wednesday Nov 18 (1 h / 3 h), and Sunday Nov 22 (1 h / 3 h). The other days, with no availability, are omitted. The note identifies available and assigned bars and says some available time may remain unused.
