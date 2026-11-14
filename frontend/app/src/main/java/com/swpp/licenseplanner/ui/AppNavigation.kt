@@ -28,6 +28,7 @@ import com.swpp.licenseplanner.data.CalendarAccess
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.ui.components.CalendarConflictDialog
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
 import com.swpp.licenseplanner.ui.components.CreationExitDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityActions
@@ -131,6 +132,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
+    val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
+    val generationForConflict by viewModel.generation.collectAsStateWithLifecycle()
     val exportBlocks by viewModel.exportBlocks.collectAsStateWithLifecycle()
     val committedDraft by viewModel.committedDraft.collectAsStateWithLifecycle()
     val draftDecision by viewModel.draftDecision.collectAsStateWithLifecycle()
@@ -204,6 +207,47 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val readPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onCalendarReadPermission(CalendarAccess.READ.isGranted(context))
     }
+    var conflictPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val conflictPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onConflictPermission(CalendarAccess.READ.isGranted(context), conflictPermissionOwner)
+    }
+    LaunchedEffect(calendarConflict?.id, calendarConflict?.phase) {
+        if (calendarConflict?.phase != ConflictPhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onConflictPermission(true, calendarConflict?.id)
+        else if (viewModel.conflictPermissionPrompted()) {
+            conflictPermissionOwner = calendarConflict?.id
+            conflictPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    calendarConflict?.let { state ->
+        fun closeReview() {
+            viewModel.cancelCalendarConflict()
+            if (state.kind == ConflictKind.Creation && viewModel.calendarConflict.value == null) nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+        }
+        CalendarConflictDialog(
+            state = state,
+            generation = generationForConflict,
+            onContinue = { viewModel.continueCalendarConflict(it) },
+            onDetails = viewModel::showConflictDetails,
+            onSummary = viewModel::showConflictSummary,
+            onEdit = ::closeReview,
+            onRegenerate = { state.source?.let { viewModel.startRegeneration(it.ordinal) } },
+            regenerationReason = state.source?.let { viewModel.regenerationBlockReason(it.ordinal) },
+            onConfirmReplacement = { viewModel.confirmRegeneration() },
+            onRetryRead = viewModel::retryCalendarConflict,
+            onRetryGeneration = viewModel::retryGeneration,
+            onManual = { id ->
+                val ordinal = state.source?.ordinal
+                viewModel.cancelCalendarConflict()
+                if (ordinal != null && viewModel.selectPlan(ordinal)) {
+                    viewModel.selectFailedSession(id)
+                    if (viewModel.startManualMove()) nav.fromHome(Routes.ADJUST)
+                }
+            },
+            onSettings = { openAppSettings(context) },
+            onClose = ::closeReview,
+        )
+    }
     val requestingPermission = calendarExport?.phase == CalendarExportPhase.RequestingPermission
     LaunchedEffect(requestingPermission) {
         if (!requestingPermission) return@LaunchedEffect
@@ -216,7 +260,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         if (CalendarAccess.READ.isGranted(context)) viewModel.onCalendarReadPermission(true)
         else if (viewModel.calendarReadPermissionPrompted()) readPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
     }
-    calendarExport?.let { state ->
+    calendarExport?.takeIf { calendarConflict == null }?.let { state ->
         CalendarExportDialog(
             state = state,
             onChoose = viewModel::chooseCalendar,
@@ -280,6 +324,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
+                    onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
+                    regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
                     onManual = { viewModel.startManualMove() },
                     onManualPick = viewModel::setManualStart,
                     onManualSubmit = { viewModel.submitManualMove() },
@@ -400,6 +446,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
+                    onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
+                    regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
                     onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
                     onAdjust = { nav.fromHome(Routes.PLAN_LIST) },

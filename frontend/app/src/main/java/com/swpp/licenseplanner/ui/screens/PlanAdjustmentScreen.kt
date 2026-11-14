@@ -106,6 +106,8 @@ fun PlanAdjustmentScreen(
     exportCount: Int,
     exportBlock: ExportBlock?,
     onExport: () -> Unit,
+    onRegenerate: () -> Unit = {},
+    regenerationReason: String? = null,
     onManual: () -> Unit,
     onManualPick: (LocalDateTime) -> Unit,
     onManualSubmit: () -> Unit,
@@ -161,6 +163,8 @@ fun PlanAdjustmentScreen(
     // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
     val exportAction: @Composable () -> Unit = {
         if (exportBlock != ExportBlock.NoStudy) SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
+        regenerationReason?.let { Note(it) }
+        SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null)
     }
     // A separate action on the same selected study session; never offered while a request runs.
     val manualAction: @Composable () -> Unit = {

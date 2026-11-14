@@ -2,6 +2,7 @@ package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.CalendarDestination
 import com.swpp.licenseplanner.data.CalendarWriteOutcome
+import com.swpp.licenseplanner.data.CalendarReadOutcome
 import com.swpp.licenseplanner.domain.CalendarEvent
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.PlanRecovery
@@ -26,7 +27,7 @@ fun exportBlock(plan: SessionPlan, storage: PlanStorage, operationBusy: Boolean)
 fun Map<Int, ExportBlock?>.blockFor(ordinal: Int): ExportBlock? = if (containsKey(ordinal)) get(ordinal) else ExportBlock.Busy
 
 /** The plan copy one export works from, captured when it starts; later plan changes never alter it. */
-data class ExportSource(val planOrdinal: Int, val isDemo: Boolean, val events: List<CalendarEvent>)
+data class ExportSource(val planOrdinal: Int, val isDemo: Boolean, val events: List<CalendarEvent>, val capturedPlan: SessionPlan? = null)
 
 /** One export flow, from the permission check to its result. Only [Confirming] can lead to a write. */
 sealed interface CalendarExportPhase {
@@ -40,6 +41,7 @@ sealed interface CalendarExportPhase {
     data object NoCalendars : CalendarExportPhase
     /** A study row cannot be exported, so nothing is. */
     data object InvalidRows : CalendarExportPhase
+    data object Checking : CalendarExportPhase
     data class Choosing(val calendars: List<CalendarDestination>, val selected: CalendarDestination? = null) : CalendarExportPhase
     data class Confirming(val calendars: List<CalendarDestination>, val destination: CalendarDestination) : CalendarExportPhase
     /** Inserting; the flow can be neither closed nor confirmed again. */
@@ -48,4 +50,10 @@ sealed interface CalendarExportPhase {
 }
 
 /** [id] tells flows apart, so a late result never lands in a newer flow. */
-data class CalendarExportState(val id: Int, val source: ExportSource, val phase: CalendarExportPhase)
+data class CalendarExportState(
+    val id: Int,
+    val source: ExportSource,
+    val phase: CalendarExportPhase,
+    val checked: CalendarReadOutcome? = null,
+    val unchecked: Boolean = false,
+)

@@ -101,7 +101,7 @@ class CreationDraftViewModelTest {
     private inner class CountingCalendarRead : CalendarReadRepository {
         override suspend fun read(window: CalendarReadWindow): CalendarReadOutcome {
             calls += "calendar"
-            return CalendarReadOutcome.Unavailable
+            return CalendarReadOutcome.Loaded(com.swpp.licenseplanner.data.CalendarBusySnapshot(emptyList(), 0, 0))
         }
     }
 
@@ -306,13 +306,13 @@ class CreationDraftViewModelTest {
         // A date changed from the shortfall warning is followed by a new generation.
         vm.setExamDate(exam.plusWeeks(1))
         assertEquals(CreationStep.DATES, vm.creationStep.value)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.generation.value is GenerationState.Failure)
         assertEquals(CreationStep.AVAILABILITY, vm.creationStep.value)
         vm.setExamDate(exam)
-        vm.retryGeneration()
-        assertTrue(vm.generate())
+        vm.retryAfterCalendarCheck()
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.generation.value is GenerationState.DemoShortfall)
         assertEquals(CreationStep.AVAILABILITY, vm.creationStep.value)
@@ -336,7 +336,7 @@ class CreationDraftViewModelTest {
         val planning = FakePlanning(PlanOutcome.Success(generated, false))
         val vm = open(planning)
         assertEquals(CreationStep.AVAILABILITY, vm.resumeDraft())
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
         val stored = storedNow()
@@ -365,17 +365,17 @@ class CreationDraftViewModelTest {
         val draft = vm.committedDraft.value!!
         val saved = disk.committed
 
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.generation.value is GenerationState.Failure)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.generation.value is GenerationState.DemoShortfall)
         assertArrayEquals(saved, disk.committed)
         assertEquals(draft, vm.committedDraft.value)
 
         disk.failWrites = true
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(vm.generation.value is GenerationState.Success)
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
@@ -429,7 +429,7 @@ class CreationDraftViewModelTest {
         assertFalse(vm.saveDraftAndExit())
         assertFalse(vm.discardDraft())
         assertNull(vm.resumeDraft())
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         vm.draftDecisionHandled()
         assertEquals(DraftPhase.Failed, vm.draftDecision.value?.phase)
 
@@ -585,7 +585,7 @@ class CreationDraftViewModelTest {
         advanceUntilIdle()
         vm.draftDecisionHandled()
 
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         assertFalse(vm.saveDraftAndExit())
         assertFalse(vm.discardDraft())
         assertNull(vm.resumeDraft())
@@ -594,6 +594,6 @@ class CreationDraftViewModelTest {
         assertTrue(vm.discardDraft())
         advanceUntilIdle()
         assertEquals(DraftPhase.Done, vm.draftDecision.value?.phase)
-        assertEquals(listOf("questions", "generate"), calls)
+        assertEquals(listOf("questions", "calendar", "calendar", "generate"), calls)
     }
 }

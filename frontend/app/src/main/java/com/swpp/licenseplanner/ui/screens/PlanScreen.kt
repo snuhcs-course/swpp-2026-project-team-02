@@ -75,6 +75,8 @@ fun PlanScreen(
     exportCount: Int,
     exportBlock: ExportBlock?,
     onExport: () -> Unit,
+    onRegenerate: () -> Unit = {},
+    regenerationReason: String? = null,
     onEdit: () -> Unit,
     onHome: () -> Unit,
     onAdjust: () -> Unit,
@@ -142,6 +144,8 @@ fun PlanScreen(
                     subtitle = exportBlock?.let(::exportBlockText) ?: EXPORT_SUBTITLE,
                 )
             }
+            regenerationReason?.let { item { Note(it) } }
+            item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null) }
             item { SecondaryButton("계획 조정하기", onAdjust) }
             item { SecondaryButton("입력 수정하기", onEdit) }
             item { SecondaryButton("처음으로", onHome) }

@@ -112,6 +112,8 @@ class PlanFormViewModelTest {
         today = LocalDate.of(2026, 10, 5),
         planStore = BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
         availabilityProfileRepository = profile,
+
+        calendarReadRepository = ClearCalendarForTest,
     )
 
     /** Certification, dates and level chosen; questions not yet loaded. */
@@ -206,13 +208,13 @@ class PlanFormViewModelTest {
         vm.setDayEnabled(Weekday.MONDAY, true)
         questions.dropLast(1).forEach { vm.answer(it.id, it.correctAnswer) }
 
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(planning.requests.isEmpty())
         assertEquals(GenerationState.Idle, vm.generation.value)
 
         vm.answer(questions.last().id, UNKNOWN_KEY)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(1, planning.requests.size)
         assertEquals(questions.map { it.id }, planning.requests[0].assessmentResults.results.map { it.problemId })
@@ -223,8 +225,8 @@ class PlanFormViewModelTest {
         val planning = FakePlanning(PlanOutcome.Success(plan, isDemo = false)).apply { gate = CompletableDeferred() }
         val vm = loadedViewModel(planning)
 
-        assertTrue(vm.generate())
-        assertFalse(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
+        assertFalse(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(GenerationState.Loading, vm.generation.value)
         planning.gate!!.complete(Unit)
@@ -240,7 +242,7 @@ class PlanFormViewModelTest {
         val planning = FakePlanning(PlanOutcome.DemoShortfall(required = 24, available = 6))
         val vm = loadedViewModel(planning)
 
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         assertEquals(GenerationState.DemoShortfall(24, 6), vm.generation.value)
         assertEquals(1, planning.requests.size)
     }
@@ -251,13 +253,13 @@ class PlanFormViewModelTest {
         val vm = loadedViewModel(planning)
         val formBefore = vm.form.value
 
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(GenerationState.Failure(failure), vm.generation.value)
         assertEquals(formBefore, vm.form.value)
         assertEquals(QuestionLoadState.Loaded, vm.questionLoad.value)
 
-        vm.retryGeneration()
+        vm.retryAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(2, planning.requests.size)
         assertEquals(planning.requests[0], planning.requests[1])
@@ -267,16 +269,16 @@ class PlanFormViewModelTest {
     @Test fun editingAfterFailureBuildsANewRequest() = runTest(dispatcher) {
         val planning = FakePlanning(PlanOutcome.Failure(ApiError.Connection), PlanOutcome.Success(plan, isDemo = false))
         val vm = loadedViewModel(planning)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
 
         vm.stepDuration(Weekday.MONDAY, 1)
         assertEquals(GenerationState.Idle, vm.generation.value)
-        vm.retryGeneration() // nothing to retry once inputs changed
+        vm.retryAfterCalendarCheck() // nothing to retry once inputs changed
         advanceUntilIdle()
         assertEquals(1, planning.requests.size)
 
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(2, planning.requests.size)
         assertEquals(150, planning.requests[1].weeklyAvailability.getValue("monday").single().durationMinutes)
@@ -294,7 +296,7 @@ class PlanFormViewModelTest {
         for (error in errors) {
             val planning = FakePlanning(PlanOutcome.Failure(error))
             val vm = loadedViewModel(planning)
-            vm.generate()
+            vm.generateAfterCalendarCheck()
             advanceUntilIdle()
             assertEquals(GenerationState.Failure(error), vm.generation.value)
             assertEquals(questions, vm.form.value.questions)
@@ -305,7 +307,7 @@ class PlanFormViewModelTest {
         failedQuestions.loadQuestions()
         advanceUntilIdle()
         assertTrue(failedQuestions.form.value.questions.isEmpty())
-        failedQuestions.generate()
+        failedQuestions.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertFalse(failedQuestions.generation.value is GenerationState.Success)
         assertEquals(GenerationState.Idle, failedQuestions.generation.value)
@@ -325,17 +327,17 @@ class PlanFormViewModelTest {
         val questionRepo = FakeQuestions(QuestionOutcome.Loaded(questions))
         val planning = FakePlanning(firstShortfall, PlanOutcome.DemoShortfall(30, 2), PlanOutcome.Success(plan, isDemo = true))
         val vm = loadedViewModel(planning, questionRepo)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val formBefore = vm.form.value
 
         vm.setExamDate(LocalDate.of(2026, 11, 23))
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(GenerationState.DemoShortfall(30, 2), vm.generation.value)
 
         vm.setExamDate(LocalDate.of(2026, 12, 14))
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(GenerationState.Success(plan, isDemo = true), vm.generation.value)
 
@@ -352,13 +354,14 @@ class PlanFormViewModelTest {
         val questionRepo = FakeQuestions(QuestionOutcome.Loaded(questions))
         val planning = FakePlanning(firstShortfall, PlanOutcome.Success(plan, isDemo = true))
         val vm = loadedViewModel(planning, questionRepo)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
 
         planning.gate = CompletableDeferred()
         vm.setExamDate(LocalDate.of(2026, 12, 14))
-        assertTrue(vm.generate())
-        assertFalse(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
+        assertFalse(vm.generateAfterCalendarCheck())
+        advanceUntilIdle() // finish the calendar check before the planning request is held
         vm.setExamDate(LocalDate.of(2027, 1, 4)) // ignored while the request is in flight
         advanceUntilIdle()
         assertEquals(GenerationState.Loading, vm.generation.value)
@@ -377,17 +380,17 @@ class PlanFormViewModelTest {
         val failure = ApiError.ServerFailure(502)
         val planning = FakePlanning(firstShortfall, PlanOutcome.Failure(failure), PlanOutcome.Success(plan, isDemo = false))
         val vm = loadedViewModel(planning, questionRepo)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
 
         vm.setExamDate(LocalDate.of(2026, 12, 14))
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(GenerationState.Failure(failure), vm.generation.value)
         assertEquals(LocalDate.of(2026, 12, 14), vm.form.value.examDate)
         assertTrue(vm.plans.value.isEmpty()) // no fallback plan replaced the failure
 
-        vm.retryGeneration()
+        vm.retryAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(3, planning.requests.size)
         assertOnlyExamDateChanged(planning.requests[0], planning.requests[1], "2026/12/14/00/00")
@@ -409,7 +412,7 @@ class PlanFormViewModelTest {
         val vm = loadedViewModel(FakePlanning(PlanOutcome.Success(plan, false)), profile = profile)
         assertTrue(vm.profileAvailable)
         val draft = vm.form.value
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.selectPlan(1)
         vm.setDayEnabled(Weekday.FRIDAY, true)
@@ -547,7 +550,7 @@ class PlanFormViewModelTest {
         assertEquals(WeekSource.EMPTY, vm.form.value.weekSource(oct19))
         assertEquals(emptyMap<Weekday, List<WindowSpec>>(), vm.form.value.studyAvailability.overrides.getValue(oct19))
         assertTrue(vm.form.value.studyAvailability.windowsStarting(oct19).isEmpty())
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val sent = AvailabilityWire.context(planning.requests.single())!!
         assertEquals(emptyMap<Weekday, List<WindowSpec>>(), sent.overrides.getValue(oct19))
@@ -587,7 +590,7 @@ class PlanFormViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf(expected), profile.saves)
         assertEquals(ProfileState.Saved, vm.profile.value)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(expected, AvailabilityWire.context(planning.requests.single()))
         assertEquals(1, vm.plans.value.size)
@@ -607,7 +610,7 @@ class PlanFormViewModelTest {
         vm.setDayStart(Weekday.TUESDAY, LocalTime.of(0, 15))
         val draft = vm.form.value
         assertTrue(draft.availabilityError != null)
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.saveProfile())
         advanceUntilIdle()
         assertTrue(planning.requests.isEmpty())
@@ -660,7 +663,7 @@ class PlanFormViewModelTest {
         assertFalse(vm.applyWindow(append, LocalTime.of(20, 0, 1), 60))
         assertTrue(vm.applyWindow(append, LocalTime.of(19, 0), 60))
         assertTrue(vm.form.value.availabilityError != null)
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.saveProfile())
         advanceUntilIdle()
         assertTrue(planning.requests.isEmpty())
@@ -691,7 +694,7 @@ class PlanFormViewModelTest {
         assertTrue(vm.saveProfile())
         advanceUntilIdle()
         assertEquals(listOf(windows), profile.saves)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val sent = planning.requests.single()
         assertEquals(2, sent.studyDaysPerWeek)

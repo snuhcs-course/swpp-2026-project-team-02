@@ -167,7 +167,9 @@ class StudyCheckInViewModelTest {
         val vm = PlanFormViewModel(
             FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store, calendarExportRepository = calendar,
             currentDate = currentDate,
-        )
+
+        calendarReadRepository = ClearCalendarForTest,
+    )
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
         return Opened(vm, store, planning, adjustment, calendar)
@@ -357,7 +359,7 @@ class StudyCheckInViewModelTest {
         assertFalse(vm.saveCheckIn())
         assertFalse(vm.startCheckIn(2, "study-1"))
         assertFalse(vm.submitAdjustment())
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.startCalendarExport(2))
         vm.closeCheckIn() // refused while saving
         assertEquals(CheckInSave.Saving, vm.checkIn.value!!.save)
@@ -407,7 +409,7 @@ class StudyCheckInViewModelTest {
         advanceUntilIdle()
         vm.form.value.questions.forEach { vm.answer(it.id, it.correctAnswer) }
         vm.setDayEnabled(Weekday.MONDAY, true)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertFalse(vm.startCheckIn(2, "study-1"))
         planning.gate!!.complete(Unit)

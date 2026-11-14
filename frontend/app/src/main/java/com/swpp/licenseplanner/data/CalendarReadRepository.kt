@@ -9,6 +9,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.security.MessageDigest
 
 /** The device-calendar interval used by one generation request: start inclusive, exam exclusive. */
 data class CalendarReadWindow(val start: LocalDate, val endExclusive: LocalDate)
@@ -18,6 +19,20 @@ data class CalendarBusySnapshot(
     val schedules: List<ScheduleRow>,
     val recurringOccurrences: Int,
     val allDayOccurrences: Int,
+    val occurrences: List<CalendarOccurrence> = schedules.mapNotNull {
+        val start = WireDateTime.parseOrNull(it.startDate) ?: return@mapNotNull null
+        val end = WireDateTime.parseOrNull(it.endDate) ?: return@mapNotNull null
+        CalendarOccurrence(it.scheduleId, null, start, end, false)
+    },
+)
+
+/** Local timing identity only. These keys never belong to a request or stored plan. */
+data class CalendarOccurrence(
+    val key: String,
+    val seriesKey: String?,
+    val start: LocalDateTime,
+    val end: LocalDateTime,
+    val allDay: Boolean,
 )
 
 sealed interface CalendarReadOutcome {
@@ -103,9 +118,15 @@ internal fun mapCalendarInstances(instances: List<ProviderCalendarInstance>): Ca
         }
     }
 
+    val occurrences = mutableListOf<CalendarOccurrence>()
     val schedules = ordered.mapNotNull { instance ->
         val (start, end) = instance.localInterval()
         if (!end.isAfter(start)) return@mapNotNull null
+        occurrences += CalendarOccurrence(
+            timingKey("${instance.eventId}/${instance.beginMillis}/${instance.endMillis}/${instance.allDay}"),
+            if (instance.recurring) timingKey("series/${instance.eventId}") else null,
+            start, end, instance.allDay,
+        )
         ScheduleRow(
             scheduleId = uniqueId(instance.eventId).toString(),
             startDate = WireDateTime.format(start),
@@ -117,8 +138,12 @@ internal fun mapCalendarInstances(instances: List<ProviderCalendarInstance>): Ca
         schedules = schedules,
         recurringOccurrences = ordered.count { it.recurring },
         allDayOccurrences = ordered.count { it.allDay },
+        occurrences = occurrences,
     )
 }
+
+private fun timingKey(value: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
 private fun ProviderCalendarInstance.localInterval(): Pair<LocalDateTime, LocalDateTime> = if (allDay) {
     val startDate = Instant.ofEpochMilli(beginMillis).atZone(ZoneOffset.UTC).toLocalDate()

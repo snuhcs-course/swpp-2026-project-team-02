@@ -116,6 +116,7 @@ fun CalendarExportDialog(
                         PrimaryButton("설정 열기", onOpenSettings)
                         SecondaryButton("닫기", onClose)
                     }
+                    CalendarExportPhase.Checking -> LoadingBlock("캘린더 시간을 확인하는 중이에요")
                     CalendarExportPhase.LoadingCalendars -> {
                         LoadingBlock("캘린더 목록을 불러오는 중이에요")
                         SecondaryButton("취소", onClose)
@@ -169,6 +170,7 @@ fun CalendarExportDialog(
                         }
                         Note("새 일정으로 추가돼요. $DUPLICATE_WARNING")
                         Note(NO_UPDATE_WARNING)
+                        Note(if (state.unchecked) UNCHECKED_NOTICE else CALENDAR_SNAPSHOT_NOTICE)
                         Note("이 기기의 캘린더에 추가해요. 다른 기기와의 동기화는 캘린더 계정에 따라 달라요.")
                         PrimaryButton("${count}개 일정 추가", onConfirm)
                         SecondaryButton("캘린더 다시 선택", onChooseAnother)

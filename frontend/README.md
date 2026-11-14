@@ -812,10 +812,10 @@ study times stay on the device.
 
 On the study-time screen (공부 시간), 캘린더 일정 불러오기 reads the device
 calendar's occurrences between the preparation start and the exam date once,
-only after that tap. Each occurrence is sent as a `busy_schedules` row with a
+only after that tap. Generation and export also read after their explicit actions. Each occurrence is sent as a `busy_schedules` row with a
 numeric ID, Korean wire times and the generic topic 외부 일정; titles and other
 event details never leave the device. Changing either date clears the imported
-rows. Planning without an import sends an empty array.
+rows. Generation also checks fresh occurrences after its explicit action, as described below.
 
 **Permission.** Import asks only for `READ_CALENDAR`, and only after that tap;
 export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
@@ -846,6 +846,63 @@ events; a day without such a gap gets no session, and too few usable days give
 the usual labeled demo shortfall. Imported rows appear in the plan as
 `external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
 are not counted or exported as study sessions.
+
+## Calendar conflict review
+
+계획 만들기 checks the device calendar with read permission before sending a plan
+request. The check compares every effective dated study window, including overnight
+carry-in and week replacements. A conflict offers 겹치지 않게 계획 만들기,
+하나씩 확인 and 공부 시간 수정. Reviewing or editing sends no planning request.
+The avoiding choice sends all freshly read generic busy rows with the original
+assessment, dates and complete study context. A repeated-weekday suggestion needs
+at least two distinct occurrences of the same recurring series.
+
+The reader keeps timing-only local occurrence identities built from the event ID,
+original millisecond endpoints and all-day flag. Recurrence series correspondence
+stays local too. A sub-minute edit invalidates consent even when rounded wire times
+are unchanged. Neither identity enters HTTP requests, saved plans or diagnostics.
+Titles, accounts and attendees are never queried for conflict comparison.
+Descriptions are used only for the existing app-copy exclusion and then dropped.
+
+Denied permission or failed/null queries show 캘린더 확인 안 됨. 다시 확인 requests
+another explicit check, 취소 sends nothing, and 확인 없이 계속 is explicit unchecked
+consent. Generation retains earlier imported busy rows, labeled potentially stale,
+or uses an empty list when none exists. Network retry also checks afresh. The app
+re-reads immediately before dispatch and returns to review when any occurrence
+identity/timing or captured input changed. It describes a snapshot that another app
+can change afterward. Rotation retains one operation. Process restart restores
+saved plans and the explicit draft, with no request or export replay.
+
+이 계획 다시 만들기 uses only that selected plan's accepted original inputs plus
+newly reviewed busy rows. It first asks 바꾸고 다시 만들기, explaining that successful
+device saving replaces the selected entry at its existing number and clears only
+its old study reports. A live replacement has the newly returned server file
+identity. No old server-file deletion/overwrite is requested. Other plans, an
+independent saved creation draft and existing calendar copies remain intact.
+Unusable original assessment/context data shows a reason and requires a new plan.
+
+Regeneration waits until every accepted local save is resolved, including a failed
+report, movement or draft save on another plan or in a closed editor. The disabled
+action explains 먼저 이 기기에 저장해 주세요 and uses the existing 다시 저장하기
+recovery. Local retry writes its captured complete snapshot and settles only that
+write's matching feedback. A replacement candidate stays unpublished until the
+atomic save succeeds. Failure keeps the earlier plan/reports visible and on disk,
+and local retry writes the same candidate with zero planning/calendar calls.
+After any earlier save retry succeeds, regeneration requires explicit re-entry.
+A failed adjustment preflight sent no adjustment. Its local retry still writes the
+captured reload-marker envelope. The shown plan therefore retains the reload gate
+until an explicit reload, matching what a restart would restore.
+
+Export checks all selected-plan current study sessions across every week after
+calendar selection. Conflicts offer 겹치지 않게 다시 만들기, 하나씩 확인 and
+겹쳐도 내보내기. Regeneration leaves export, asks separate replacement consent,
+and never resumes copying automatically. Per-session review can open the existing
+eligible manual editor and sends nothing on opening. Export anyway proceeds to
+the full destination/count/timezone/duplicate confirmation. Its final tap checks
+afresh before the first insert. Changed data clears override/unchecked consent and
+requires new review. An unavailable query permits explicit unchecked continuation
+and the ordinary final confirmation. Missing calendar permission requires settings
+or retry and cannot grant write access.
 
 ## Calendar export
 
@@ -1184,10 +1241,9 @@ skip (이미 아는 내용이에요) action and no history of earlier reports.
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
-- Calendar events are read once, when a plan is created. Adjustment uses the
-  saved plan's external rows; re-reading the calendar after a plan is saved,
-  detecting newly conflicting study sessions and rescheduling them are not
-  implemented.
+- Calendar conflict checks run after explicit generation or export actions. Adjustment
+  still uses the saved plan's external rows. Background monitoring and remembered
+  conflict decisions remain outside the implemented flow.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
   failure with retry, not as a storage problem. Retrying cannot succeed until the
   saved plan file on the server is repaired; the plan stays viewable and unchanged.

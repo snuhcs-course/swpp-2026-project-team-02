@@ -100,6 +100,19 @@ class CalendarReadViewModelTest {
         return vm to planning
     }
 
+    private fun TestScope.generateReviewed(vm: PlanFormViewModel): Boolean {
+        if (!vm.generate()) return false
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        when (vm.calendarConflict.value?.phase) {
+            ConflictPhase.Review -> vm.continueCalendarConflict()
+            ConflictPhase.Unchecked -> vm.continueCalendarConflict(true)
+            else -> Unit
+        }
+        advanceUntilIdle()
+        return true
+    }
+
     @Test fun allowedImportIsIncludedInTheNextGenerationRequest() = runTest(dispatcher) {
         val busy = ScheduleRow("17", "2026/11/02/18/00", "2026/11/02/19/00", "외부 일정")
         val calendar = Calendar(CalendarReadOutcome.Loaded(CalendarBusySnapshot(listOf(busy), 1, 0)))
@@ -113,7 +126,7 @@ class CalendarReadViewModelTest {
         assertEquals(CalendarReadWindow(LocalDate.of(2026, 11, 1), LocalDate.of(2026, 12, 1)), calendar.windows.single())
         assertEquals(CalendarReadState.Loaded(1, 1, 0), vm.calendarRead.value)
         assertEquals(listOf(busy), vm.form.value.busySchedules)
-        assertTrue(vm.generate())
+        assertTrue(generateReviewed(vm))
         advanceUntilIdle()
         assertEquals(listOf(busy), planning.requests.single().busySchedules)
     }
@@ -126,7 +139,7 @@ class CalendarReadViewModelTest {
         assertTrue(vm.calendarReadPermissionPrompted())
         vm.onCalendarReadPermission(false)
         assertEquals(CalendarReadState.PermissionDenied, vm.calendarRead.value)
-        assertTrue(vm.generate())
+        assertTrue(generateReviewed(vm))
         advanceUntilIdle()
         assertTrue(planning.requests.single().busySchedules.isEmpty())
 
@@ -135,7 +148,7 @@ class CalendarReadViewModelTest {
         emptyVm.onCalendarReadPermission(true)
         advanceUntilIdle()
         assertEquals(CalendarReadState.Empty, emptyVm.calendarRead.value)
-        assertTrue(emptyVm.generate())
+        assertTrue(generateReviewed(emptyVm))
     }
 
     @Test fun providerFailureIsRetryableAndDateChangeInvalidatesImportedRows() = runTest(dispatcher) {
@@ -170,7 +183,7 @@ class CalendarReadViewModelTest {
         }
     }
 
-    @Test fun laterExamDateAfterImportedShortfallGeneratesWithoutTheOldImport() = runTest(dispatcher) {
+    @Test fun laterExamDateAfterImportedShortfallChecksFreshBusyRows() = runTest(dispatcher) {
         val busy = listOf(
             ScheduleRow("17", "2026/11/09/18/00", "2026/11/09/19/00", "외부 일정"),
             ScheduleRow("23", "2026/11/11/18/00", "2026/11/11/19/00", "외부 일정"),
@@ -210,7 +223,7 @@ class CalendarReadViewModelTest {
         assertEquals(busy, imported.busySchedules)
 
         // 25 weekday slots before 2026-12-14, two of them taken by the import.
-        assertTrue(vm.generate())
+        assertTrue(generateReviewed(vm))
         advanceUntilIdle()
         assertEquals(GenerationState.DemoShortfall(required = 32, available = 23), vm.generation.value)
         assertEquals(busy, planning.requests.single().busySchedules)
@@ -221,32 +234,33 @@ class CalendarReadViewModelTest {
         assertEquals(CalendarReadState.Loaded(2, 0, 0), vm.calendarRead.value)
         assertEquals(GenerationState.DemoShortfall(32, 23), vm.generation.value)
 
-        // A later date clears the import without reading the calendar again.
+        // A later date clears the import. Explicit generation then reads fresh calendar rows.
         vm.setExamDate(LocalDate.of(2027, 1, 4))
         assertEquals(imported.copy(examDate = LocalDate.of(2027, 1, 4), busySchedules = emptyList()), vm.form.value)
         assertEquals(CalendarReadState.Idle, vm.calendarRead.value)
-        assertTrue(vm.generate())
+        assertTrue(generateReviewed(vm))
         advanceUntilIdle()
 
         assertEquals(CalendarReadState.Idle, vm.calendarRead.value)
         assertFalse(vm.calendarReadPermissionPrompted())
-        assertEquals(1, calendar.windows.size)
+        assertEquals(5, calendar.windows.size)
         assertEquals(2, planning.requests.size)
         assertEquals(
-            planning.requests[0].copy(examDate = "2027/01/04/00/00", busySchedules = emptyList()),
+            planning.requests[0].copy(examDate = "2027/01/04/00/00"),
             planning.requests[1],
         )
         val success = vm.generation.value as GenerationState.Success
         assertTrue(success.isDemo)
-        val rows = success.response.schedules
+        val rows = success.response.schedules.filter { it.scheduleId.startsWith("study-") }
+        assertEquals(34, success.response.schedules.size)
         assertEquals(32, rows.size)
         assertTrue(rows.all { it.scheduleId.startsWith("study-") })
         assertEquals(8, rows.groupingBy { it.topic }.eachCount().size)
         assertTrue(rows.groupingBy { it.topic }.eachCount().values.all { it == 4 })
-        // The formerly imported intervals hold study sessions now.
-        assertTrue(rows.any { it.startDate == "2026/11/09/18/00" })
-        assertTrue(rows.any { it.startDate == "2026/11/11/18/00" })
-        assertFalse(success.response.scheduleCsv.contains("외부 일정"))
+        // Fresh checking still protects those external intervals.
+        assertFalse(rows.any { it.startDate == "2026/11/09/18/00" })
+        assertFalse(rows.any { it.startDate == "2026/11/11/18/00" })
+        assertTrue(success.response.scheduleCsv.contains("외부 일정"))
         assertEquals(1, vm.plans.value.size)
     }
 
@@ -284,7 +298,7 @@ class CalendarReadViewModelTest {
         val calendar = Calendar(CalendarReadOutcome.Loaded(CalendarBusySnapshot(listOf(busy), 0, 0)))
         val (vm, _) = open(calendar, Planning(studyPlan))
         repeat(2) {
-            assertTrue(vm.generate())
+            assertTrue(generateReviewed(vm))
             advanceUntilIdle()
         }
         val seen = Observed(this, vm)

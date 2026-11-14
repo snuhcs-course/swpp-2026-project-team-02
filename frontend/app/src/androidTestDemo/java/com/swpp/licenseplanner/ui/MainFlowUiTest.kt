@@ -46,6 +46,208 @@ class MainFlowUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @get:Rule val testName = TestName()
 
+    private fun conflictingCalendar(row: ScheduleRow, key: String = "occurrence"): com.swpp.licenseplanner.data.CalendarReadOutcome {
+        val start = WireDateTime.parseOrNull(row.startDate)!!
+        val end = WireDateTime.parseOrNull(row.endDate)!!
+        val busy = row.copy(scheduleId = "71", topic = "외부 일정")
+        return com.swpp.licenseplanner.data.CalendarReadOutcome.Loaded(com.swpp.licenseplanner.data.CalendarBusySnapshot(
+            listOf(busy), 0, 0, listOf(com.swpp.licenseplanner.data.CalendarOccurrence(key, null, start, end, false)),
+        ))
+    }
+
+    @Test
+    fun freshGenerationConflictReviewCancelAndChangedFinalObservationSendOnlyOnePlan() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        for (day in Weekday.entries.filter { it.dayOfWeek.value <= 5 }) setWeekdayMinutes(day)
+        val form = host.viewModel.form.value
+        val row = ScheduleRow("71", "2026/11/16/18/00", "2026/11/16/19/00", "외부 일정")
+        host.calendarOutcome = conflictingCalendar(row)
+        click("계획 만들기")
+        waitForText("공부 시간과 캘린더가 겹쳐요")
+        assertEquals(0, host.planningCalls.get())
+        assertEquals(0, host.calendarWrites.get())
+        host.capture("generation-conflict-summary")
+        click("하나씩 확인")
+        show("설정한 공부 시간")
+        assertTrue(host.viewModel.calendarConflict.value!!.conflicts.matches.all { it.target.scheduleId == null })
+        host.capture("generation-conflict-details")
+        click("공부 시간 수정")
+        waitForText("보통 언제 공부할 수 있나요?")
+        assertEquals(form, host.viewModel.form.value)
+        assertEquals(0, host.planningCalls.get())
+        click("계획 만들기")
+        waitForText("공부 시간과 캘린더가 겹쳐요")
+        host.calendarOutcome = conflictingCalendar(row, "edited-with-the-same-count")
+        click("겹치지 않게 계획 만들기")
+        compose.waitUntil(10_000) { host.viewModel.calendarConflict.value?.phase == ConflictPhase.Review }
+        assertEquals(0, host.planningCalls.get())
+        click("겹치지 않게 계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(listOf(row), host.planningRequests.single().busySchedules)
+        assertEquals(0, host.calendarWrites.get())
+    }
+
+    @Test
+    fun exportAnywayRechecksChangedDataAndStillRequiresTheFinalCopyConfirmation() = withApp { host ->
+        generatePlan(host)
+        val snapshot = host.snapshot()
+        val plan = snapshot.plans.single()
+        host.calendarOutcome = conflictingCalendar(plan.current.schedules.first { it.scheduleId.startsWith("study-") })
+        click("캘린더에 ${plan.studyCount}개 일정 추가", lazy = true)
+        waitForText("캘린더 선택")
+        click(host.destination.label)
+        click("다음")
+        waitForText("공부 시간과 캘린더가 겹쳐요")
+        click("하나씩 확인")
+        show("이 공부 시간 직접 옮기기")
+        assertEquals(0, host.calendarWrites.get())
+        click("요약으로")
+        host.capture("export-conflict-summary")
+        click("겹쳐도 내보내기")
+        show("캘린더에 일정 추가")
+        compose.onNodeWithText("다시 내보내면 일정이 중복될 수 있어요.", substring = true).performScrollTo().assertIsDisplayed()
+        host.capture("export-final-confirmation")
+        assertEquals(0, host.calendarWrites.get())
+        host.calendarOutcome = conflictingCalendar(plan.current.schedules.first { it.scheduleId.startsWith("study-") }, "changed-final")
+        click("${plan.studyCount}개 일정 추가")
+        waitForText("공부 시간과 캘린더가 겹쳐요")
+        assertEquals(0, host.calendarWrites.get())
+        click("겹쳐도 내보내기")
+        click("${plan.studyCount}개 일정 추가")
+        waitForText("${plan.studyCount}개 일정을 ${host.destination.label}에 추가했어요")
+        assertEquals(plan.studyCount, host.calendarWrites.get())
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(snapshot, host.snapshot())
+        click("확인")
+        click("캘린더에 ${plan.studyCount}개 일정 추가", lazy = true)
+        waitForText("캘린더 선택")
+        click(host.destination.label)
+        click("다음")
+        waitForText("공부 시간과 캘린더가 겹쳐요")
+        click("겹치지 않게 다시 만들기")
+        show("이 계획을 다시 만들까요?")
+        assertNull(host.viewModel.calendarExport.value)
+        click("취소")
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(plan.studyCount, host.calendarWrites.get())
+    }
+
+    @Test
+    fun unavailableCalendarShowsUncheckedChoiceAndKeepsTheEarlierImportedSnapshot() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        for (day in Weekday.entries.filter { it.dayOfWeek.value <= 5 }) setWeekdayMinutes(day)
+        val row = ScheduleRow("71", "2026/11/16/18/00", "2026/11/16/19/00", "외부 일정")
+        host.calendarOutcome = conflictingCalendar(row)
+        click("캘린더 일정 불러오기")
+        compose.waitUntil(10_000) { host.viewModel.calendarRead.value is CalendarReadState.Loaded }
+        host.calendarOutcome = com.swpp.licenseplanner.data.CalendarReadOutcome.Unavailable
+        click("계획 만들기")
+        waitForText("캘린더 확인 안 됨")
+        show("이전에 가져온 외부 일정 1개를 유지해요. 최신 정보가 아닐 수 있어요.")
+        host.capture("calendar-unchecked-stale-import")
+        assertEquals(0, host.planningCalls.get())
+        click("확인 없이 계속")
+        waitForText("내 계획")
+        host.awaitSaved()
+        assertEquals(listOf(row), host.planningRequests.single().busySchedules)
+    }
+
+    @Test
+    fun replacementWaitsForAnotherPlansReportRetryAndPreservesIndependentDraftThroughFailureAndRestore() = withApp { host ->
+        generatePlan(host)
+        val initial = host.snapshot().plans.single()
+        val id = initial.current.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId
+        val report = StudyCheckIn(StudyCheckInStatus.Done, 20)
+        val draft = CreationDraft(host.viewModel.form.value.copy(level = CurrentLevel.ADVANCED), CreationStep.QUESTIONS, 2)
+        val seeded = com.swpp.licenseplanner.data.PlanSnapshot(listOf(initial.copy(checkIns = mapOf(id to report)), initial.copy(ordinal = 2)), creationDraft = draft)
+        host.seedSnapshot(seeded)
+        host.recreate()
+        click("계획 조정")
+        click("계획 2 · $CERTIFICATION_NAME")
+        val session = PlanGrouping.sessions(initial.current.schedules).first { it.scheduleId == id }
+        openReport(session, edit = false)
+        click("못 했어요")
+        host.failSaves.set(true)
+        click("기록 저장하기")
+        waitForText("공부 기록을 저장하지 못했어요")
+        pressBack()
+        waitForText("실패한 일정 선택")
+        pressBack()
+        click("계획 1 · $CERTIFICATION_NAME")
+        compose.onNodeWithText("이 계획 다시 만들기").assertIsNotEnabled()
+        val reads = host.calendarReads.get()
+        val calls = host.planningCalls.get()
+        compose.runOnIdle {
+            assertFalse(host.viewModel.startRegeneration(1))
+            assertFalse(host.viewModel.confirmRegeneration())
+            host.viewModel.retryGeneration()
+        }
+        assertEquals(reads, host.calendarReads.get())
+        assertEquals(calls, host.planningCalls.get())
+        assertEquals(seeded, host.snapshot())
+        click("다시 저장하기")
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        host.failSaves.set(false)
+        click("다시 저장하기")
+        host.awaitSaved()
+        assertEquals(reads, host.calendarReads.get())
+        assertEquals(calls, host.planningCalls.get())
+        assertNull(host.viewModel.calendarConflict.value)
+        val withReport = host.snapshot()
+        assertEquals(draft, withReport.creationDraft)
+        // Keep an unrelated saved movement result visible behind A's replacement.
+        compose.runOnIdle {
+            assertTrue(host.viewModel.selectPlan(2))
+            host.viewModel.selectFailedSession(id)
+            assertTrue(host.viewModel.submitAdjustment())
+        }
+        compose.waitUntil(10_000) { (host.viewModel.adjustment.value.state as? AdjustmentState.Success)?.save == MoveSave.Saved }
+        host.awaitSaved()
+        val feedback = host.viewModel.adjustment.value
+        assertEquals(MoveSave.Saved, (feedback.state as AdjustmentState.Success).save)
+        val committedB = host.snapshot().plans[1]
+        host.failSaves.set(true)
+        compose.runOnIdle { assertTrue(host.viewModel.startRegeneration(1)) }
+        click("바꾸고 다시 만들기")
+        waitForText("새 계획을 저장하지 못했어요")
+        assertEquals(initial.checkIns + (id to report), host.snapshot().plans[0].checkIns)
+        assertEquals(feedback, host.viewModel.adjustment.value)
+        host.capture("replacement-save-failed")
+        click("닫기")
+        val hold = CompletableDeferred<Unit>()
+        host.holdSaves.set(hold)
+        click("다시 저장하기")
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.Saving }
+        assertEquals(feedback, host.viewModel.adjustment.value)
+        hold.complete(Unit)
+        compose.waitUntil(10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        assertEquals(feedback, host.viewModel.adjustment.value)
+        assertNull(host.viewModel.calendarConflict.value)
+        host.failSaves.set(false)
+        host.holdSaves.set(null)
+        click("다시 저장하기")
+        host.awaitSaved()
+        val replacement = host.snapshot()
+        assertEquals(listOf(1, 2), replacement.plans.map { it.ordinal })
+        assertTrue(replacement.plans[0].checkIns.isEmpty())
+        assertEquals(committedB, replacement.plans[1])
+        assertEquals(draft, replacement.creationDraft)
+        assertEquals(feedback, host.viewModel.adjustment.value)
+        assertEquals(calls + 1, host.planningCalls.get())
+        assertEquals(0, host.calendarWrites.get())
+        host.recreate()
+        assertEquals(replacement, host.snapshot())
+        assertEquals(replacement.plans, host.viewModel.plans.value)
+        assertEquals(draft, host.viewModel.committedDraft.value)
+        assertEquals(calls + 1, host.planningCalls.get())
+    }
+
     @Test
     fun multipleWindowsCanBeAddedReorderedAndRemovedWithoutLosingOtherEntries() = withApp { host ->
         startQuestions(host)
@@ -1152,9 +1354,15 @@ class MainFlowUiTest {
         compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
     }
 
+    private fun dialogFirst(matcher: SemanticsMatcher): SemanticsMatcher {
+        val dialog = matcher and hasAnyAncestor(isDialog())
+        return if (compose.onAllNodes(dialog).fetchSemanticsNodes().isNotEmpty()) dialog else matcher
+    }
+
     private fun show(text: String, lazy: Boolean = false) {
-        scrollTo(hasText(text), lazy)
-        compose.onNodeWithText(text).assertIsDisplayed()
+        val matcher = dialogFirst(hasText(text))
+        scrollTo(matcher, lazy)
+        compose.onNode(matcher).assertIsDisplayed()
     }
 
     private fun click(text: String, substring: Boolean = false, lazy: Boolean = false) {
@@ -1165,7 +1373,7 @@ class MainFlowUiTest {
             }
             compose.waitForIdle()
         }
-        val matcher = hasText(text, substring = substring) and hasClickAction()
+        val matcher = dialogFirst(hasText(text, substring = substring) and hasClickAction())
         scrollTo(matcher, lazy)
         compose.onNode(matcher).assertIsEnabled().performClick()
     }
@@ -1177,6 +1385,10 @@ class MainFlowUiTest {
     }
 
     private fun scrollTo(matcher: SemanticsMatcher, lazy: Boolean = false) {
+        if (compose.onAllNodes(matcher and hasAnyAncestor(isDialog())).fetchSemanticsNodes().isNotEmpty()) {
+            if (!compose.onNode(matcher).isDisplayed()) compose.onNode(matcher).performScrollTo()
+            return
+        }
         if (compose.onNode(matcher).isDisplayed() &&
             compose.onAllNodes(matcher and hasAnyAncestor(hasScrollAction())).fetchSemanticsNodes().isEmpty()) return
         if (lazy || compose.onAllNodes(hasScrollToIndexAction()).fetchSemanticsNodes().isNotEmpty()) {

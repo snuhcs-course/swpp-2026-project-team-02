@@ -175,6 +175,37 @@ class AtomicFilePlanStoreTest {
         assertEquals(PlanStoreLoad.Loaded(later), store(liveX).load())
     }
 
+    @Test fun selectedReplacementPreservesOtherReportsAndDraftAcrossFailureAndInterruptedCommit() = runTest {
+        val old = earlier.copy(creationDraft = quizDraft)
+        val replacement = old.plans[0].copy(
+            scheduleCsvFile = "replacement.csv",
+            current = old.plans[0].current.copy(scheduleCsvFile = "replacement.csv", schedules = rows.map {
+                if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/06/18/00", endDate = "2026/10/06/18/30") else it
+            }),
+            checkIns = emptyMap(),
+        )
+        val candidate = old.copy(plans = listOf(replacement) + old.plans.drop(1))
+        val first = store(liveX)
+        first.load()
+        assertTrue(first.save(old))
+        val bytes = atomic(liveX).baseFile.readBytes()
+        val blocker = File(atomic(liveX).baseFile.path + ".new")
+        assertTrue(blocker.mkdir())
+        assertFalse(first.save(candidate))
+        assertArrayEquals(bytes, atomic(liveX).baseFile.readBytes())
+        assertTrue(blocker.delete())
+        assertEquals(PlanStoreLoad.Loaded(old), store(liveX).load())
+        val newer = encoded(candidate)
+        atomic(liveX).startWrite().use { it.write(newer, 0, newer.size / 2) }
+        assertEquals(PlanStoreLoad.Loaded(old), store(liveX).load())
+        assertTrue(first.save(candidate))
+        val restored = (store(liveX).load() as PlanStoreLoad.Loaded).snapshot
+        assertEquals(candidate, restored)
+        assertEquals(old.plans.drop(1), restored.plans.drop(1))
+        assertEquals(quizDraft, restored.creationDraft)
+        assertTrue(restored.plans[0].checkIns.isEmpty())
+    }
+
     @Test fun interruptedFirstWriteLeavesNoCollection() = runTest {
         val newer = encoded(earlier)
         atomic(liveX).startWrite().use { it.write(newer, 0, newer.size / 2) }

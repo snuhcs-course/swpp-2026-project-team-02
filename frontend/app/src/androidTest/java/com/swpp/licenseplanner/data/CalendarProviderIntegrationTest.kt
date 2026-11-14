@@ -16,8 +16,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeFalse
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -210,22 +208,69 @@ class CalendarProviderIntegrationTest {
         assertFalse(snapshot.toString().contains("합성"))
     }
 
-    /**
-     * Run with only READ_CALENDAR granted (see the change's device notes); skipped otherwise, since
-     * revoking a permission from inside the test would end this process.
-     */
-    @Test fun readOnlyAccessImportsWithoutAskingForOrUsingWrite() {
-        assumeTrue(CalendarAccess.READ.isGranted(context))
-        assumeFalse(canWrite())
-        assertFalse(CalendarAccess.EXPORT.isGranted(context))
-        val outcome = runBlocking { AndroidCalendarReadRepository.create(context).read(window) }
-        assertTrue(outcome is CalendarReadOutcome.Loaded)
-        val export = AndroidCalendarExportRepository.create(context)
-        assertEquals(CalendarListOutcome.PermissionMissing, runBlocking { export.calendars() })
-        assertEquals(
-            CalendarWriteOutcome.NotStarted(ExportNotStarted.PermissionMissing),
-            runBlocking { export.export(CalendarDestination(1, "unused"), emptyList()) },
+    @Test fun freshChecksDetectNewAndSubMinuteEditedOccurrencesWithoutWriting() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.grantRuntimePermission(context.packageName, Manifest.permission.READ_CALENDAR)
+        automation.grantRuntimePermission(context.packageName, Manifest.permission.WRITE_CALENDAR)
+        removeTestCalendars()
+        val calendar = createCalendar("LicensePlanner conflict test", visible = true)
+        val id = event(calendar, "합성 바쁜 시간", kst(3, 18), kst(3, 19))
+        event(calendar, "합성 반복 시간", kst(5, 18), null) {
+            put(CalendarContract.Events.RRULE, "FREQ=WEEKLY;COUNT=3")
+            put(CalendarContract.Events.DURATION, "PT1H")
+        }
+        val rows = listOf(
+            ScheduleRow("study-1", "2031/03/03/18/00", "2031/03/03/19/00", "함수"),
+            ScheduleRow("study-2", "2031/03/03/19/00", "2031/03/03/20/00", "차트"),
         )
+        val count = eventCount()
+        val first = read()
+        val targets = com.swpp.licenseplanner.domain.CalendarConflicts.sessions(rows)
+        val conflicts = com.swpp.licenseplanner.domain.CalendarConflicts.compare(targets, first.occurrences)
+        assertEquals(listOf("study-1"), conflicts.matches.map { it.target.scheduleId })
+        assertEquals(count, eventCount())
+        assertEquals(3, first.occurrences.count { it.seriesKey != null })
+        assertEquals(1, first.occurrences.filter { it.seriesKey != null }.map { it.seriesKey }.distinct().size)
+        resolver.update(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, id), ContentValues().apply {
+            put(CalendarContract.Events.DTSTART, kst(3, 18) + 1000)
+            put(CalendarContract.Events.DTEND, kst(3, 19))
+        }, null, null)
+        val edited = read()
+        assertEquals(first.schedules, edited.schedules)
+        assertFalse(first.occurrences == edited.occurrences)
+        assertEquals(count, eventCount())
+        event(calendar, "합성 새 시간", kst(3, 19), kst(3, 20))
+        val fresh = read()
+        assertEquals(2, com.swpp.licenseplanner.domain.CalendarConflicts.compare(targets, fresh.occurrences).matches.size)
+        assertEquals(count + 1, eventCount())
+        val export = AndroidCalendarExportRepository.create(context)
+        val destination = (runBlocking { export.calendars() } as CalendarListOutcome.Loaded).calendars.single { it.id == calendar }
+        assertEquals(CalendarWriteOutcome.Complete(2), runBlocking { export.export(destination, checkNotNull(CalendarExport.events(rows, 1, true))) })
+        assertEquals(count + 3, eventCount())
+        assertEquals(fresh, read()) // owned app copies are excluded from future comparison
+    }
+
+    /** A read-only access context uses the real provider reader and refuses both writer entry points. */
+    @Test fun readOnlyPolicyImportsWithoutUsingWrite() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.READ_CALENDAR)
+        val readOnly = object : android.content.ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun checkSelfPermission(permission: String): Int =
+                if (permission == Manifest.permission.WRITE_CALENDAR) android.content.pm.PackageManager.PERMISSION_DENIED
+                else super.checkSelfPermission(permission)
+            override fun checkPermission(permission: String, pid: Int, uid: Int): Int =
+                if (permission == Manifest.permission.WRITE_CALENDAR) android.content.pm.PackageManager.PERMISSION_DENIED
+                else super.checkPermission(permission, pid, uid)
+        }
+        assertTrue(CalendarAccess.READ.isGranted(readOnly))
+        assertFalse(CalendarAccess.EXPORT.isGranted(readOnly))
+        val outcome = runBlocking { AndroidCalendarReadRepository.create(readOnly).read(window) }
+        assertTrue(outcome is CalendarReadOutcome.Loaded)
+        val export = AndroidCalendarExportRepository.create(readOnly)
+        assertEquals(CalendarListOutcome.PermissionMissing, runBlocking { export.calendars() })
+        assertEquals(CalendarWriteOutcome.NotStarted(ExportNotStarted.PermissionMissing), runBlocking {
+            export.export(CalendarDestination(1, "unused"), emptyList())
+        })
     }
 
     private companion object {

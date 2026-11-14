@@ -167,7 +167,9 @@ class PlanPersistenceViewModelTest {
         configure: ControlledStore.() -> Unit = {},
     ): Pair<PlanFormViewModel, ControlledStore> {
         val store = ControlledStore(scope).apply(configure)
-        val vm = PlanFormViewModel(FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store).apply {
+        val vm = PlanFormViewModel(FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store,
+        calendarReadRepository = ClearCalendarForTest,
+    ).apply {
             selectCertification(CERTIFICATION_ID)
             setExamDate(LocalDate.of(2026, 11, 16))
             setLevel(CurrentLevel.INTERMEDIATE)
@@ -187,10 +189,10 @@ class PlanPersistenceViewModelTest {
 
     /** Generates A (Monday) then B (Wednesday); both are saved. */
     private fun TestScope.generateAB(vm: PlanFormViewModel) {
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.switchToWednesday()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
     }
@@ -240,7 +242,7 @@ class PlanPersistenceViewModelTest {
 
         second.switchToWednesday()
         second.stepDuration(Weekday.WEDNESDAY, 1)
-        assertTrue(second.generate())
+        assertTrue(second.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(listOf(1, 2, 3), second.plans.value.map { it.ordinal })
         assertEquals(saved, second.plans.value.take(2)) // form edits never touch A or B
@@ -270,7 +272,7 @@ class PlanPersistenceViewModelTest {
         assertEquals(0, store.saves)
         assertArrayEquals(legacyBytes, disk.committed)
 
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
         assertEquals(JsonPrimitive(4), saved["version"])
@@ -290,7 +292,7 @@ class PlanPersistenceViewModelTest {
             adjustment,
         )
         generateAB(first)
-        repeat(2) { assertTrue(first.generate()); advanceUntilIdle() }
+        repeat(2) { assertTrue(first.generateAfterCalendarCheck()); advanceUntilIdle() }
         first.select(1, "study-1")
         assertTrue(first.submitAdjustment())
         advanceUntilIdle()
@@ -341,7 +343,7 @@ class PlanPersistenceViewModelTest {
 
     @Test fun pendingRestoreBlocksPlanChangesUntilReady() = runTest(dispatcher) {
         val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)))
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
 
         val planning = FakePlanning(PlanOutcome.Success(planB, false))
@@ -350,7 +352,7 @@ class PlanPersistenceViewModelTest {
         assertEquals(PlanStorage.Loading, second.storage.value)
         assertTrue(second.plans.value.isEmpty())
         assertTrue(second.form.value.availability.getValue(Weekday.MONDAY).enabled) // form edits work
-        assertFalse(second.generate())
+        assertFalse(second.generateAfterCalendarCheck())
         assertFalse(second.selectPlan(1))
         advanceUntilIdle()
         assertTrue(planning.requests.isEmpty())
@@ -359,14 +361,14 @@ class PlanPersistenceViewModelTest {
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, second.storage.value)
         assertEquals(first.plans.value, second.plans.value)
-        assertTrue(second.generate())
+        assertTrue(second.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(listOf(1, 2), second.plans.value.map { it.ordinal })
     }
 
     @Test fun unreadableSavedPlansBlockChangesAndRetryReadsOnlyLocally() = runTest(dispatcher) {
         val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)))
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
         val good = disk.committed!!
         val corrupt = good.copyOf(good.size - 10)
@@ -378,8 +380,8 @@ class PlanPersistenceViewModelTest {
         val (second, store) = open(planning, adjustment)
         assertEquals(PlanStorage.LoadFailure, second.storage.value)
         assertTrue(second.plans.value.isEmpty())
-        assertFalse(second.generate())
-        second.retryGeneration()
+        assertFalse(second.generateAfterCalendarCheck())
+        second.retryAfterCalendarCheck()
         second.retrySave()
         second.retryLoad()
         advanceUntilIdle()
@@ -403,13 +405,13 @@ class PlanPersistenceViewModelTest {
         val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false), PlanOutcome.Success(planB, false))
         val adjustment = FakeAdjustment()
         val (vm, _) = open(planning, adjustment)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val savedA = disk.committed
 
         disk.failWrites = true
         vm.switchToWednesday()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(GenerationState.Success(planB, false), vm.generation.value)
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
@@ -421,8 +423,8 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.selectPlan(2))
         vm.selectFailedSession("study-1")
         assertFalse(vm.submitAdjustment())
-        assertFalse(vm.generate())
-        vm.retryGeneration()
+        assertFalse(vm.generateAfterCalendarCheck())
+        vm.retryAfterCalendarCheck()
         vm.retrySave() // fails again: still one candidate
         advanceUntilIdle()
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
@@ -436,7 +438,7 @@ class PlanPersistenceViewModelTest {
         assertEquals(2, planning.requests.size)
         assertTrue(adjustment.inputs.isEmpty())
         assertEquals(vm.plans.value, restoredNow())
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(listOf(1, 2, 3), vm.plans.value.map { it.ordinal })
     }
@@ -445,17 +447,17 @@ class PlanPersistenceViewModelTest {
         val (vm, store) = open(
             FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Failure(ApiError.ServerFailure(502)), PlanOutcome.DemoShortfall(12, 3)),
         )
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val saved = disk.committed
         val saves = store.saves
 
         vm.switchToWednesday()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.stepDuration(Weekday.WEDNESDAY, 1)
         advanceUntilIdle()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.select(1, "study-2")
         assertTrue(vm.selectPlan(1))
@@ -472,7 +474,7 @@ class PlanPersistenceViewModelTest {
         generateAB(first)
         planning.gate = CompletableDeferred()
         first.stepDuration(Weekday.WEDNESDAY, 1)
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
 
         val again = FakePlanning()
@@ -505,7 +507,7 @@ class PlanPersistenceViewModelTest {
             assertFalse(vm.submitAdjustment())
             vm.retryAdjustment()
             assertFalse(vm.reloadPlan())
-            assertFalse(vm.generate())
+            assertFalse(vm.generateAfterCalendarCheck())
             assertFalse(vm.selectPlan(2))
             assertEquals(listOf(PlanRecovery.Ready, PlanRecovery.Ready), restoredNow().map { it.recovery })
 
@@ -583,7 +585,7 @@ class PlanPersistenceViewModelTest {
         try {
             val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
             val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false)), live)
-            assertTrue(vm.generate())
+            assertTrue(vm.generateAfterCalendarCheck())
             advanceUntilIdle()
             val before = vm.plans.value
             store.failingSaves += store.saves + 1
@@ -602,13 +604,17 @@ class PlanPersistenceViewModelTest {
             advanceUntilIdle()
             assertEquals(PlanStorage.Ready, vm.storage.value)
             assertEquals(0, server.requestCount) // the save retry never submits
-            assertEquals(listOf("save", "save unresolved 1", "save"), events)
-            assertEquals(before, restoredNow())
-
+            assertEquals(listOf("save", "save unresolved 1", "save unresolved 1"), events)
+            assertEquals(before[0].copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = "study-1"), restoredNow()[0])
+            assertEquals(restoredNow(), vm.plans.value)
+            server.enqueue(MockResponse().setBody("""{"plans":[{"schedule_csv_file":"$fileA","schedules":${rowsJson(rowsA)}}]}"""))
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            vm.selectFailedSession("study-1")
             server.enqueue(MockResponse().setBody(adjustedJson(movedA, "study-1")))
             assertTrue(vm.submitAdjustment()) // a new explicit submission
             advanceUntilIdle()
-            assertEquals(1, server.requestCount)
+            assertEquals(2, server.requestCount)
             assertEquals(movedA, vm.plan(1).current.schedules)
         } finally {
             server.shutdown()
@@ -638,7 +644,7 @@ class PlanPersistenceViewModelTest {
 
             vm.selectFailedSession("study-2")
             assertFalse(vm.submitAdjustment())
-            assertFalse(vm.generate())
+            assertFalse(vm.generateAfterCalendarCheck())
             vm.retrySave()
             advanceUntilIdle()
             assertEquals(PlanStorage.Ready, vm.storage.value)
@@ -655,7 +661,7 @@ class PlanPersistenceViewModelTest {
     @Test fun processEndingBeforeTheOutcomeIsSavedRestoresTheGate() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
         val (first, store) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
         store.saveGates[store.saves + 2] = CompletableDeferred() // the response arrived; its save never finishes
         first.select(1, "study-1")
@@ -679,7 +685,7 @@ class PlanPersistenceViewModelTest {
             events.clear()
             val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(error), AdjustmentOutcome.Failure(error))
             val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-            assertTrue(first.generate())
+            assertTrue(first.generateAfterCalendarCheck())
             advanceUntilIdle()
             val before = first.plan(1)
             first.select(1, "study-1")
@@ -711,7 +717,7 @@ class PlanPersistenceViewModelTest {
             reloads += ReloadOutcome.Loaded(movedA)
         }
         val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
         first.select(1, "study-2")
         assertTrue(first.submitAdjustment())
@@ -737,7 +743,7 @@ class PlanPersistenceViewModelTest {
         val demoA = planA.copy(scheduleCsvFile = null)
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA), AdjustmentOutcome.Success(adjustedA))
         val (first, _) = open(FakePlanning(PlanOutcome.Success(demoA, true)), adjustment, PlanStorageScope.DEMO)
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
         first.select(1, "study-1")
         assertTrue(first.submitAdjustment())
@@ -772,7 +778,7 @@ class PlanPersistenceViewModelTest {
         val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
         val adjustment = FakeAdjustment(outside, outside, AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
         val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.openManualMove()
         assertTrue(vm.submitManualMove())
@@ -797,16 +803,11 @@ class PlanPersistenceViewModelTest {
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
         assertEquals(1, adjustment.inputs.size) // the save retry never submits
-        assertEquals(before, restoredNow())
-
-        assertTrue(vm.submitManualMove())
-        advanceUntilIdle()
-        assertTrue(vm.confirmOutsideAvailability())
-        advanceUntilIdle()
-        assertEquals(listOf(false, false, true), adjustment.inputs.map { it.manualMove!!.confirmOutsideAvailability })
-        assertTrue(adjustment.inputs.all { it.manualMove!!.newStart == chosen })
-        assertEquals(manualA, vm.plan(1).current.schedules)
-        assertEquals(vm.plans.value, restoredNow())
+        assertEquals(before[0].copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = "study-1"), restoredNow()[0])
+        assertEquals(restoredNow(), vm.plans.value)
+        assertFalse(vm.submitManualMove())
+        assertFalse(vm.confirmOutsideAvailability())
+        assertEquals(1, adjustment.inputs.size)
     }
 
     @Test fun failedSaveAfterAManualMoveIsRetriedLocallyWithoutResending() = runTest(dispatcher) {
@@ -888,7 +889,7 @@ class PlanPersistenceViewModelTest {
         // Until the local save succeeds nothing else may change plans or send anything.
         assertFalse(vm.saveCheckIn())
         assertFalse(vm.startCheckIn(1, "study-1"))
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         vm.select(1, "study-1")
         assertFalse(vm.submitAdjustment())
         assertFalse(vm.reloadPlan())
@@ -918,7 +919,7 @@ class PlanPersistenceViewModelTest {
 
     @Test fun processEndingDuringAReportSaveRestoresTheEarlierReport() = runTest(dispatcher) {
         val (first, _) = open(FakePlanning(PlanOutcome.Success(planA, false)))
-        assertTrue(first.generate())
+        assertTrue(first.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertTrue(report(first, 1, "study-1", StudyCheckInStatus.Partly, "10"))
         first.closeCheckIn()
@@ -1007,7 +1008,7 @@ class PlanPersistenceViewModelTest {
         assertEquals(PlanStorage.Saving, vm.storage.value)
         assertEquals(movedA, vm.plan(1).current.schedules)
         assertFalse(vm.plans.value == vm.savedPlans.value)
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.startCheckIn(1, "study-2"))
         vm.retrySave() // nothing has failed
         advanceUntilIdle()
@@ -1042,7 +1043,7 @@ class PlanPersistenceViewModelTest {
         val ifRestartedNow = restoredNow()
         assertEquals(PlanRecovery.ReloadRequired to "study-1", ifRestartedNow[0].recovery to ifRestartedNow[0].recoveryScheduleId)
         assertEquals(reports, ifRestartedNow[0].checkIns)
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.startCheckIn(1, "study-2"))
         assertFalse(vm.startManualMove())
 
@@ -1098,6 +1099,11 @@ class PlanPersistenceViewModelTest {
             advanceUntilIdle()
             assertEquals(PlanStorage.Ready, vm.storage.value)
 
+            server.enqueue(MockResponse().setBody(listJson(fileA, rowsA)))
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            vm.selectFailedSession("study-1")
+
             // The accepted outcome is shown as unsaved; the device still holds the preflight marker.
             server.enqueue(MockResponse().setBody(adjustedJson(movedA, "study-1")))
             store.failingSaves += store.saves + 2
@@ -1117,7 +1123,7 @@ class PlanPersistenceViewModelTest {
             assertFalse(restarted.submitAdjustment())
             assertFalse(restarted.startManualMove())
             advanceUntilIdle()
-            assertEquals(1, server.requestCount)
+            assertEquals(2, server.requestCount)
 
             // Only an explicit reload reads the server's copy, and it is not shown as a move.
             server.enqueue(MockResponse().setBody(listJson(fileA, movedA)))
@@ -1127,7 +1133,7 @@ class PlanPersistenceViewModelTest {
             assertEquals(movedA, restarted.plan(1).current.schedules)
             assertEquals(reports, restarted.plan(1).checkIns)
             assertEquals(planBBefore, restarted.plan(2))
-            assertEquals(listOf("POST", "GET"), List(server.requestCount) { server.takeRequest().method })
+            assertEquals(listOf("GET", "POST", "GET"), List(server.requestCount) { server.takeRequest().method })
         } finally {
             server.shutdown()
         }
@@ -1182,7 +1188,7 @@ class PlanPersistenceViewModelTest {
         val planning = FakePlanning(PlanOutcome.Success(planA, false))
         val (vm, _) = open(planning)
         disk.failWrites = true
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
         assertFalse(vm.saveDraftAndExit())

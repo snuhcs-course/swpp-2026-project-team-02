@@ -29,8 +29,15 @@ import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
-import com.swpp.licenseplanner.data.UnavailableCalendarExport
-import com.swpp.licenseplanner.data.UnavailableCalendarRead
+import com.swpp.licenseplanner.data.CalendarReadRepository
+import com.swpp.licenseplanner.data.CalendarReadOutcome
+import com.swpp.licenseplanner.data.CalendarReadWindow
+import com.swpp.licenseplanner.data.CalendarBusySnapshot
+import com.swpp.licenseplanner.data.CalendarExportRepository
+import com.swpp.licenseplanner.data.CalendarDestination
+import com.swpp.licenseplanner.data.CalendarListOutcome
+import com.swpp.licenseplanner.data.CalendarWriteOutcome
+import com.swpp.licenseplanner.domain.CalendarEvent
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.ui.theme.LicensePlannerTheme
 import java.io.File
@@ -66,6 +73,12 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     val planningCalls = AtomicInteger()
     val questionCalls = AtomicInteger()
     val reloadCalls = AtomicInteger()
+    val calendarReads = AtomicInteger()
+    val calendarWrites = AtomicInteger()
+    val planningRequests = java.util.concurrent.CopyOnWriteArrayList<StudyPlanRequest>()
+    @Volatile var calendarOutcome: CalendarReadOutcome = CalendarReadOutcome.Loaded(CalendarBusySnapshot(emptyList(), 0, 0))
+    val holdCalendarReads = AtomicReference<CompletableDeferred<Unit>?>(null)
+    val destination = CalendarDestination(91, "테스트 전용 캘린더")
     val saveCalls = AtomicInteger()
     var storageScope = PlanStorageScope.DEMO
     var reloadOutcome: ReloadOutcome? = null
@@ -87,6 +100,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
             val configuration = Configuration(oldConfiguration).apply { setLocale(Locale.US) }
             rule.activity.resources.updateConfiguration(configuration, rule.activity.resources.displayMetrics)
         }
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, android.Manifest.permission.READ_CALENDAR)
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, android.Manifest.permission.WRITE_CALENDAR)
         freshState()
         rule.setContent {
             LicensePlannerTheme {
@@ -118,6 +133,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         val planning = FlavorRepositories.planningRepository()
         val countedPlanning = object : PlanningRepository {
             override suspend fun generate(request: StudyPlanRequest) = planning.generate(request).let { outcome ->
+                planningRequests += request
                 planningCalls.incrementAndGet()
                 val topic = returnedTopic
                 if (outcome is PlanOutcome.Success && topic != null) {
@@ -148,8 +164,21 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 adjustmentRepository = countedAdjustment,
                 today = today,
                 planStore = failableStore,
-                calendarExportRepository = UnavailableCalendarExport,
-                calendarReadRepository = UnavailableCalendarRead,
+                calendarExportRepository = object : CalendarExportRepository {
+                    override suspend fun calendars() = CalendarListOutcome.Loaded(listOf(destination))
+                    override suspend fun export(destination: CalendarDestination, events: List<CalendarEvent>): CalendarWriteOutcome {
+                        calendarWrites.addAndGet(events.size)
+                        return CalendarWriteOutcome.Complete(events.size)
+                    }
+                },
+                calendarReadRepository = object : CalendarReadRepository {
+                    override suspend fun read(window: CalendarReadWindow): CalendarReadOutcome {
+                        calendarReads.incrementAndGet()
+                        val result = calendarOutcome
+                        holdCalendarReads.get()?.await()
+                        return result
+                    }
+                },
                 availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                 currentDate = { deviceDate },
             ) as T

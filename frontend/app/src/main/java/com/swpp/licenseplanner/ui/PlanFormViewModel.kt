@@ -10,6 +10,7 @@ import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.AvailabilityWire
 import com.swpp.licenseplanner.data.AvailabilityProfileRepository
 import com.swpp.licenseplanner.data.AndroidCalendarExportRepository
 import com.swpp.licenseplanner.data.AndroidCalendarReadRepository
@@ -38,10 +39,13 @@ import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.RequestMapper
 import com.swpp.licenseplanner.data.UnavailableCalendarExport
+import com.swpp.licenseplanner.data.scheduleRowProblem
 import com.swpp.licenseplanner.data.UnavailableCalendarRead
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.domain.CalendarConflicts
+import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
 import com.swpp.licenseplanner.domain.CreationDraft
@@ -315,9 +319,6 @@ class PlanFormViewModel(
     private val _generation = MutableStateFlow<GenerationState>(GenerationState.Idle)
     val generation: StateFlow<GenerationState> = _generation.asStateFlow()
 
-    /** The request sent by the latest generate(); retry resends exactly this. */
-    private var lastRequest: StudyPlanRequest? = null
-
     /** Every successful generation saved on this device, oldest first; never removed. */
     private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
     val plans: StateFlow<List<SessionPlan>> = _plans.asStateFlow()
@@ -392,14 +393,23 @@ class PlanFormViewModel(
     private val _draftDecision = MutableStateFlow<DraftDecision?>(null)
     val draftDecision: StateFlow<DraftDecision?> = _draftDecision.asStateFlow()
 
-    /** The exact snapshot of a failed draft write; [retrySave] writes this again, never a rebuilt one. */
-    private var pendingDraftWrite: PlanSnapshot? = null
+    /** One complete immutable envelope and only the operations included in that write. */
+    private data class PendingLocalWrite(
+        val snapshot: PlanSnapshot,
+        val checkIn: CheckInEditor? = null,
+        val move: AdjustmentSelection? = null,
+        val draft: DraftDecision? = null,
+        val replacementId: Int? = null,
+        val replacementOrdinal: Int? = null,
+    )
 
-    /**
-     * The exact snapshot of a new plan whose save also removes the saved draft, kept until it is
-     * saved; [retrySave] writes this again, so a retry still completes that draft.
-     */
-    private var pendingCompletion: PlanSnapshot? = null
+    private var pendingWrite: PendingLocalWrite? = null
+    private var committedSnapshot = PlanSnapshot.EMPTY
+
+    private val _calendarConflict = MutableStateFlow<CalendarConflictState?>(null)
+    val calendarConflict: StateFlow<CalendarConflictState?> = _calendarConflict.asStateFlow()
+    private var nextConflictId = 1
+    private var lastGenerationReview: CalendarConflictState? = null
 
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
@@ -411,7 +421,7 @@ class PlanFormViewModel(
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
      * on the plan it started from.
      */
-    private val busy get() = adjusting || reloading || exporting || readingCalendar
+    private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -422,9 +432,9 @@ class PlanFormViewModel(
      * adjustment, reload, an export or a calendar read changes.
      */
     val exportBlocks: StateFlow<Map<Int, ExportBlock?>> = combine(
-        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, ::Pair),
-    ) { plans, storage, generation, adjustment, (export, read) ->
-        plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read) }
+        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, _calendarConflict) { export, read, conflict -> Triple(export, read, conflict) },
+    ) { plans, storage, generation, adjustment, (export, read, conflict) ->
+        plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read, conflictBusy = conflict != null) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, _plans.value.associate { it.ordinal to currentExportBlock(it) })
 
     init {
@@ -560,7 +570,7 @@ class PlanFormViewModel(
      */
     fun loadProfile(): Boolean {
         val repository = availabilityProfileRepository ?: return false
-        if (generating || profileBusy) return false
+        if (generating || busy || profileBusy) return false
         _profile.value = ProfileState.Loading
         viewModelScope.launch {
             _profile.value = when (val outcome = repository.load()) {
@@ -596,7 +606,7 @@ class PlanFormViewModel(
     fun saveProfile(): Boolean {
         val repository = availabilityProfileRepository ?: return false
         val form = _form.value
-        if (generating || profileBusy || form.availabilityError != null) return false
+        if (generating || busy || profileBusy || form.availabilityError != null) return false
         _profile.value = ProfileState.Saving
         viewModelScope.launch {
             _profile.value = when (val outcome = repository.save(form.studyAvailability)) {
@@ -702,45 +712,224 @@ class PlanFormViewModel(
         }
     }
 
-    /**
-     * Builds the request once and sends it; a second call while loading does nothing.
-     * Returns whether a request was sent. A local demo result may already be set on return.
-     */
+    /** Starts a fresh calendar check for the complete creation input before any planning request. */
     fun generate(): Boolean {
-        if (generating || busy || !storageReady) return false
-        val request = (RequestMapper.map(_form.value) as? MappingResult.Ready)?.request ?: return false
-        send(request)
+        if (generating || busy || !storageReady || profileBusy || _draftDecision.value != null) return false
+        val form = _form.value
+        val request = (RequestMapper.map(form) as? MappingResult.Ready)?.request ?: return false
+        openGenerationReview(request, form = form)
         return true
     }
 
-    /** Resends the identical request after a failure; inputs are untouched. */
+    /** Every deliberate network retry obtains a new calendar observation and decision. */
     fun retryGeneration() {
-        if (_generation.value !is GenerationState.Failure || busy || !storageReady) return
-        send(lastRequest ?: return)
+        if (_generation.value !is GenerationState.Failure || !storageReady) return
+        val previous = lastGenerationReview ?: return
+        if (previous.kind == ConflictKind.Replacement) {
+            if (!regenerationSaveReady() || !reviewSourceCurrent(previous)) return
+            if (_calendarConflict.value?.phase != ConflictPhase.Failed) return
+            _calendarConflict.value = null
+        } else if (busy) return
+        openGenerationReview(previous.request, previous.form, previous.source, previous.envelope)
     }
 
-    private fun send(request: StudyPlanRequest) {
-        lastRequest = request
-        // A failure, shortfall or unsaved result is corrected on the availability screen.
-        reachCreationStep(CreationStep.AVAILABILITY)
+    /** Null only when every accepted local edit is committed and this source can be regenerated. */
+    fun regenerationBlockReason(ordinal: Int): String? {
+        if (!regenerationSaveReady()) return "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
+        val source = plan(ordinal) ?: return "계획을 찾을 수 없어요."
+        if (!source.original.canRegenerate()) return "이 계획의 원래 입력으로 다시 만들 수 없어요. 새 계획을 만들어 주세요."
+        val ownExport = _calendarExport.value?.source?.planOrdinal == ordinal &&
+            _calendarConflict.value?.kind == ConflictKind.Export &&
+            _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
+        if (generating || adjusting || reloading || readingCalendar || profileBusy || _questionLoad.value == QuestionLoadState.Loading ||
+            (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
+        return null
+    }
+
+    private fun regenerationSaveReady(): Boolean = storageReady && pendingWrite == null &&
+        _checkIn.value?.save !in setOf(CheckInSave.Saving, CheckInSave.Unsaved) &&
+        (_adjustment.value.state as? AdjustmentState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
+        _draftDecision.value == null &&
+        PlanSnapshot(_plans.value, creationDraft = _committedDraft.value) == committedSnapshot
+
+    /** Leaves an export only after the global save-first gate succeeds. No read or POST yet. */
+    fun startRegeneration(ordinal: Int): Boolean {
+        if (regenerationBlockReason(ordinal) != null) return false
+        val source = plan(ordinal) ?: return false
+        val review = generationReview(source.original, source = source, envelope = committedSnapshot) ?: return false
+        _calendarExport.value = null
+        _calendarConflict.value = review.copy(phase = ConflictPhase.ReplacementConsent)
+        return true
+    }
+
+    fun confirmRegeneration(): Boolean {
+        val review = _calendarConflict.value?.takeIf { it.phase == ConflictPhase.ReplacementConsent } ?: return false
+        if (!regenerationSaveReady() || !reviewSourceCurrent(review)) return false
+        _calendarConflict.value = review.copy(phase = ConflictPhase.RequestingPermission)
+        return true
+    }
+
+    private fun generationReview(
+        request: StudyPlanRequest,
+        form: PlanFormState? = null,
+        source: SessionPlan? = null,
+        envelope: PlanSnapshot? = null,
+    ): CalendarConflictState? {
+        val start = WireDateTime.parseOrNull(request.preparationStart)?.toLocalDate() ?: return null
+        val exam = WireDateTime.parseOrNull(request.examDate)?.toLocalDate() ?: return null
+        val availability = AvailabilityWire.context(request) ?: return null
+        return CalendarConflictState(
+            nextConflictId++, if (source == null) ConflictKind.Creation else ConflictKind.Replacement,
+            request, CalendarReadWindow(start, exam), CalendarConflicts.windows(availability, start, exam),
+            ConflictPhase.RequestingPermission, form, source, envelope,
+        )
+    }
+
+    private fun openGenerationReview(
+        request: StudyPlanRequest,
+        form: PlanFormState? = null,
+        source: SessionPlan? = null,
+        envelope: PlanSnapshot? = null,
+    ) {
+        if (source == null) _generation.value = GenerationState.Idle
+        _calendarConflict.value = generationReview(request, form, source, envelope)
+    }
+
+    fun conflictPermissionPrompted(): Boolean {
+        val review = _calendarConflict.value?.takeIf { it.phase == ConflictPhase.RequestingPermission } ?: return false
+        _calendarConflict.value = review.copy(phase = ConflictPhase.AwaitingPermission)
+        return true
+    }
+
+    fun onConflictPermission(granted: Boolean, operationId: Int? = _calendarConflict.value?.id) {
+        val review = _calendarConflict.value?.takeIf {
+            it.phase in setOf(ConflictPhase.RequestingPermission, ConflictPhase.AwaitingPermission)
+        } ?: return
+        if (review.id != operationId) return
+        if (!reviewSourceCurrent(review)) return cancelCalendarConflict()
+        if (granted) readConflict(review, final = false)
+        else _calendarConflict.value = review.copy(phase = ConflictPhase.Unchecked, outcome = CalendarReadOutcome.PermissionMissing)
+    }
+
+    fun retryCalendarConflict() {
+        val review = _calendarConflict.value?.takeIf { it.phase == ConflictPhase.Unchecked } ?: return
+        if (!reviewSourceCurrent(review)) return cancelCalendarConflict()
+        _calendarConflict.value = review.copy(phase = ConflictPhase.RequestingPermission, outcome = null)
+    }
+
+    fun showConflictDetails() {
+        _calendarConflict.update { if (it?.phase == ConflictPhase.Review) it.copy(phase = ConflictPhase.Details) else it }
+    }
+
+    fun showConflictSummary() {
+        _calendarConflict.update { if (it?.phase == ConflictPhase.Details) it.copy(phase = ConflictPhase.Review) else it }
+    }
+
+    /** A review/edit dismissal has no continuation and cannot dispatch. */
+    fun cancelCalendarConflict() {
+        val review = _calendarConflict.value ?: return
+        if (review.phase in setOf(ConflictPhase.Generating, ConflictPhase.Saving)) return
+        _calendarConflict.value = null
+        if (review.kind == ConflictKind.Export) _calendarExport.value = null
+    }
+
+    /** Consent belongs to this observation. A final read either dispatches once or replaces review. */
+    fun continueCalendarConflict(unchecked: Boolean = false): Boolean {
+        val review = _calendarConflict.value ?: return false
+        if (review.phase != if (unchecked) ConflictPhase.Unchecked else ConflictPhase.Review) return false
+        if (review.kind == ConflictKind.Export && review.outcome == CalendarReadOutcome.PermissionMissing) return false
+        if (!reviewSourceCurrent(review) || (review.kind == ConflictKind.Replacement && !regenerationSaveReady())) return false
+        if (review.kind == ConflictKind.Export) {
+            val export = _calendarExport.value?.takeIf { it.id == review.exportId } ?: return false
+            _calendarExport.value = export.copy(phase = review.exportConfirmation ?: return false, checked = review.outcome, unchecked = unchecked)
+            _calendarConflict.value = null
+        } else readConflict(review, final = true, unchecked = unchecked)
+        return true
+    }
+
+    private fun reviewSourceCurrent(review: CalendarConflictState): Boolean = when (review.kind) {
+        ConflictKind.Creation -> review.form == _form.value
+        ConflictKind.Replacement -> review.source == review.source?.ordinal?.let(::plan) &&
+            review.envelope == committedSnapshot && regenerationSaveReady()
+        ConflictKind.Export -> review.source == review.source?.ordinal?.let(::plan) &&
+            _calendarExport.value?.id == review.exportId
+    }
+
+    private fun readConflict(review: CalendarConflictState, final: Boolean, unchecked: Boolean = false) {
+        if (!reviewSourceCurrent(review)) return
+        _calendarConflict.value = review.copy(phase = ConflictPhase.Reading)
+        viewModelScope.launch {
+            val outcome = calendarReadRepository.read(review.window)
+            if (_calendarConflict.value?.id != review.id || !reviewSourceCurrent(review)) return@launch
+            val snapshot = (outcome as? CalendarReadOutcome.Loaded)?.snapshot
+            val updated = review.copy(
+                outcome = outcome,
+                conflicts = CalendarConflicts.compare(review.targets, snapshot?.occurrences.orEmpty()),
+                phase = if (snapshot == null) ConflictPhase.Unchecked else ConflictPhase.Review,
+            )
+            _calendarConflict.value = updated
+            if (final) {
+                if (outcome != review.outcome) return@launch
+                if (snapshot == null && !unchecked) return@launch
+                if (review.kind == ConflictKind.Export) writeCalendarExport(updated)
+                else sendReviewed(updated, unchecked)
+            } else if (snapshot != null && updated.conflicts.matches.isEmpty()) {
+                if (review.kind == ConflictKind.Export) continueCalendarConflict()
+                else readConflict(updated, final = true)
+            }
+        }
+    }
+
+    private fun sendReviewed(review: CalendarConflictState, unchecked: Boolean) {
+        if (!reviewSourceCurrent(review) || !storageReady) return
+        val request = review.request.copy(busySchedules = if (unchecked) review.request.busySchedules else review.snapshot!!.schedules)
+        lastGenerationReview = review.copy(request = request)
+        if (review.kind == ConflictKind.Creation) {
+            reachCreationStep(CreationStep.AVAILABILITY)
+            _calendarConflict.value = null
+        } else _calendarConflict.value = review.copy(phase = ConflictPhase.Generating)
         _generation.value = GenerationState.Loading
         viewModelScope.launch {
             when (val outcome = planningRepository.generate(request)) {
                 is PlanOutcome.Success -> {
-                    // Registered here, once per success; never from a screen. If saving fails, the
-                    // same entry stays in memory and only saving is retried.
-                    val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
-                    _plans.update { it + plan }
-                    _generatedPlan.value = plan.ordinal
-                    _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
-                    // The finished creation's saved draft goes in the same save as its plan; until
-                    // that save succeeds the earlier draft stays stored.
-                    completeCreation(PlanSnapshot(_plans.value, creationDraft = null))
+                    if (review.kind == ConflictKind.Replacement) {
+                        if (!reviewSourceCurrent(review) || outcome.isDemo != review.source!!.isDemo ||
+                            scheduleRowProblem(outcome.response.schedules) != null ||
+                            (!outcome.isDemo && (outcome.response.scheduleCsvFile.isNullOrBlank() ||
+                                outcome.response.scheduleCsvFile == review.source.scheduleCsvFile))) {
+                            _generation.value = GenerationState.Failure(ApiError.InvalidResponse(null))
+                            _calendarConflict.update { it?.copy(phase = ConflictPhase.Failed) }
+                            return@launch
+                        }
+                        val replacement = SessionPlan.register(review.source.ordinal, request, outcome.response, review.source.isDemo)
+                        val candidate = review.envelope!!.copy(plans = review.envelope.plans.map {
+                            if (it.ordinal == replacement.ordinal) replacement else it
+                        })
+                        _calendarConflict.update { it?.copy(phase = ConflictPhase.Saving) }
+                        write(PendingLocalWrite(candidate, replacementId = review.id, replacementOrdinal = review.source.ordinal))
+                        _generation.value = GenerationState.Idle
+                    } else {
+                        val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
+                        _plans.update { it + plan }
+                        _generatedPlan.value = plan.ordinal
+                        _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
+                        completeCreation(PlanSnapshot(_plans.value, creationDraft = null))
+                    }
                 }
-                is PlanOutcome.DemoShortfall -> _generation.value = GenerationState.DemoShortfall(outcome.required, outcome.available)
-                is PlanOutcome.Failure -> _generation.value = GenerationState.Failure(outcome.error)
+                is PlanOutcome.DemoShortfall -> {
+                    _generation.value = GenerationState.DemoShortfall(outcome.required, outcome.available)
+                    if (review.kind == ConflictKind.Replacement) _calendarConflict.update { it?.copy(phase = ConflictPhase.Failed) }
+                }
+                is PlanOutcome.Failure -> {
+                    _generation.value = GenerationState.Failure(outcome.error)
+                    if (review.kind == ConflictKind.Replacement) _calendarConflict.update { it?.copy(phase = ConflictPhase.Failed) }
+                }
             }
         }
+    }
+
+    private fun finishReplacement(id: Int, saved: Boolean) {
+        _calendarConflict.update { if (it?.id == id) it.copy(phase = if (saved) ConflictPhase.Replaced else ConflictPhase.Unsaved) else it }
     }
 
     /**
@@ -857,7 +1046,7 @@ class PlanFormViewModel(
      * Does nothing for a plan that needs a reload or is missing.
      */
     fun retryAdjustment() {
-        if (_adjustment.value.state !is AdjustmentState.Failure || generating || exporting || !storageReady) return
+        if (_adjustment.value.state !is AdjustmentState.Failure || generating || busy || !storageReady) return
         if (_adjustment.value.manualRejected) return
         val (ordinal, input) = pendingAdjustment ?: return
         if (plan(ordinal)?.recovery != PlanRecovery.Ready) return
@@ -978,10 +1167,10 @@ class PlanFormViewModel(
         val updated = plan(editor.planOrdinal)?.withCheckIn(editor.scheduleId, report) ?: return false
         updatePlan(editor.planOrdinal) { updated }
         _checkIn.value = editor.copy(save = CheckInSave.Saving, error = null)
-        viewModelScope.launch {
-            val saved = commit(_plans.value)
-            finishCheckInSave(saved)
-        }
+        val candidate = _plans.value
+        val participant = _checkIn.value
+        _storage.value = PlanStorage.Saving
+        viewModelScope.launch { commit(candidate, checkIn = participant) }
         return true
     }
 
@@ -990,10 +1179,6 @@ class PlanFormViewModel(
      * (confirmed or failed) the shown collection stays as it is. Refused while saving.
      */
     fun closeCheckIn() = _checkIn.update { if (it?.save == CheckInSave.Saving) it else null }
-
-    private fun finishCheckInSave(saved: Boolean) = _checkIn.update {
-        if (it?.save == CheckInSave.Saving) it.copy(save = if (saved) CheckInSave.Saved else CheckInSave.Unsaved) else it
-    }
 
     /**
      * Opens a calendar export of plan [ordinal]'s current study rows, captured now. Refused unless the
@@ -1005,7 +1190,7 @@ class PlanFormViewModel(
         if (currentExportBlock(plan) != null) return false
         val events = CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo)
         val phase = if (events == null) CalendarExportPhase.InvalidRows else CalendarExportPhase.RequestingPermission
-        _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty()), phase)
+        _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty(), plan), phase)
         return true
     }
 
@@ -1041,11 +1226,27 @@ class PlanFormViewModel(
         if (phase == null || destination !in phase.calendars) state else state.copy(phase = phase.copy(selected = destination))
     }
 
-    /** Shows the confirmation for the chosen calendar; nothing is written yet. */
-    fun reviewCalendarExport() = _calendarExport.update { state ->
-        val phase = state?.phase as? CalendarExportPhase.Choosing
-        val destination = phase?.selected ?: return@update state
-        state.copy(phase = CalendarExportPhase.Confirming(phase.calendars, destination))
+    /** Reads all current study dates before the copy confirmation. */
+    fun reviewCalendarExport() {
+        val export = _calendarExport.value ?: return
+        val choosing = export.phase as? CalendarExportPhase.Choosing ?: return
+        val destination = choosing.selected ?: return
+        val confirmation = CalendarExportPhase.Confirming(choosing.calendars, destination)
+        val review = exportReview(export, confirmation) ?: return
+        _calendarExport.value = export.copy(phase = CalendarExportPhase.Checking)
+        readConflict(review, final = false)
+    }
+
+    private fun exportReview(export: CalendarExportState, confirmation: CalendarExportPhase.Confirming): CalendarConflictState? {
+        val source = export.source.capturedPlan ?: return null
+        val targets = CalendarConflicts.sessions(source.current.schedules)
+        val start = targets.minOfOrNull { it.interval.start.toLocalDate() } ?: return null
+        val end = targets.maxOf { it.interval.end.toLocalDate() }.plusDays(1)
+        return CalendarConflictState(
+            nextConflictId++, ConflictKind.Export, source.original, CalendarReadWindow(start, end), targets,
+            ConflictPhase.Reading, source = source, outcome = export.checked,
+            exportConfirmation = confirmation, exportId = export.id,
+        )
     }
 
     fun chooseAnotherCalendar() = _calendarExport.update { state ->
@@ -1070,20 +1271,38 @@ class PlanFormViewModel(
             _calendarExport.value = state.copy(phase = CalendarExportPhase.Finished(destination, outcome))
             return false
         }
-        _calendarExport.value = state.copy(phase = CalendarExportPhase.Writing(destination))
-        viewModelScope.launch {
-            val outcome = calendarExportRepository.export(destination, source.events)
-            _calendarExport.update { if (it?.id == state.id) it.copy(phase = CalendarExportPhase.Finished(destination, outcome)) else it }
-        }
+        val confirmation = state.phase
+        val review = exportReview(state, confirmation) ?: return false
+        _calendarExport.value = state.copy(phase = CalendarExportPhase.Checking)
+        readConflict(review, final = true, unchecked = state.unchecked)
         return true
     }
 
+    private fun writeCalendarExport(review: CalendarConflictState) {
+        val export = _calendarExport.value?.takeIf { it.id == review.exportId } ?: return
+        val source = plan(export.source.planOrdinal) ?: return
+        val destination = review.exportConfirmation?.destination ?: return
+        if (source != export.source.capturedPlan ||
+            exportBlockOf(source, _storage.value, _generation.value, _adjustment.value, export, _calendarRead.value, export.id) != null) return
+        if (review.outcome == CalendarReadOutcome.PermissionMissing) return
+        _calendarConflict.value = null
+        _calendarExport.value = export.copy(phase = CalendarExportPhase.Writing(destination))
+        viewModelScope.launch {
+            val outcome = calendarExportRepository.export(destination, export.source.events)
+            _calendarExport.update { if (it?.id == export.id) it.copy(phase = CalendarExportPhase.Finished(destination, outcome)) else it }
+        }
+    }
+
     /** Cancels or dismisses the flow and releases its plan; refused while writing. */
-    fun closeCalendarExport() = _calendarExport.update { if (it?.phase is CalendarExportPhase.Writing) it else null }
+    fun closeCalendarExport() {
+        if (_calendarExport.value?.phase is CalendarExportPhase.Writing || _calendarConflict.value?.phase in setOf(ConflictPhase.Generating, ConflictPhase.Saving)) return
+        if (_calendarConflict.value?.kind == ConflictKind.Export) _calendarConflict.value = null
+        _calendarExport.value = null
+    }
 
     /** [plan]'s export block from the current state; [ownExport] is a confirming flow, which does not block itself. */
     private fun currentExportBlock(plan: SessionPlan, ownExport: Int? = null): ExportBlock? =
-        exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport)
+        exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport, _calendarConflict.value != null)
 
     private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
 
@@ -1116,7 +1335,7 @@ class PlanFormViewModel(
                     pendingAdjustment = null
                     val success = AdjustmentState.Success(input.scheduleId, sessionMove(input, outcome.response.schedules))
                     _adjustment.update { it.copy(failedScheduleId = null, state = success, manual = null) }
-                    finishMoveSave(commit(_plans.value))
+                    commit(_plans.value, move = _adjustment.value)
                 }
                 AdjustmentOutcome.DemoNoSlot -> _adjustment.update { it.copy(state = AdjustmentState.DemoNoSlot) }
                 is AdjustmentOutcome.Failure -> {
@@ -1156,19 +1375,13 @@ class PlanFormViewModel(
      */
     fun retrySave() {
         if (_storage.value != PlanStorage.SaveFailure) return
-        pendingDraftWrite?.let { snapshot ->
-            val decision = _draftDecision.value?.takeIf { it.phase == DraftPhase.Failed } ?: return
-            writeDraft(snapshot, decision)
-            return
-        }
+        val pending = pendingWrite ?: return
         _storage.value = PlanStorage.Saving
-        _checkIn.update { if (it?.save == CheckInSave.Unsaved) it.copy(save = CheckInSave.Saving) else it }
-        updateMoveSave(from = MoveSave.Unsaved, to = MoveSave.Saving)
-        viewModelScope.launch {
-            val saved = pendingCompletion?.let { completeCreation(it) } ?: commit(_plans.value)
-            finishCheckInSave(saved)
-            finishMoveSave(saved)
+        settleParticipants(pending, saved = null)
+        pending.replacementId?.let { id ->
+            _calendarConflict.update { if (it?.id == id) it.copy(phase = ConflictPhase.Saving) else it }
         }
+        viewModelScope.launch { performWrite(pending, retry = true) }
     }
 
     /**
@@ -1219,7 +1432,7 @@ class PlanFormViewModel(
     fun stayInCreation(): Boolean {
         val decision = _draftDecision.value ?: return true
         if (decision.phase != DraftPhase.Failed) return false
-        pendingDraftWrite = null
+        pendingWrite = null
         _draftDecision.value = null
         _storage.value = PlanStorage.Ready
         return true
@@ -1260,23 +1473,18 @@ class PlanFormViewModel(
      * reload, question load, calendar read or profile request, and any other draft decision.
      */
     private fun canDecideDraft(): Boolean =
-        storageReady && !generating && !adjusting && !reloading && !readingCalendar && !profileBusy &&
+        storageReady && !generating && !busy && !profileBusy &&
             _questionLoad.value != QuestionLoadState.Loading && _draftDecision.value == null
 
     private fun writeDraft(snapshot: PlanSnapshot, decision: DraftDecision) {
-        pendingDraftWrite = snapshot
+        val pending = PendingLocalWrite(snapshot, draft = decision)
+        pendingWrite = pending
         _draftDecision.value = decision.copy(phase = DraftPhase.Writing)
-        // Held from now on, so a second tap or any plan change waits for this write.
         _storage.value = PlanStorage.Saving
-        viewModelScope.launch {
-            if (!write(snapshot)) {
-                _draftDecision.value = decision.copy(phase = DraftPhase.Failed)
-                return@launch
-            }
-            pendingDraftWrite = null
-            if (decision.choice == DraftChoice.Discard) resetCreation()
-            _draftDecision.value = decision.copy(phase = DraftPhase.Done)
+        pending.replacementId?.let { id ->
+            _calendarConflict.update { if (it?.id == id) it.copy(phase = ConflictPhase.Saving) else it }
         }
+        viewModelScope.launch { performWrite(pending) }
     }
 
     /** Fresh creation inputs; saved plans, their reports and the stored draft are untouched. */
@@ -1295,7 +1503,6 @@ class PlanFormViewModel(
     private fun clearCreationResults() {
         _generation.value = GenerationState.Idle
         _generatedPlan.value = null
-        lastRequest = null
         calendarReadId += 1
         _profile.value = ProfileState.Idle
     }
@@ -1307,21 +1514,10 @@ class PlanFormViewModel(
         return SessionMove(before, after)
     }
 
-    /**
-     * Settles a shown move whose save was running. Saves never overlap and plan changes wait for
-     * them, so a move still saving is the one this save wrote; a cleared result stays cleared.
-     */
-    private fun finishMoveSave(saved: Boolean) =
-        updateMoveSave(from = MoveSave.Saving, to = if (saved) MoveSave.Saved else MoveSave.Unsaved)
-
-    private fun updateMoveSave(from: MoveSave, to: MoveSave) = _adjustment.update { selection ->
-        val success = selection.state as? AdjustmentState.Success
-        if (success?.save == from) selection.copy(state = success.copy(save = to)) else selection
-    }
-
     private suspend fun restore() {
         when (val result = planStore.load()) {
             is PlanStoreLoad.Loaded -> {
+                committedSnapshot = result.snapshot
                 _plans.value = result.snapshot.plans
                 _savedPlans.value = result.snapshot.plans
                 nextOrdinal = result.snapshot.nextOrdinal
@@ -1337,25 +1533,80 @@ class PlanFormViewModel(
      * marks a live request about to be sent. Callers hold the operation locks, so saves never
      * overlap. Returns whether it was saved.
      */
-    private suspend fun commit(plans: List<SessionPlan>, inFlightAdjustment: Int? = null): Boolean =
-        write(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value))
+    private suspend fun commit(
+        plans: List<SessionPlan>,
+        inFlightAdjustment: Int? = null,
+        checkIn: CheckInEditor? = null,
+        move: AdjustmentSelection? = null,
+    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value), checkIn, move))
 
-    /** Saves a new plan together with removing the saved draft; a failure keeps [snapshot] for [retrySave]. */
-    private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean {
-        pendingCompletion = snapshot
-        val saved = write(snapshot)
-        if (saved) pendingCompletion = null
-        return saved
+    private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean = write(PendingLocalWrite(snapshot))
+
+    private suspend fun write(pending: PendingLocalWrite): Boolean {
+        pendingWrite = pending
+        return performWrite(pending)
     }
 
-    /** Saves [snapshot] as the whole stored collection; what is known as saved follows only a success. */
-    private suspend fun write(snapshot: PlanSnapshot): Boolean {
-        _storage.value = PlanStorage.Saving
-        val saved = planStore.save(snapshot)
-        if (saved) {
-            _savedPlans.value = snapshot.plans
-            _committedDraft.value = snapshot.creationDraft
+    private fun settleParticipants(pending: PendingLocalWrite, saved: Boolean?) {
+        pending.checkIn?.let { captured ->
+            _checkIn.update { current ->
+                if (current?.copy(save = captured.save) == captured) {
+                    current.copy(save = when (saved) {
+                        null -> CheckInSave.Saving
+                        true -> CheckInSave.Saved
+                        false -> CheckInSave.Unsaved
+                    })
+                } else current
+            }
         }
+        pending.move?.let { captured ->
+            _adjustment.update { current ->
+                val result = current.state as? AdjustmentState.Success
+                val owner = captured.state as? AdjustmentState.Success
+                if (result != null && owner != null && result.move === owner.move &&
+                    current.copy(state = owner) == captured) {
+                    current.copy(state = result.copy(save = when (saved) {
+                        null -> MoveSave.Saving
+                        true -> MoveSave.Saved
+                        false -> MoveSave.Unsaved
+                    }))
+                } else current
+            }
+        }
+        pending.draft?.let { captured ->
+            if (_draftDecision.value?.copy(phase = captured.phase) == captured) {
+                _draftDecision.value = captured.copy(phase = when (saved) {
+                    null -> DraftPhase.Writing
+                    true -> DraftPhase.Done
+                    false -> DraftPhase.Failed
+                })
+            }
+        }
+    }
+
+    private suspend fun performWrite(pending: PendingLocalWrite, retry: Boolean = false): Boolean {
+        _storage.value = PlanStorage.Saving
+        settleParticipants(pending, saved = null)
+        val saved = planStore.save(pending.snapshot)
+        if (saved) {
+            val restoredPreflight = retry && pending.snapshot.inFlightAdjustmentOrdinal != null
+            committedSnapshot = if (restoredPreflight) pending.snapshot.copy(inFlightAdjustmentOrdinal = null) else pending.snapshot
+            _savedPlans.value = pending.snapshot.plans
+            if (restoredPreflight) _plans.value = pending.snapshot.plans
+            _committedDraft.value = pending.snapshot.creationDraft
+            if (pending.replacementId != null) {
+                _plans.value = pending.snapshot.plans
+                if (_adjustment.value.planOrdinal == pending.replacementOrdinal) {
+                    _adjustment.value = AdjustmentSelection(planOrdinal = pending.replacementOrdinal)
+                    pendingAdjustment = null
+                }
+                if (_checkIn.value?.planOrdinal == pending.replacementOrdinal) _checkIn.value = null
+            }
+            if (pending.draft?.choice == DraftChoice.Discard) resetCreation()
+        }
+        settleParticipants(pending, saved)
+        pending.replacementId?.let { finishReplacement(it, saved) }
+        if (saved && pendingWrite === pending) pendingWrite = null
         _storage.value = if (saved) PlanStorage.Ready else PlanStorage.SaveFailure
         return saved
     }
@@ -1373,18 +1624,18 @@ class PlanFormViewModel(
      * A change made on [step] moves the resume position there ([question] for an answer).
      */
     private fun edit(step: CreationStep, question: Int = checkpointQuestion, transform: (PlanFormState) -> PlanFormState) {
-        if (generating) return
+        if (generating || _calendarConflict.value?.kind == ConflictKind.Replacement) return
         val before = _form.value
         _form.update(transform)
         if (_form.value != before) {
+            if (_calendarConflict.value?.kind == ConflictKind.Creation) _calendarConflict.value = null
             _creationStep.value = step
             if (step == CreationStep.QUESTIONS) checkpointQuestion = question
             // A saved notice describes the earlier draft.
             if (_profile.value == ProfileState.Saved) _profile.value = ProfileState.Idle
             _generation.value = GenerationState.Idle
             _generatedPlan.value = null
-            lastRequest = null
-        }
+            }
     }
 
     private fun editDates(transform: (PlanFormState) -> PlanFormState) {
@@ -1449,8 +1700,9 @@ private fun exportBlockOf(
     export: CalendarExportState?,
     read: CalendarReadState,
     ownExport: Int? = null,
+    conflictBusy: Boolean = false,
 ): ExportBlock? {
-    val operationBusy = generation == GenerationState.Loading ||
+    val operationBusy = conflictBusy || generation == GenerationState.Loading ||
         adjustment.state == AdjustmentState.Loading || adjustment.state == AdjustmentState.Reloading ||
         read in activeCalendarReads || (export != null && export.id != ownExport)
     return exportBlock(plan, storage, operationBusy)
