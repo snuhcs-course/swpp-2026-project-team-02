@@ -294,7 +294,7 @@ fun PlanAdjustmentScreen(
             val selectable = mode == AdjustmentMode.Adjustable && !loading
             val showChoices = selectable || selection.failedScheduleId != null
             val movedId = movedScheduleId(plan, state)
-            val reports = CheckInRows(checkIns.reportFor, checkIns.isUnsaved, checkIns.enabled && !busy, checkIns.onOpen)
+            val reports = CheckInRows(checkIns.reportFor, checkIns.isUnsaved, checkIns.enabled && !busy, checkIns.onOpen, checkIns.canOpen)
             for (day in week.days) {
                 DaySection(
                     day,

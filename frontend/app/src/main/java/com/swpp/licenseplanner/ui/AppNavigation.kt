@@ -112,6 +112,7 @@ private fun checkInRows(
     isUnsaved = { isCheckInUnsaved(plans, savedPlans, plan.ordinal, it) },
     enabled = storage == PlanStorage.Ready,
     onOpen = { scheduleId -> if (viewModel.startCheckIn(plan.ordinal, scheduleId)) nav.go(Routes.CHECK_IN) },
+    canOpen = { viewModel.canReport(plan.ordinal, it) },
 )
 
 /** Study sessions a plan's export would add. */

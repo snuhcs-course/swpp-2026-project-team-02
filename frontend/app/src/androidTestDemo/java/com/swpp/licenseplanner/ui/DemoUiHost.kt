@@ -70,6 +70,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     var storageScope = PlanStorageScope.DEMO
     var reloadOutcome: ReloadOutcome? = null
     var returnedTopic: String? = null
+    /** The device date the report gate reads; by default later than every demo session. */
+    @Volatile var deviceDate: LocalDate = LocalDate.of(2030, 1, 1)
     /** While set, every save is refused before any byte is written, as a failed device write. */
     val failSaves = AtomicBoolean(false)
     /** While set, every save waits for it to complete before writing or being refused. */
@@ -149,6 +151,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 calendarExportRepository = UnavailableCalendarExport,
                 calendarReadRepository = UnavailableCalendarRead,
                 availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
+                currentDate = { deviceDate },
             ) as T
         }
         rule.runOnIdle {

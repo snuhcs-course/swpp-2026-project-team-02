@@ -58,6 +58,7 @@ import java.time.format.TextStyle
 import java.util.Locale
 
 internal const val UNREPORTED = "아직 기록하지 않았어요"
+internal const val NOT_YET_REPORTABLE = "일정 당일부터 기록할 수 있어요"
 internal const val UNSAVED_REPORT = "저장 안 됨"
 internal const val ACTUAL_MINUTES_FIELD = "actual-minutes"
 
@@ -71,31 +72,37 @@ internal fun checkInStatusLabel(status: StudyCheckInStatus) = when (status) {
 internal fun checkInSummary(report: StudyCheckIn?): String =
     report?.let { "${checkInStatusLabel(it.status)} · 실제 ${it.actualMinutes}분" } ?: UNREPORTED
 
-/** Reporting entries for the study rows of one shown plan. */
+/**
+ * Reporting entries for the study rows of one shown plan. [canOpen] is false for an unreported
+ * session scheduled after the current date; it is read each time a row is composed.
+ */
 class CheckInRows(
     val reportFor: (String) -> StudyCheckIn?,
     val isUnsaved: (String) -> Boolean,
     val enabled: Boolean,
     val onOpen: (String) -> Unit,
+    val canOpen: (String) -> Boolean,
 )
 
 /**
  * Below a study row: its report (or that none exists), an unsaved mark, and a separate action that
- * opens the report editor. The action never selects the row for adjustment.
+ * opens the report editor. The action never selects the row for adjustment. An unreported row that
+ * cannot be reported yet shows when it can be recorded instead of the action.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CheckInRowAction(session: PlanSession, rowLabel: String, rows: CheckInRows) {
     val report = rows.reportFor(session.scheduleId)
     val unsaved = rows.isUnsaved(session.scheduleId)
+    val openable = rows.canOpen(session.scheduleId)
     val action = if (report == null) "공부 기록하기" else "기록 수정하기"
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (report == null) MutedTag(UNREPORTED)
+            if (report == null) MutedTag(if (openable) UNREPORTED else NOT_YET_REPORTABLE)
             else Text(checkInSummary(report), style = MaterialTheme.typography.labelMedium, color = InkBody)
             if (unsaved) Tag(UNSAVED_REPORT)
         }
-        Surface(
+        if (openable) Surface(
             onClick = { rows.onOpen(session.scheduleId) },
             enabled = rows.enabled,
             shape = MaterialTheme.shapes.small,

@@ -299,6 +299,11 @@ class PlanFormViewModel(
     private val calendarReadRepository: CalendarReadRepository = UnavailableCalendarRead,
     /** The shared server profile; null in demo, which keeps study times on the device. */
     private val availabilityProfileRepository: AvailabilityProfileRepository? = null,
+    /**
+     * The device's current date, read whenever a report gate is checked. Separate from [today],
+     * which is captured once for the creation form.
+     */
+    private val currentDate: () -> LocalDate = { LocalDate.now() },
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -856,14 +861,28 @@ class PlanFormViewModel(
     }
 
     /**
+     * Whether study row [scheduleId] of plan [ordinal] may be reported: it already has a report,
+     * or its scheduled start date is on or before the current date (by date, not time of day).
+     * External and unknown rows are false. The current date is read on every call.
+     */
+    fun canReport(ordinal: Int, scheduleId: String): Boolean {
+        val plan = plan(ordinal)?.takeIf { it.isStudy(scheduleId) } ?: return false
+        if (plan.checkInFor(scheduleId) != null) return true
+        val session = PlanGrouping.sessions(plan.current.schedules).firstOrNull { it.scheduleId == scheduleId } ?: return false
+        return !session.start.toLocalDate().isAfter(currentDate())
+    }
+
+    /**
      * Opens the report editor for study row [scheduleId] of plan [ordinal], prefilled with its saved
-     * report or with no status for an unreported row. External rows, unknown rows and plans that are
-     * being changed or not yet saved are refused. Opening writes nothing and leaves the adjustment
-     * selection and recovery state alone; a plan awaiting reload or missing may still be reported.
+     * report or with no status for an unreported row. External rows, unknown rows, rows that
+     * [canReport] refuses (an unreported session on a later date) and plans that are being changed
+     * or not yet saved are refused. Opening writes nothing and leaves the adjustment selection and
+     * recovery state alone; a plan awaiting reload or missing may still be reported.
      */
     fun startCheckIn(ordinal: Int, scheduleId: String): Boolean {
         if (generating || busy || !storageReady || _checkIn.value?.save == CheckInSave.Saving) return false
-        val plan = plan(ordinal)?.takeIf { it.isStudy(scheduleId) } ?: return false
+        if (!canReport(ordinal, scheduleId)) return false
+        val plan = plan(ordinal) ?: return false
         val planned = PlanGrouping.sessions(plan.current.schedules)
             .firstOrNull { it.scheduleId == scheduleId }?.durationMinutes ?: return false
         val committed = plan.checkInFor(scheduleId)

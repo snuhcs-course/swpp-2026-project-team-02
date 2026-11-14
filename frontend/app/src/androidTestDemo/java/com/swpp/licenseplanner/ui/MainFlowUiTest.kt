@@ -27,6 +27,7 @@ import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.UNKNOWN_LABEL
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
+import com.swpp.licenseplanner.ui.screens.NOT_YET_REPORTABLE
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
@@ -695,6 +696,52 @@ class MainFlowUiTest {
         assertEquals(saved, host.snapshot().plans.single())
         assertEquals(0, host.adjustmentCalls.get())
         host.capture("report-saved")
+    }
+
+    @Test
+    fun sessionsAfterTheDeviceDateOfferNoReportUntilTheirDay() = withApp { host ->
+        val first = LocalDate.of(2026, 11, 16)
+        host.deviceDate = first
+        generatePlan(host)
+        val plan = host.snapshot().plans.single()
+        val weeks = PlanGrouping.weeks(plan.current.schedules)
+        assertTrue("Generated plan has more than one browsable week", weeks.size > 1)
+        val study = weeks.first().days.flatMap { it.sessions }.filterNot { it.isExternal }
+        val today = study.filter { !it.start.toLocalDate().isAfter(first) }
+        val later = study.filter { it.start.toLocalDate().isAfter(first) }
+        assertTrue("The first day has a study session", today.isNotEmpty())
+        assertTrue("The first week has a later study session", later.isNotEmpty())
+        val next = later.first()
+
+        // The new plan: the first day's session offers reporting, a later one shows only the note.
+        showWeek(weeks[0].monday, 0, weeks.size)
+        scrollTo(hasContentDescription(reportAction(today.first(), edit = false)), lazy = true)
+        compose.onNodeWithContentDescription(reportAction(today.first(), edit = false)).assertIsEnabled()
+        show(monthDay(next.start.toLocalDate()), lazy = true)
+        compose.onAllNodes(hasContentDescription(reportAction(next, edit = false))).assertCountEquals(0)
+        compose.onAllNodesWithText(NOT_YET_REPORTABLE).fetchSemanticsNodes().also { assertTrue(it.isNotEmpty()) }
+        host.capture("report-future-row")
+
+        // The adjustment row list of the saved plan.
+        host.recreate()
+        openSavedPlan()
+        compose.onAllNodes(hasContentDescription(" 공부 기록하기", substring = true)).assertCountEquals(today.size)
+        compose.onAllNodesWithText(NOT_YET_REPORTABLE).assertCountEquals(later.size)
+        compose.onAllNodes(hasContentDescription(reportAction(next, edit = false))).assertCountEquals(0)
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+
+        // The device date reaches the later session while the app stays open.
+        host.deviceDate = next.start.toLocalDate()
+        clickDescription("다음 주")
+        showWeek(weeks[1].monday, 1, weeks.size)
+        clickDescription("이전 주")
+        showWeek(weeks[0].monday, 0, weeks.size)
+        compose.onNodeWithContentDescription(reportAction(next, edit = false)).assertIsEnabled()
+        openReport(next, edit = false)
+        click("취소")
+        returnTo("실패한 일정 선택", host)
+        assertEquals(plan, host.snapshot().plans.single())
+        assertEquals(0, host.adjustmentCalls.get())
     }
 
     @Test
