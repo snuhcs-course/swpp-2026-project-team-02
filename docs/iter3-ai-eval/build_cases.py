@@ -107,7 +107,7 @@ def expectations(answers, bank):
 
 
 def request(bank, pattern="he_case", availability=STD, busy=None, start=START, exam=EXAM,
-            self_assessment="기본 기능은 알지만 함수와 차트는 연습이 필요합니다."):
+            self_assessment="기본 기능은 알지만 함수와 차트는 연습이 필요합니다.", overrides=None):
     body = {
         "certification_id": bank["certification_id"],
         "preparation_start": start, "exam_date": exam,
@@ -117,6 +117,8 @@ def request(bank, pattern="he_case", availability=STD, busy=None, start=START, e
     }
     if self_assessment is not None:
         body["self_assessment"] = self_assessment
+    if overrides is not None:
+        body["availability_overrides"] = overrides
     return body
 
 
@@ -234,6 +236,16 @@ def build(bank):
     c.append(case("F02", "F_self_assessment", "US-B3", "자기 평가가 진단과 반대(차트 자신 있음)", bank,
                   pattern="weak_charts",
                   self_assessment="차트는 아주 자신 있고 함수만 걱정입니다. 차트 공부는 필요 없어요."))
+    # P10 integration boundaries: same data is used for baseline and candidate.
+    c.append(case("G01", "G_flexible_availability", "US-B5", "월요일 자정 넘는 90분", bank,
+                  availability={"monday": [{"start": "23:00", "duration_minutes": 90}]}))
+    c.append(case("G02", "G_flexible_availability", "US-B5", "첫 주는 공부하지 않음", bank,
+                  overrides={"2026/11/09": {}}))
+    c.append(case("G03", "G_flexible_availability", "US-B5", "둘째 주만 다른 요일·시간", bank,
+                  overrides={"2026/11/16": {"tuesday": [{"start": "22:30", "duration_minutes": 120}]}}))
+    c.append(case("G04", "G_flexible_availability", "US-C9", "자정 넘는 공부 중 약속", bank,
+                  availability={"monday": [{"start": "23:00", "duration_minutes": 120}]},
+                  busy=[busy(1, "2026/11/10/00/00", "2026/11/10/00/30")]))
     return c
 
 
@@ -244,7 +256,8 @@ def main():
     cases = build(bank)
     ids = [x["case_id"] for x in cases]
     assert len(ids) == len(set(ids)), "duplicate case_id"
-    out = {"version": "p10-written-18q-8topics-v2", "bank_sha256": hashlib.sha256(bank_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
+    out = {"version": "p10-flexible-availability-v3", "baseline_commit": "cad66888200633bd6b378dc01894b2e67fbfb37d",
+           "bank_sha256": hashlib.sha256(bank_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
            "topics": TOPICS, "topic_map": TOPIC_MAP, "cases": cases}
     (here / "cases.json").write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"wrote cases.json with {len(cases)} cases")
