@@ -29,6 +29,11 @@ On 2026-11-14, the user supplied two post-change **Demo** screenshots for the se
 - **Plan adjustment screen:** the same week and values appear; its day cards also display the configured availability windows. The same zero-availability days are absent from the graph.
 - Together, these screenshots demonstrate the graph on both screens and the explanatory note. They show one selected week; they do not independently demonstrate that advancing the arrows changes the values. They are Demo evidence, not evidence of the Live backend-generated summary.
 
+The supplied screenshots are now checked into the repository:
+
+- [Plan screen weekly graph](evidence/he-13/01-plan-weekly-time-graph.png)
+- [Adjustment screen weekly graph](evidence/he-13/02-adjustment-weekly-time-graph.png)
+
 No Live-only test is required to verify this UI behavior. If reporting Live backend integration as verified, separately capture the Live overall summary with the request's available total, actual assigned total, and spare-time explanation. The evaluator's distribution comment is a separate product-policy question, not a requirement to schedule every available minute or every weekday. No UAT sheet edit is required for this implementation note.
 
 ## Open product question

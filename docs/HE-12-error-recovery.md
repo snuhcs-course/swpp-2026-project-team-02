@@ -41,3 +41,12 @@ The simulator uses synthetic diagnostics such as `api.example.invalid` and never
 - `:app:testLiveDebugUnitTest :app:testDemoDebugUnitTest`: passed after the HE-11 and HE-12 expectation updates (Live 264 tests, Demo 266 tests; one permission-assumption test is skipped in each flavor because the local user can still open the file).
 - `:app:compileDemoDebugKotlin :app:compileLiveDebugKotlin`: passed after adding the Demo manual-test launcher and request fault injection.
 - Emulator captures confirm the question-load and plan-generation error screens show the selected user guidance and expanded synthetic developer diagnostic. Other selectable cases can be exercised through the steps above.
+
+## Evidence
+
+The post-change screenshots supplied on 2026-11-14 are now stored in the repository:
+
+- [Example-question request error with developer details](evidence/he-12/01-question-error-detail.png)
+- [Plan-generation request error with developer details](evidence/he-12/02-generation-error-detail.png)
+
+These two captures demonstrate the visible recovery copy and the expanded original diagnostic for those screens. They do not document every selectable error category or the adjustment error flow.
