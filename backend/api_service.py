@@ -20,6 +20,7 @@ from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as render_adjusted_csv
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
+from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions
 from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
 from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
@@ -35,7 +36,13 @@ MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
                             "Create a new plan before adjusting study sessions.")
 # The project's wire timestamps are Korea-local; Korea has no daylight saving time.
 KOREA_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
-ADJUSTMENT_MODES = ("automatic", "manual")
+ADJUSTMENT_MODES = ("automatic", "manual", "remaining")
+REMAINING_FIELDS = ("schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
+                    "preparation_start", "exam_date", "replan_from", "remaining_sessions")
+SINGLE_TARGET_FIELDS = ("schedule_id", "new_start_date", "confirm_outside_availability")
+REMAINING_SESSION_KEYS = {"schedule_id", "remaining_minutes", "replacement_schedule_id"}
+MISSING_STORED_CONTEXT = ("This saved plan has no stored preparation period and study times. "
+                          "Create a new plan before re-planning remaining sessions.")
 
 
 def current_korea_minute() -> datetime:
@@ -231,7 +238,7 @@ def _adjustment_availability(payload: dict[str, Any], snapshot: PlanSnapshot | N
 def _adjustment_mode(payload: dict[str, Any]) -> str:
     mode = payload.get("mode", "automatic")
     if mode not in ADJUSTMENT_MODES or not isinstance(mode, str):
-        raise ValueError("mode must be automatic or manual")
+        raise ValueError("mode must be automatic, manual or remaining")
     return mode
 
 
@@ -280,12 +287,79 @@ def _adjust_manually(payload: dict[str, Any], entries: tuple[ScheduleEntry, ...]
     return result
 
 
+def _remaining_sessions(value: Any) -> tuple[RemainingSession, ...]:
+    """Typed remaining-session instructions; semantic checks happen during placement."""
+    if not isinstance(value, list) or not value:
+        raise ValueError("remaining_sessions must be a non-empty array")
+    sessions = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != REMAINING_SESSION_KEYS:
+            raise ValueError("each remaining_sessions item must contain only schedule_id, "
+                             "remaining_minutes and replacement_schedule_id")
+        schedule_id, minutes, replacement = (item["schedule_id"], item["remaining_minutes"],
+                                             item["replacement_schedule_id"])
+        if not isinstance(schedule_id, str) or not isinstance(replacement, str):
+            raise ValueError("remaining_sessions schedule IDs must be strings")
+        if type(minutes) is not int:
+            raise ValueError("remaining_sessions remaining_minutes must be a whole number")
+        sessions.append(RemainingSession(schedule_id, minutes, replacement))
+    return tuple(sessions)
+
+
+def _remaining_summary(placed: list[ScheduleEntry]) -> str:
+    minutes = sum(int((e.end_datetime - e.start_datetime).total_seconds() // 60) for e in placed)
+    return f"남은 공부 {len(placed)}개, 총 {minutes}분을 다시 배치했어요."
+
+
+def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
+    """Place every listed remainder in one selected stored plan without any model request."""
+    for field in SINGLE_TARGET_FIELDS:
+        if field in payload:
+            raise ValueError(f"{field} is not used when mode is remaining")
+    for field in REMAINING_FIELDS:
+        if payload.get(field) is None:
+            raise ValueError(f"{field} is required when mode is remaining")
+    entries = parse_schedule_rows(payload["schedules"])
+    instructions = _remaining_sessions(payload["remaining_sessions"])
+    if not isinstance(payload["weekly_availability"], dict):
+        raise ValueError("weekly_availability must be a JSON object keyed by weekday")
+    supplied = select_availability_context(payload, lambda: None)
+    preparation_start = _datetime(payload["preparation_start"], "preparation_start")
+    exam_date = _datetime(payload["exam_date"], "exam_date")
+    replan_from = _datetime(payload["replan_from"], "replan_from")
+    store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
+    snapshot = store.snapshot(payload["schedule_csv_file"])
+    if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
+        raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
+    if snapshot.exam_date is None or snapshot.preparation_start is None or snapshot.availability is None:
+        raise ValueError(MISSING_STORED_CONTEXT)
+    if exam_date != snapshot.exam_date:
+        raise ValueError("exam_date: must match the selected plan's stored exam date")
+    if preparation_start != snapshot.preparation_start:
+        raise ValueError("preparation_start: must match the selected plan's stored preparation start")
+    if supplied != snapshot.availability:
+        raise ValueError("weekly_availability and availability_overrides must match the selected plan's "
+                         "stored study times")
+    result_entries = place_remaining_sessions(
+        entries, instructions, availability=snapshot.availability, preparation_start=snapshot.preparation_start,
+        exam_date=snapshot.exam_date, replan_from=replan_from, now=current_korea_minute())
+    csv_text = render_adjusted_csv(result_entries)
+    store.update(snapshot, csv_text)
+    replacements = {instruction.replacement_schedule_id for instruction in instructions}
+    placed = [e for e in result_entries if e.schedule_id in replacements]
+    return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text, **plan_fields(snapshot.identifier),
+            "availability_snapshot": context_payload(snapshot.availability, include_end=True),
+            "action": "replanned_remaining", "agent_summary": _remaining_summary(placed), "tool_calls": []}
+
+
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
 def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     """Adjust a snapshot and optionally update its existing generated file."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be an object")
     mode = _adjustment_mode(payload)
+    if mode == "remaining":
+        return _adjust_remaining(payload)
     entries = parse_schedule_rows(payload.get("schedules"))
     target_id = payload.get("schedule_id")
     if not isinstance(target_id, str) or not target_id:

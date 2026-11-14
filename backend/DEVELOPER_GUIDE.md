@@ -48,7 +48,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
-| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `preparation_start`를 받습니다 |
+| `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `preparation_start`를 받습니다. `mode: "remaining"`이면 모델 없이 `remaining_sessions`의 남은 분을 한 번에 재배치합니다(필수 필드와 규칙은 [FRONTEND_INTEGRATION_GUIDE.md](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)) |
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:
@@ -427,6 +427,7 @@ Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 
 - 변경 대상이 아닌 일정 행은 원래 시작 시각과 종료 시각을 유지합니다. 결과 CSV는 시작 시각과 ID 기준으로 정렬됩니다.
 - 일정 구간은 시작 포함·종료 제외로 처리합니다. 개인 시간표는 `config/user_availability.json`에서 자동으로 읽으며 `--availability-file`로 다른 파일을 지정할 수 있습니다. 시간표 파일이 없으면 기존 충돌 회피 규칙만 적용하고, 공휴일과 시험일은 현재 반영하지 않습니다. 주별 교체 시간과 자정을 넘는 구간도 License Planner와 같은 `study_availability.py` 해석기로 읽으며, 이동한 세션은 한 구간 안에 통째로 들어가야 합니다.
 - 대상 ID가 입력 CSV에 없거나 ID 접두어/번호 형식이 잘못되면 오류를 반환합니다. 일정 ID는 중복될 수 없습니다.
+- API `mode: "remaining"`은 Agent 없이 `remaining_study.py`로 여러 공부 일정의 남은 분을 한 번에 재배치하고, 전체가 들어갈 때만 저장합니다. 규칙은 `schedule_adjuster/README.md`에 있습니다.
 - 현재 Agent는 `inspect_schedule`을 먼저 호출합니다. 주제가 있는 공부 일정이면 `inspect_topic_schedule`로 같은 주제의 세션을 확인한 뒤, 일정 유형에 맞는 변경 도구를 호출합니다.
 
 ### 입력 및 출력
@@ -518,12 +519,14 @@ CLI는 오류를 stderr에 `ERROR: 메시지` 형식으로 출력하고 종료 �
 | `schedule_adjuster/models.py` | 일정 행, 조정 요청, 결과, 도구 trace 데이터 객체 |
 | `schedule_adjuster/csv_io.py` | CSV 파싱/검증 및 출력 CSV 생성 |
 | `schedule_adjuster/schedule_logic.py` | ID 판정, 기간 충돌 검사, 사용자 가능 시간 안에서 공부 일정 이동, 외부 일정 제거 규칙 |
+| `schedule_adjuster/remaining_study.py` | 여러 공부 일정의 남은 분을 원래 순서대로 가장 이른 빈 가능 구간에 통째로 배치하는 결정적 일괄 규칙(API `mode: "remaining"`, 모델 없음) |
 | `schedule_adjuster/availability.py` | 공유 개인 시간 JSON 로드 및 형식 검증 |
 | `schedule_adjuster/tools.py` | Agent 도구 함수, 입력 검증, 도구 스키마 및 호출 이력 |
 | `schedule_adjuster/agent.py` | OpenRouter function calling ReAct 루프 |
 | `schedule_adjuster/settings.py` | OpenRouter API 키 로딩, Agent 반복·추론·출력 한도, CSV 및 날짜 설정 |
 | `schedule_adjuster/README.md` | Schedule Adjuster 단독 실행 및 테스트 설명 |
 | `tests/schedule_adjuster_tests/test_schedule_adjuster.py` | API 없이 실행하는 로컬 단위 테스트 |
+| `tests/schedule_adjuster_tests/test_remaining_study.py` | 남은 공부 일괄 배치 규칙 단위 테스트 |
 | `scenarios/inputs/schedule_adjuster/` | 여러 통합 테스트 설정과 입력 CSV |
 | `scenarios/results/schedule_adjuster/` | 테스트 결과 CSV, 케이스별 도구 trace, 마지막 통합 실행 요약 |
 | `scenarios/run_schedule_adjuster_test_cases.py` | 설정에 정의된 케이스들을 실제 OpenRouter Luna Agent로 실행하는 통합 테스트 러너 |

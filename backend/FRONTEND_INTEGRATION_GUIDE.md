@@ -321,7 +321,7 @@ these additional fields:
 | `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
 | `weekly_availability` | Optional request context under the selection rules above; otherwise the plan's retained context, then the shared profile. An explicit null or a context with no window is invalid |
 | `availability_overrides` | Optional; replaces the inherited override map for this request only. Null is invalid |
-| `mode` | Omitted or `"automatic"`: the agent-based move. `"manual"`: the deterministic move described below. Anything else returns `422 INVALID_INPUT` |
+| `mode` | Omitted or `"automatic"`: the agent-based move. `"manual"`: the deterministic move described below. `"remaining"`: the deterministic remaining-work batch described below, with its own required fields. Anything else returns `422 INVALID_INPUT` |
 | `exam_date` | Saved plan (`schedule_csv_file` present): optional. The server uses the exam timestamp stored when the plan was generated; a supplied value must equal it exactly, and explicit null or a malformed value is rejected. Without `schedule_csv_file`: a valid `YYYY/MM/DD/HH/MM` value is required when moving a `study-N` row; missing, null or malformed returns `422 INVALID_INPUT` before any model call. Never needed for `external-N` removal. |
 
 Always send the complete schedule currently displayed, not only the failed row.
@@ -469,6 +469,79 @@ identity and URL, `action` `rescheduled_study`, the requested
 and the retained `availability_snapshot` when the plan has one. It uses the same
 digest-checked same-file replacement as automatic moves, so a lost response has
 no rollback or exactly-once guarantee: reload before choosing again.
+
+#### Remaining-work re-planning
+
+`"mode": "remaining"` places the remaining minutes of several study rows of a
+saved plan in one deterministic batch, without any model request and without
+reading or writing the shared availability profile. Every field below is
+required and must not be null:
+
+| Field | Meaning |
+| --- | --- |
+| `schedule_csv_file` | Server-issued identity of the selected plan |
+| `schedules` | The complete current rows, including external and completed rows; must match the stored plan |
+| `weekly_availability`, `availability_overrides` | The plan's original context; must equal the retained context after normalization (window order and `end`/`duration_minutes` forms do not matter) |
+| `preparation_start`, `exam_date` | The plan's original bounds; must equal the retained values |
+| `replan_from` | `YYYY/MM/DD/HH/MM`; no session is placed before it |
+| `remaining_sessions` | Non-empty array of `{"schedule_id", "remaining_minutes", "replacement_schedule_id"}` objects with exactly those keys |
+
+`schedule_id`, `new_start_date` and `confirm_outside_availability` must be
+absent. Each instruction names a distinct `study-N` source row.
+`remaining_minutes` is a JSON integer from 1 to the source row's scheduled
+minutes (booleans and decimals such as `60.0` are rejected). A
+`replacement_schedule_id` equal to its source keeps the ID and needs the full
+duration; otherwise it must be a new `study-N` numbered above every current
+study row, not used by any row, and unique within the request.
+
+```json
+{
+  "mode": "remaining",
+  "schedule_csv_file": "license_planner/output/study_plan_20261017T120000000000+0900_ab12cd34.csv",
+  "schedules": [{"schedule_id": "study-1", "start_date": "2026/11/16/18/00",
+                 "end_date": "2026/11/16/19/00", "topic": "함수와 데이터 관리"},
+                {"schedule_id": "study-4", "start_date": "2026/11/17/18/30",
+                 "end_date": "2026/11/17/19/00", "topic": "함수와 데이터 관리"}],
+  "weekly_availability": {"monday": [{"start": "18:00", "duration_minutes": 120}],
+                          "tuesday": [{"start": "18:00", "duration_minutes": 60}]},
+  "availability_overrides": {},
+  "preparation_start": "2026/11/16/00/00",
+  "exam_date": "2026/12/07/00/00",
+  "replan_from": "2026/11/16/20/31",
+  "remaining_sessions": [
+    {"schedule_id": "study-1", "remaining_minutes": 60, "replacement_schedule_id": "study-1"},
+    {"schedule_id": "study-4", "remaining_minutes": 10, "replacement_schedule_id": "study-5"}
+  ]
+}
+```
+
+The server removes every listed source row, keeps all other rows unchanged as
+busy time, and places the instructions in the sources' original order (start,
+end, then `study-N` number). Each becomes one whole session with the source
+topic in the earliest free part of one effective study window that starts no
+earlier than the latest of the preparation start, `replan_from` and the
+server's next Asia/Seoul minute, and ends by the exam timestamp. Touching rows
+are not overlaps; existing overlaps among unselected rows are kept. Placement is
+the same rule set as the schedule-adjuster README describes; it never splits a
+session.
+
+Success returns `schedules`, `schedule_csv`, the same file identity and URL,
+the retained `availability_snapshot`, `action` `replanned_remaining`, a Korean
+`agent_summary` with the placed count and minutes, and `tool_calls: []`. There
+is no `target_schedule_id`. The whole batch is one digest-checked same-file
+replacement.
+
+Errors: invalid fields or instructions, mismatched bounds/context or an invalid
+identity return `422 INVALID_INPUT`. A plan whose metadata lacks a retained
+preparation start and context (exam-only or CSV-only) returns `422
+INVALID_INPUT` with a create-a-new-plan message. If any instruction has no whole
+fit, the request returns `422 INVALID_INPUT` with `NOT_ENOUGH_TIME` and nothing
+is saved; a different order or splitting might still fit, so this is not proof
+that no schedule exists. Stale rows or a CSV/metadata change before the write
+return 409 `PLAN_CONFLICT`, a missing plan 404 `PLAN_NOT_FOUND`, damaged metadata
+or a failed write 500 `STORAGE_ERROR`. Every rejection leaves the plan, its
+metadata, other plans and the profile unchanged. A server without this mode
+answers `422 INVALID_INPUT` (`mode must be ...`); do not retry in another mode.
 
 ### Error handling and limits
 
