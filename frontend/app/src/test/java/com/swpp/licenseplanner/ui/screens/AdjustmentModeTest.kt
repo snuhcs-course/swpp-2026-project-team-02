@@ -9,6 +9,8 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.AdjustmentState
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -28,6 +30,21 @@ class AdjustmentModeTest {
         AdjustmentState.Success("study-1"),
         AdjustmentState.Reloaded,
     )
+
+    @Test
+    fun noFitUsesTheSameGuidanceForDemoAndLiveCapacityFailures() {
+        assertTrue(AdjustmentState.DemoNoSlot.isNoFit())
+        assertTrue(AdjustmentState.Failure(ApiError.InvalidInput("NOT_ENOUGH_TIME: no free slot")).isNoFit())
+    }
+
+    @Test
+    fun otherFailuresKeepTheirErrorAndRetryGuidance() {
+        for (error in listOf(ApiError.InvalidInput("bad schedule"), ApiError.InvalidInput(null),
+            ApiError.ServerFailure(502), ApiError.Connection)) {
+            assertFalse(AdjustmentState.Failure(error).isNoFit())
+        }
+        assertFalse(AdjustmentState.Idle.isNoFit())
+    }
 
     @Test
     fun missingPlanStaysMissingWhateverTheOutcome() {

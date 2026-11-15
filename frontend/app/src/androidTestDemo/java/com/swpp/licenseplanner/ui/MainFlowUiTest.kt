@@ -231,7 +231,7 @@ class MainFlowUiTest {
             waitForText("캘린더 시간을 확인하는 중이에요")
             compose.waitUntil(10_000) { host.calendarReads.get() == 1 }
             click("취소")
-            waitForText("보통 언제 공부할 수 있나요?")
+            waitForText("언제, 얼마나 공부할 건가요?")
             assertEquals(form, host.viewModel.form.value)
             compose.runOnIdle { pendingRead.complete(Unit) }
             compose.waitForIdle()
@@ -271,7 +271,7 @@ class MainFlowUiTest {
         assertTrue(host.viewModel.calendarConflict.value!!.conflicts.matches.all { it.target.scheduleId == null })
         host.capture("generation-conflict-details")
         click("공부 시간 수정")
-        waitForText("보통 언제 공부할 수 있나요?")
+        waitForText("언제, 얼마나 공부할 건가요?")
         assertEquals(form, host.viewModel.form.value)
         assertEquals(0, host.planningCalls.get())
         click("계획 만들기")
@@ -849,7 +849,8 @@ class MainFlowUiTest {
         answerAll(host)
         click("공부 시간 정하기")
         compose.onNodeWithText("계획 만들기").assertIsNotEnabled().performClick()
-        show("보통 언제 공부할 수 있나요?")
+        show("언제, 얼마나 공부할 건가요?")
+        show("요일마다 시작 시간과 공부할 분을 정해 주세요. 캘린더 일정과 겹치는 시간을 빼고, 입력한 시간을 모두 계획에 써요.")
         show("공부할 요일을 하나 이상 선택해 주세요.")
         setWeekdayMinutes(Weekday.MONDAY)
         compose.onNodeWithText("계획 만들기").assertIsEnabled()
@@ -1423,7 +1424,7 @@ class MainFlowUiTest {
         assertEquals(1, host.remainingCalls.get())
         val noFit = seedRemainingPlans(host, noFit = true)
         click("남은 공부 다시 계획하기"); click("남은 공부 다시 배치하기")
-        show("현재 배치 규칙으로 남은 공부를 모두 배치하지 못했어요")
+        show("남은 공부를 모두 배치할 시간이 없어요")
         host.capture("remaining-no-fit"); click("계획으로 돌아가기")
         assertEquals(noFit, host.snapshot()); assertEquals(2, host.remainingCalls.get())
     }

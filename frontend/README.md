@@ -443,6 +443,12 @@ messages claims that an unchanged retry fixes the input.
 
 ## Plan adjustment
 
+When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
+「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
+The no-fit footer offers manual movement and choosing another session. A move
+outside the entered windows still needs the existing confirmation. Remaining-study
+no-fit guidance points to moving sessions one at a time from 「계획 조정하기」.
+
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
 and 계획 조정 (a list of the plans generated and saved on this device). The first
 creation step (자격증) has a top-bar back arrow that, like system back, returns
@@ -801,6 +807,10 @@ that detailed gate remains unverified. See [Verification](#verification).
 ## Study availability
 
 Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. The snapshot writes v5 and explicitly reads v1–v5 without read-time migration.
+
+The recurring study-time heading is 「언제, 얼마나 공부할 건가요?」. Its note
+says the plan uses all entered time except calendar conflicts. The weekly graph
+note explains that calendar conflicts are deducted from available time.
 
 The study-time screen (공부 시간) shows every window for each weekday.
 시간대 추가 opens a candidate starting at 18:00 for 60 minutes. 수정 or tapping

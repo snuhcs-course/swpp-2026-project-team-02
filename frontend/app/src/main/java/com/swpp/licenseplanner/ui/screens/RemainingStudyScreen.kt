@@ -97,8 +97,8 @@ fun RemainingStudyScreen(
                 PrimaryButton("계획 보기", onShowPlan, enabled = state.save != MoveSave.Saving)
             }
             is RemainingStudyState.Failure -> {
-                AlertCard(if (state.noFit) "현재 배치 규칙으로 남은 공부를 모두 배치하지 못했어요" else "남은 공부를 다시 계획하지 못했어요",
-                    if (state.noFit) "기존 계획과 공부 기록을 유지했어요. 다른 순서나 나눈 일정은 별도 검토가 필요해요." else remainingFailureMessage(state.error))
+                AlertCard(if (state.noFit) "남은 공부를 모두 배치할 시간이 없어요" else "남은 공부를 다시 계획하지 못했어요",
+                    if (state.noFit) "기존 계획과 공부 기록을 유지했어요. 입력한 공부 시간이 이미 계획으로 차 있어요. '계획 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요." else remainingFailureMessage(state.error))
                 PrimaryButton("계획으로 돌아가기", onShowPlan, enabled = !busy)
             }
             is RemainingStudyState.Invalid -> {

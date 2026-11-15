@@ -18,7 +18,8 @@ class RemainingStudyCopyTest {
     }
 
     @Test fun failuresDescribeRulesUnsupportedModeAndUncertaintyWithoutRawDiagnostics() {
-        assertTrue(remainingFailureMessage(ApiError.InvalidInput("NOT_ENOUGH_TIME: study-3")).startsWith("현재 배치 규칙"))
+        assertEquals("남은 공부를 모두 배치할 시간이 없어요", remainingFailureMessage(ApiError.InvalidInput("NOT_ENOUGH_TIME: study-3")))
+        assertEquals("남은 공부를 모두 배치할 시간이 없어요", remainingFailureMessage(null))
         assertTrue(remainingFailureMessage(ApiError.InvalidInput("mode must be automatic or manual")).contains("서버 업데이트"))
         assertFalse(remainingFailureMessage(ApiError.InvalidInput("/private/path token secret")).contains("secret"))
         assertTrue(remainingFailureMessage(ApiError.Connection).contains("최신 계획"))

@@ -73,6 +73,10 @@ internal fun adjustmentMode(plan: SessionPlan, state: AdjustmentState): Adjustme
     else -> AdjustmentMode.Adjustable
 }
 
+internal fun AdjustmentState.isNoFit(): Boolean = this == AdjustmentState.DemoNoSlot ||
+    (this is AdjustmentState.Failure && error is ApiError.InvalidInput &&
+        error.message?.startsWith("NOT_ENOUGH_TIME") == true)
+
 /**
  * The study row moved by the current successful adjustment, or null. Derived from the transient
  * outcome only, so a new selection, reload or plan switch clears it.
@@ -158,6 +162,7 @@ fun PlanAdjustmentScreen(
     initialScheduleId: String? = null,
 ) {
     val state = selection.state
+    val noFit = state.isNoFit()
     val loading = state == AdjustmentState.Loading
     val busy = loading || state == AdjustmentState.Reloading
     val canSend = storage == PlanStorage.Ready
@@ -272,12 +277,12 @@ fun PlanAdjustmentScreen(
                     SecondaryButton("목록으로", onBack)
                 }
                 AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onBack)
-                AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure) {
+                AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure && !noFit) {
                     PrimaryButton("다시 시도", onRetry, enabled = canSend)
                     manualAction()
                     exportAction()
                     SecondaryButton("목록으로", onBack)
-                } else if (state == AdjustmentState.DemoNoSlot) {
+                } else if (noFit) {
                     // The same selection would give the same result; another session or a new plan can.
                     PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
                     manualAction()
@@ -360,15 +365,15 @@ fun PlanAdjustmentScreen(
                     if (removedSessions.isNotEmpty()) Note("취소선 표시는 조정 전 위치예요. 이동 위치가 보이면 눌러서 옮긴 일정으로 갈 수 있어요.")
                     if (summary != null) PlanSummary(summary)
                 }
-                state is AdjustmentState.Failure -> {
+                state is AdjustmentState.Failure && !noFit -> {
                     AlertCard("일정을 조정하지 못했어요", state.error.adjustmentMessage())
                     ErrorDetails(state.error)
                     Note("선택한 일정은 그대로예요. 다시 시도하면 같은 요청을 다시 보내요.")
                 }
-                state == AdjustmentState.DemoNoSlot -> AlertCard(
+                noFit -> AlertCard(
                     "옮길 수 있는 시간이 없어요",
-                    "시험일 전까지 이 계획의 공부 시간 중 비어 있는 곳이 없어요. 기존 계획은 그대로예요. " +
-                        "다른 일정을 고르거나, 공부 시간을 넉넉히 넣어 새 계획을 만들어 주세요. 이 계획의 공부 시간은 바뀌지 않아요.",
+                    "이 계획은 입력한 공부 시간을 모두 쓰고 있어서 시험 전까지 비어 있는 시간이 없어요. 기존 계획은 그대로예요. " +
+                        "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요.",
                 )
                 state == AdjustmentState.Reloaded -> Unit
                 else -> {

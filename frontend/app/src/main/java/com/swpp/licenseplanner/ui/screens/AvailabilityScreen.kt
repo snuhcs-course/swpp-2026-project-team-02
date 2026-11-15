@@ -155,7 +155,7 @@ fun AvailabilityScreen(
             source == WeekSource.EMPTY -> Heading("이번 주 공부 안 함", "이 주에 시작하는 공부 시간이 없어요.")
             week != null && resetWeek == week.toEpochDay() ->
                 Heading("이번 주 공부 시간", "${monthDay(week)} 주의 별도 설정을 지웠어요. 이제 기본 시간을 사용해요.")
-            else -> Heading("보통 언제 공부할 수 있나요?", "요일마다 시작 시간과 공부할 분을 정해 주세요.")
+            else -> Heading("언제, 얼마나 공부할 건가요?", "요일마다 시작 시간과 공부할 분을 정해 주세요. 캘린더 일정과 겹치는 시간을 빼고, 입력한 시간을 모두 계획에 써요.")
         }
 
         ContextHelpButton(ContextHelpTopic.AVAILABILITY)
