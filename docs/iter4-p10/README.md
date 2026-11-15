@@ -11,6 +11,12 @@
 
 ## Allocation rule
 
+> **Superseded allocation input (2026-11-15).** The model no longer chooses
+> total or daily minutes. Diagnosed plans now use every date's usable entered
+> minutes (`usable_date_minutes`) as its total, and the model's `daily_minutes`
+> are ignored. The budget formula and block placement below are unchanged. This
+> file stays as the evaluation record.
+
 The model chooses total planned minutes and daily totals from the preparation
 period, availability and self-assessment. For diagnosed requests its internal
 build call supplies only `daily_minutes` (`date`, `minutes`). Backend code owns

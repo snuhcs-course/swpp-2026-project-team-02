@@ -2,6 +2,12 @@
 
 ## Implemented change
 
+> **Superseded allocation input (2026-11-15).** The model no longer chooses
+> total or daily minutes. Diagnosed plans now use every date's usable entered
+> minutes (`usable_date_minutes`) as its total, and the model's `daily_minutes`
+> are ignored. The budget formula, ordering and smoothing below are unchanged. This
+> file stays as the design and evaluation record.
+
 V1's real-model evaluation found translated topic labels, rejected proposals and
 excessive session fragmentation. V2 changes the internal planning boundary:
 
