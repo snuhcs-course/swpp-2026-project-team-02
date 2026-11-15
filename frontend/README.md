@@ -11,6 +11,8 @@ questions → set weekday study windows (and optional per-week changes; see
 day. Adjustment: pick a plan saved on this device → mark one missed
 study session → see the updated plan, or move that session to a time you
 choose (시간 직접 옮기기). See [Plan adjustment](#plan-adjustment).
+Calendar reviews can also lead to a single-session move or a confirmed
+replacement of the selected plan. See [Calendar conflict review](#calendar-conflict-review).
 Both the new plan and a reopened saved plan let you record how each study session
 went (공부 기록하기); see [Study reports](#study-reports).
 
@@ -33,6 +35,37 @@ kept) when an item has fewer than two normal choices besides 모르겠음, a res
 `UNKNOWN` key is misused, or the total possible score is not finite, matching
 the backend's checks. Routine study check-ins using further questions are not
 implemented.
+
+## Iteration 4 source status
+
+- `feat/iteration-4-week-1` has per-day multi-window editing, weekly overrides,
+  local drafts and study reports, accepted move and save feedback, and calendar
+  conflict review, notices and per-occurrence keep decisions.
+- `fix/iter4-p8-he-issues` adds contextual help, opt-in error diagnostics,
+  generation Back confirmation, day-by-day available/assigned time, and a link
+  from an adjustment's original position to its destination. Its live planner
+  also adds complete review rounds when capacity permits.
+- `feat/p10-topic-budget` rebalances the live planner's diagnostic topic minutes
+  while retaining its proposed base workload and each date's total. Android
+  displays the returned study rows through the existing plan screen.
+- **Remaining study re-plan.** The [backend batch endpoint](../backend/FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
+  is implemented on the week-one branch. The Android flow is available for new and
+  reopened plans. Its review shows scheduled, actual and remaining minutes
+  before confirmation. Done rows contribute zero. Missed and unreported rows
+  contribute their scheduled duration. A partly completed 60-minute row with
+  20 minutes reported contributes 40 minutes. A reported positive remainder
+  gets a fresh row ID, with its prior report kept locally under the original
+  ID. Placement uses the plan's saved calendar intervals and preserves all
+  existing phone events. The UI distinguishes local save retry from
+  reloading an uncertain live outcome.
+
+The HE review rounds and P10 budgets are implemented on separate branch tips.
+Their joint allocation behavior requires an integrated candidate.
+
+[Iteration 4 Figma screens](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3690)
+cover drafts, availability, study reports and HE behavior. See also
+[calendar review states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3850)
+and the [planned remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3984).
 
 ## Build and run
 
@@ -100,13 +133,26 @@ changed; CI starts from a fresh checkout, so its tests always run.
 
 `app/src/androidTestDemo/.../ui/MainFlowUiTest.kt` mounts the real navigation,
 screens and ViewModel in a standard Compose test activity, using production demo
-repositories and the AtomicFile store in a fresh test-owned directory. Sixteen cases cover:
+repositories, a test-owned AtomicFile store, and injected calendar readers and
+writers. Coverage includes:
 
 - Home-bound save/discard/stay for visible and system Back; untouched defaults,
   delayed/failed saves and local retry, failed discard and explicit replacement.
 - Same-question resume without refetching, an earlier edit moving the checkpoint,
   a replaced availability week with several windows per day and busy rows, and atomic
-  plan completion removing the draft. Fresh injected state is not process death.
+  plan completion removing the draft. Fresh injected state exercises restoration.
+- Multiple windows per day, reordering and removal, and cancelling a window edit
+  before changing between the recurring schedule and a one-week override.
+- Calendar review before generation, disposal of late reads after cancellation,
+  changed observations before dispatch, and fallback to previously imported busy
+  rows when a fresh read fails.
+- Export conflict review and final copy confirmation, plan replacement with local
+  save retry, and preservation of other plans and a separately saved draft.
+- Foreground conflict notices, persistence of a keep decision across reopen, a
+  new warning when the occurrence or study time changes, and separate consent for
+  outside-window and external-calendar overlap on a manual move.
+- New study reports gated until the scheduled device date, and report controls
+  reachable under long topic text or while the keyboard is open.
 
 - Creation through all 18 loaded questions, unknown-answer scores, authored-example
   disclosure, weekday minutes entry, written/demo plan rows, week bounds and home count.
@@ -139,8 +185,9 @@ repositories and the AtomicFile store in a fresh test-owned directory. Sixteen c
   old rows on disk, then 이 기기에 저장했어요 after a local retry with one adjustment
   and no further request.
 
-No backend, model, calendar permissions, account or events are needed. Fixed input
-dates, manual-move clock and host locale/timezone make the cases repeatable. Each test removes only
+The host grants calendar permission on the disposable emulator and supplies
+synthetic read and write outcomes. It needs no backend, model, calendar account
+or real events. Fixed dates, clocks, locale and timezone make cases repeatable. Each test removes only
 its own plan directory after disposing navigation and clearing its ViewModel owner.
 This injected host bypasses `MainActivity.Factory`; it does not verify production
 activity wiring, process death, live Compose behavior or physical-device behavior.
@@ -186,6 +233,20 @@ suite on the same API 35 emulator, attempts both despite assertion failures, and
 fails if either fails. Its always-run evidence upload preserves separate reports,
 explicitly pulled UI diagnostics and fixture logs for seven days. A local pass
 does not establish a hosted run; hosted execution remains unverified until observed.
+
+On the HE branch, `WorkflowRecoveryUiTest` mounts the corresponding Compose
+screens with fixed state. It covers opening and dismissing contextual help,
+staying on or cancelling generation after Back, opting into the original
+error diagnostic and retrying, refreshing the daily chart when the week changes,
+and following a moved session from its source week to its destination. The live
+HTTP cancellation contract and backend review-round policy have their own tests.
+
+When the Android remaining-work flow is available, extend the full navigation
+suite with a 0/40/60/60-minute review, cancel and confirm, and a second re-plan
+that does not subtract the first report again. Check that completed rows,
+another saved plan and a creation draft survive the update and a fresh restore.
+Cover no-fit and zero-work outcomes, one confirmed request, and a failed local
+save followed by a retry without another request or calendar write.
 
 ### Live instrumentation test
 
@@ -889,9 +950,9 @@ write's matching feedback. A replacement candidate stays unpublished until the
 atomic save succeeds. Failure keeps the earlier plan/reports visible and on disk,
 and local retry writes the same candidate with zero planning/calendar calls.
 After any earlier save retry succeeds, regeneration requires explicit re-entry.
-A failed adjustment preflight sent no adjustment. Its local retry still writes the
-captured reload-marker envelope. The shown plan therefore retains the reload gate
-until an explicit reload, matching what a restart would restore.
+A failed adjustment preflight sends no adjustment. Its local retry writes the
+previously committed snapshot and leaves the plan ready for a new explicit
+submission.
 
 Export checks all selected-plan current study sessions across every week after
 calendar selection. Conflicts offer 겹치지 않게 다시 만들기, 하나씩 확인 and
@@ -1268,6 +1329,73 @@ blocking and device-local limits. Reports do not change the schedule, are not
 sent to the server or the calendar, and do not estimate mastery; there is no
 skip (이미 아는 내용이에요) action and no history of earlier reports.
 
+## Remaining study re-planning
+
+Generated and reopened plans offer **남은 공부 다시 계획하기** independently
+of single-session movement and reporting. Its scrollable review identifies the
+selected plan, each current study row's status and planned/actual/remaining
+minutes, and the total. Cancel writes nothing. A zero total shows
+다시 배치할 남은 공부가 없어요 with no request or save. Explicit confirmation
+(**남은 공부 다시 배치하기**) submits exactly one batch. The result lists the
+accepted session count/minutes and complete dated times; 계획 보기 opens the first
+affected week. A first-fit failure preserves the original plan and says the
+current placement rules could not fit the whole batch.
+
+The live request uses `POST /schedules/adjust` with `mode: remaining`,
+`schedule_csv_file`, the complete `schedules`, original `weekly_availability`,
+`availability_overrides`, `preparation_start`, `exam_date`, captured `replan_from`,
+and derived `remaining_sessions` only. Instructions contain `schedule_id`,
+`remaining_minutes` and `replacement_schedule_id`. Single-target/manual fields
+(`schedule_id`, `new_start_date`, `confirm_outside_availability`,
+`confirm_external_overlap`) are absent at the top level. Reports, keep digests,
+calendar occurrence keys and local ordinals remain local. The batch is deterministic
+and makes zero provider requests. An unsupported server shows update guidance
+without falling back to generation or another adjustment mode.
+
+Review, dispatch and saving hold the selected source against competing mutations,
+calendar/manual reviews, exports, report/draft edits and plan switching. Existing
+unsaved work anywhere in the collection must be resolved first, including a closed
+report or keep card. Foreground calendar notice reads wait until review/request
+releases its source. The remaining-work operation itself reads no calendar and
+writes no phone events; it uses retained external rows. Existing foreground notice
+checks and a later explicit calendar export remain separate operations.
+
+Before a live POST the complete v5 collection, all reports/keeps and the independent
+saved creation draft are saved with a generic reload-required marker. A failed
+pre-save sends nothing; local recovery restores the previous committed snapshot
+and requires a fresh review. Lost/malformed responses, conflicts and server/storage
+failures require explicit selected-plan reload, with no mutation replay after
+restart. Accepted rows show saving, saved, or unsaved accurately; **다시 저장하기**
+retries only that captured local snapshot and settles only its matching result.
+Existing v1–v5 collections still load without rewriting; explicit saves use v5.
+Replaced partly/missed source reports remain stored under their old IDs and leave
+the current schedule. The fresh remainder starts unreported. Calendar copies need
+the existing separate export flow and are never synchronized by this action.
+
+## Remaining study calculation
+
+Remaining work uses each current study row's scheduled whole minutes: done → 0,
+missed or unreported → the full duration, partly → max(planned − actual, 0).
+A done/20, partly/20, missed/0 and unreported set of four 60-minute rows contributes
+0 + 40 + 60 + 60 = 160 minutes. Partial effort at or above the planned time
+contributes zero without changing the report. Overdue, in-progress and future
+unreported rows all contribute their full duration; external rows and reports for
+absent rows contribute nothing.
+
+Unreported rows retain their IDs. Positive reported remainders receive fresh IDs
+above current study rows and all historical report and calendar acknowledgment
+keys. Reports and acknowledgment maps stay under their original IDs; new rows
+start unreported. Re-planning an unreported remainder uses its current duration,
+so previous actual minutes are not subtracted again. Unsupported durations or
+exhausted numeric IDs are refused visibly.
+
+The local demo batch places complete sessions in source start/end/numeric-ID
+order from the next minute, within the original preparation/exam bounds and
+effective study windows, including overnight carry-in and whole-week overrides.
+It avoids retained study/external rows and preserves existing protected overlaps.
+A failure to fit any whole session rejects the complete batch. This deterministic
+operation has no network, model or calendar dependency.
+
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
@@ -1289,8 +1417,8 @@ skip (이미 아는 내용이에요) action and no history of earlier reports.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
   failure with retry, not as a storage problem. Retrying cannot succeed until the
   saved plan file on the server is repaired; the plan stays viewable and unchanged.
-- Form state is held in memory and is lost if the process is killed. The
-  generated-plan list is saved on this device only (no sync or server import).
+- Unsaved form edits are held in memory. An explicitly saved creation draft and
+  the generated-plan list can be reopened on the same device.
 - Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
 - Demo session counts follow the fixed demonstration rule in
   [Flavors](#flavors) (32 sessions for all 모르겠음 at beginner level,

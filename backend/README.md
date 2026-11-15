@@ -142,9 +142,22 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 
 The first two commands do not call a model. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `scenarios/results/license_planner_availability/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes real OpenRouter `openai/gpt-6-luna` requests, requires `OPENROUTER_API_KEY`, network access, and available credit, and records the HTTP result, tool calls, generated schedule, and an `inference` record (the `selected_model` the case's agent actually requested, or `null` when the case made no model request; model request count; elapsed seconds; and per-response token/cost usage with the provider-returned model, `null` when the provider does not return it) under `scenarios/results/license_planner/`. Omit `--case-id` to run all live scenarios. Add offline availability cases under `scenarios/inputs/license_planner_availability/`.
 
+The Iteration 4 HE branch adds whole review rounds. Each round repeats the
+accepted primary topic-minute mix, and any capacity left after the last complete
+round stays spare. The topic-budget branch instead rebalances the proposed
+diagnostic workload across topics. It reserves one minute per assessed topic,
+then apportions the rest by `2 - score_percent/100` using largest remainders.
+It preserves the proposed base total and every date's total, gives weaker
+topics at least as many minutes as stronger topics, and verifies the placed
+totals. These branches have separate planner implementations.
+
 ## Schedule Adjuster
 
-The Schedule Adjuster requires a target ID (`study-N` or `external-N`) and an input schedule CSV. It moves study intervals after the old end while preserving interval length, topic, and other rows. When `config/user_availability.json` exists, the new study interval must also fit inside one of the user's effective study windows (recurring week or week override, including windows that cross midnight). Over HTTP, a saved plan uses its retained availability context first, and `mode: "manual"` moves a session to a chosen time without a model call; see `FRONTEND_INTEGRATION_GUIDE.md`. Cancelled external rows are removed while other rows remain unchanged.
+The Schedule Adjuster CLI requires a target ID (`study-N` or `external-N`) and an input schedule CSV. It moves study intervals after the old end while preserving interval length, topic, and other rows. When `config/user_availability.json` exists, the new study interval must also fit inside one of the user's effective study windows (recurring week or week override, including windows that cross midnight). Over HTTP, a saved plan uses its retained availability context first, and `mode: "manual"` moves a session to a chosen time without a model call; see `FRONTEND_INTEGRATION_GUIDE.md`. Cancelled external rows are removed while other rows remain unchanged. The
+week-one backend also accepts a [remaining-work batch](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
+for a saved plan. It places each positive remaining workload as one whole session
+using retained availability and busy rows and writes the batch only if all
+sessions fit.
 
 ```powershell
 python -m schedule_adjuster.cli --schedule-id study-201 `

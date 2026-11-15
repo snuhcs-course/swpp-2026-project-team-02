@@ -479,7 +479,8 @@ no rollback or exactly-once guarantee: reload before choosing again.
 
 `"mode": "remaining"` places the remaining minutes of several study rows of a
 saved plan in one deterministic batch, without any model request and without
-reading or writing the shared availability profile. Every field below is
+reading or writing the shared availability profile. This is available in the
+week-one backend. The Android review and result flow is planned. Every field below is
 required and must not be null:
 
 | Field | Meaning |
@@ -492,7 +493,7 @@ required and must not be null:
 | `remaining_sessions` | Non-empty array of `{"schedule_id", "remaining_minutes", "replacement_schedule_id"}` objects with exactly those keys |
 
 `schedule_id`, `new_start_date` and `confirm_outside_availability` must be
-absent. Each instruction names a distinct `study-N` source row.
+absent, along with the manual-only `confirm_external_overlap` field. Each instruction names a distinct `study-N` source row.
 `remaining_minutes` is a JSON integer from 1 to the source row's scheduled
 minutes (booleans and decimals such as `60.0` are rejected). A
 `replacement_schedule_id` equal to its source keeps the ID and needs the full

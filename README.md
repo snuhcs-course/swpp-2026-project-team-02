@@ -39,7 +39,8 @@ python api_server.py
 ```
 
 The API defaults to `http://127.0.0.1:8000/api/v1`. Study-plan generation and
-schedule adjustment call OpenRouter model `openai/gpt-6-luna`; configure
+automatic schedule adjustment call OpenRouter model `openai/gpt-6-luna`.
+Manual moves and the remaining-work batch use deterministic server placement. Configure
 `OPENROUTER_API_KEY` in the backend process environment or `backend/.env`. Never
 put API keys in frontend files. `.env` files and local
 availability profiles are excluded from Git.
@@ -53,7 +54,13 @@ backend at `http://10.0.2.2:8000/api/v1` from the Android Emulator. The backend
 provides the question-bank and locally-scored assessment API contract used by
 the app.
 
-Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
+The app supports multiple daily study windows, per-week changes, device-local
+creation drafts and study reports, and viewing or moving saved study sessions.
+It can read calendar conflicts and copy study sessions to a chosen device
+calendar. Build and verification instructions are in
+[`frontend/README.md`](frontend/README.md#checks). The
+[Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)
+track the separate HE and topic-budget branches and the remaining-work rollout.
 
 ## Continuous integration
 
@@ -101,20 +108,18 @@ revision or configuration the server is running.
   version-neutral, without newer-cycle remapping), the section rename for IDs
   9–12, the remapping of ID 10, and missing AI basics, AI ethics and ICT
   convergence items. From 2027-01-01 the bank is behind the current syllabus
-  until that update lands. Deeper coverage, routine check-ins, practical
-  workbook tasks and timed mock exams remain later decisions. See
+  until that update lands. Deeper coverage, follow-up assessment questions,
+  practical workbook tasks and timed mock exams remain later decisions. See
   [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
-- **How much available time a plan uses:** the live planner chooses how much of
-  the entered study time to schedule and on which days; recent evaluation runs
-  used a median of about 60%, and the chosen days can shift from week to week.
-  A heuristic evaluator expected the plan to use more of the entered time. The
-  unused time is also where adjustment moves missed sessions. Decided on
-  2026-11-14 to keep the current behavior until user testing shows whether
-  learners mean their entered time as a limit or a target, and whether they
-  prefer short daily sessions or longer sessions on fewer days.
+- **How much available time a plan uses:** the week-one branch uses the model's
+  proposed workload and date totals, leaving spare time available for adjustments.
+  An earlier evaluation observed about 60% median use. The HE branch adds complete
+  review rounds when they fit. User testing still needs to establish whether
+  learners mean the entered time as a limit or a target and how they prefer to
+  distribute work across weekdays.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
 - **Deployment:** authentication, per-user storage and plan retention remain
