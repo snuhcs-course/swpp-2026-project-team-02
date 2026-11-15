@@ -187,7 +187,6 @@ object DemoPlanner {
 /** Demo-flavor planning: local, labeled, never a backend or AI result. */
 class DemoPlanningRepository : PlanningRepository {
     override suspend fun generate(request: StudyPlanRequest): PlanOutcome {
-        DemoFailureInjector.take(DemoRequestOperation.GENERATION)?.let { return PlanOutcome.Failure(it) }
         return when (val result = DemoPlanner.plan(request)) {
             is DemoResult.Plan -> PlanOutcome.Success(result.response, isDemo = true)
             is DemoResult.Shortfall -> PlanOutcome.DemoShortfall(result.required, result.available)

@@ -381,7 +381,11 @@ private fun SessionRow(
             Text(PlanGrouping.formatDuration(session.durationMinutes), style = MaterialTheme.typography.bodySmall, color = if (removed) InkSecondary else Ink)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(sessionTime(session), style = MonoStyles.number, color = if (removed) InkSecondary else InkBody)
+            Text(
+                sessionTime(session),
+                style = MonoStyles.number.copy(textDecoration = if (removed) TextDecoration.LineThrough else TextDecoration.None),
+                color = if (removed) InkSecondary else InkBody,
+            )
             if (session.isExternal) Tag("기존 일정")
             if (moved) Tag(MOVED_TAG)
             if (removed) Tag("조정 전 위치 · 임시")

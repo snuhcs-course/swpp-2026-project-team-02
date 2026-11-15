@@ -306,8 +306,8 @@ fun PlanAdjustmentScreen(
                 state is AdjustmentState.Success -> {
                     MutedBox {
                         Text("계획이 조정됐어요", style = MaterialTheme.typography.titleSmall, color = Ink)
-                        Note("옮긴 일정이 있는 주를 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
-                        if (removedSessions.isNotEmpty()) Note("취소선 표시는 조정 전 위치예요. 이동 위치도 함께 표시해요.")
+                        Note("보던 주를 그대로 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
+                        if (removedSessions.isNotEmpty()) Note("취소선 표시는 조정 전 위치예요. 이동 위치가 보이면 눌러서 옮긴 일정으로 갈 수 있어요.")
                     }
                     if (summary != null) PlanSummary(summary)
                 }

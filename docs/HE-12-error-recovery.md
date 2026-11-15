@@ -12,19 +12,13 @@ Error screens for question loading, plan creation, and schedule adjustment inclu
 
 The existing error mapping keeps connection failures (`IOException` and timeouts), HTTP 5xx failures, unavailable-server responses, invalid input, and API configuration errors in separate categories. Generation and adjustment failure screens retain the entered request/selection and offer retry; retry uses the same captured request. Adjustment outcomes that may have reached the server require reloading the latest plan instead of blindly resending the mutation.
 
-## Demo-flavor manual test
+## Error recovery checks
 
-The Demo build includes a one-shot fault injector so the real user flow can display the HE-12 error screens without contacting the API. The Live flavor does not expose the launcher and its injector method is a no-op.
-
-1. Build and install `demoDebug`, then open **HE-12 오류 화면 확인** from the home screen.
-2. Choose a screen situation and an error cause, then tap the bottom button to arm that one request and enter the normal app flow.
-3. For **문항 불러오기**, continue through certification, dates, and level until the example-question request fails.
-4. For **계획 생성**, complete the assessment and availability inputs, then create a plan; the generation request fails once.
-5. For **계획 조정**, choose an existing Demo plan, select a study session, and adjust it. Create a Demo plan first if the list is empty.
-6. For **최신 계획 다시 불러오기**, select a Demo plan and adjust a session. The simulator first returns an uncertain adjustment failure; tap the latest-plan reload action to display the selected reload failure.
-7. On each real error screen, check the user-facing recovery text, expand **세부 메시지 보기**, and confirm the synthetic HTTP/exception diagnostic appears. Retry on the question and generation screens to confirm the one-shot error is consumed and the local Demo action can proceed.
-
-The simulator uses synthetic diagnostics such as `api.example.invalid` and never sends a request. Plan creation and adjustment after the injected failure still use normal local Demo behavior and can update the Demo plan stored on the device.
+`ErrorMessagesTest`, the live repository tests and the view-model tests cover the
+error-cause mapping and retained diagnostics used by **세부 메시지 보기**. To
+reproduce a connection failure on an emulator, point a live debug build at an
+unreachable API URL, follow the normal question-loading flow, and open the
+disclosure on the resulting error screen.
 
 ## Completion checks
 
