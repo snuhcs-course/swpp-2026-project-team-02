@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
 from .scheduler import available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date
 from .settings import DATETIME_FORMAT
-from .topic_budget import POLICY_VERSION, rebalance_topic_minutes, validate_topic_budget
+from .topic_budget import POLICY_VERSION, PLACEMENT_POLICY_VERSION, rebalance_topic_minutes, validate_topic_budget
 
 
 def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool) -> None:
@@ -179,8 +180,9 @@ class PlannerTools:
                      "problem_count": item.problem_count}
                     for item in self.topic_statistics]}
 
-    def build_study_schedule(self, daily_topic_minutes: list[dict[str, Any]]) -> dict[str, Any] | str:
-        """입력 값: Agent가 정한 날짜·주제별 학습 시간(분)
+    def build_study_schedule(self, daily_topic_minutes: list[dict[str, Any]] | None = None,
+                             daily_minutes: list[dict[str, Any]] | None = None) -> dict[str, Any] | str:
+        """입력 값: Agent가 정한 날짜별 학습 시간(분), 또는 레거시 날짜·주제별 입력
         출력 값: 공부 일정 목록 또는 일정 생성 오류 메시지
         기능: 제안 학습 시간을 검증하고 가용 시간 안에 배치합니다.
         """
@@ -189,6 +191,31 @@ class PlannerTools:
         self._check_required_capacity()
         try:
             cert = get_certification(self.request.certification_id)
+            if daily_minutes is not None:
+                if daily_topic_minutes is not None:
+                    raise ValueError("provide daily_minutes or legacy daily_topic_minutes, not both")
+                if not self.topic_statistics:
+                    raise ValueError("daily_minutes requires diagnosed topic statistics; analyze results first")
+                if not isinstance(daily_minutes, list) or not daily_minutes:
+                    raise ValueError("daily_minutes must be a non-empty array")
+                workload = []
+                for item in daily_minutes:
+                    if not isinstance(item, dict) or set(item) != {"date", "minutes"}:
+                        raise ValueError("each daily_minutes item must contain only date and minutes")
+                    raw_date, minutes = item["date"], item["minutes"]
+                    if not isinstance(raw_date, str):
+                        raise ValueError("daily_minutes date must use YYYY/MM/DD")
+                    parsed = datetime.strptime(raw_date, "%Y/%m/%d")
+                    if parsed.strftime("%Y/%m/%d") != raw_date:
+                        raise ValueError("daily_minutes date must use YYYY/MM/DD")
+                    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
+                        raise ValueError("daily_minutes minutes must be a positive integer")
+                    workload.append({"date": raw_date, "minutes": minutes})
+                normalized_plan, topic_budget = rebalance_topic_minutes(self.topic_statistics, workload)
+                schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan,
+                                             preserve_topic_order=True)
+                total = sum(row["minutes"] for row in workload)
+                return self._accept_schedule(schedule, normalized_plan, topic_budget, total)
             if not isinstance(daily_topic_minutes, list) or not daily_topic_minutes:
                 raise ValueError("daily_topic_minutes must be a non-empty array")
             normalized_plan: list[dict[str, Any]] = []
@@ -215,22 +242,28 @@ class PlannerTools:
             topic_budget = None
             if self.topic_statistics:
                 normalized_plan, topic_budget = rebalance_topic_minutes(self.topic_statistics, normalized_plan)
-                schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan)
-                actual = {topic: 0 for topic in topic_budget}
-                for block in schedule:
-                    actual[block.topic] += int((block.end_datetime - block.start_datetime).total_seconds() // 60)
-                validate_topic_budget(self.topic_statistics, actual, sum(minutes_by_topic.values()))
-                if actual != topic_budget:
-                    raise ValueError("placed study minutes differ from the calculated topic budget")
-            self.schedule = schedule
+                schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan,
+                                             preserve_topic_order=True)
+            return self._accept_schedule(schedule, normalized_plan, topic_budget, sum(minutes_by_topic.values()))
         except ValueError as error:
             return f"SCHEDULE_ERROR: {error}"
+
+    def _accept_schedule(self, schedule, normalized_plan, topic_budget, total_minutes):
+        if topic_budget is not None:
+            actual = {topic: 0 for topic in topic_budget}
+            for block in schedule:
+                actual[block.topic] += int((block.end_datetime - block.start_datetime).total_seconds() // 60)
+            validate_topic_budget(self.topic_statistics, actual, total_minutes)
+            if actual != topic_budget:
+                raise ValueError("placed study minutes differ from the calculated topic budget")
+        self.schedule = schedule
         return {"study_block_count": len(self.schedule),
-                "total_planned_minutes": sum(minutes_by_topic.values()),
+                "total_planned_minutes": total_minutes,
                 "usable_minutes": available_minutes(self.request),
                 "daily_topic_minutes": normalized_plan,
                 "topic_budget": topic_budget,
                 "topic_budget_policy": POLICY_VERSION if topic_budget is not None else None,
+                "topic_placement_policy": PLACEMENT_POLICY_VERSION if topic_budget is not None else None,
                 "uses_personal_availability": self.request.weekly_availability is not None,
                 "schedule": [
                     {"schedule_id": b.schedule_id, "topic": b.topic,
@@ -281,7 +314,7 @@ class PlannerTools:
 
 
 def tool_schemas(certification_id: str | None = None, build_topics: list[str] | None = None,
-                 build_dates: list[str] | None = None) -> list[dict[str, Any]]:
+                 build_dates: list[str] | None = None, *, workload_only: bool = False) -> list[dict[str, Any]]:
     """입력 값: 선택적 자격증 ID, 일정 생성에 허용할 토픽 목록과 날짜 목록
     출력 값: 모델 함수 호출 형식의 도구 스키마 목록
     기능: 선택 가능한 인자와 허용된 자격증 ID·토픽·날짜를 모델에 공개합니다.
@@ -293,7 +326,7 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
     # 모델 안내용 제한이며 실제 제안은 build_study_schedule이 다시 검증합니다.
     build_date = {"type": "string", **({"enum": list(build_dates)} if build_dates else {})}
     build_topic = {"type": "string", **({"enum": list(build_topics)} if build_topics else {})}
-    return [
+    schemas = [
         {"name": "get_certification_profile", "description": "Look up the official local plan template for one supported certification.",
          "parameters": {"type": "object", "properties": {"certification_id": {"type": "string", "enum": sorted(CERTIFICATIONS)}}, "required": ["certification_id"]}},
         {"name": "analyze_exam_results", "description": "Questions listed in assessment_results are unresolved: examine each question, correct answer, user answer, and validated local correctness. Map every unresolved question, and no other question, to one or more of this certification's fixed topics with contribution weights that sum to 1 per question (for example 0.7 and 0.3 when two topics are needed). Questions counted in reviewed_question_count already have fixed topics; never include their IDs. When no question is unresolved, omit problem_topics. Do not infer an answer or correctness. The tool combines reviewed and mapped results into weighted earned/possible points per topic.",
@@ -301,4 +334,23 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
         {"name": "build_study_schedule", "description": "Choose dates and total study minutes for every assessed topic using exam date, preparation start, the user's free-form self-assessment, per-topic score statistics, weekly availability, and busy schedules. Do not classify users into fixed readiness levels or apply level multipliers. Assign time directly from these signals, giving weaker topics more time. Balance workload across equivalent available dates; for example, put about 60 minutes on each of two equivalent dates for a 120-minute workload, rather than all 120 on one date. Do not apply a fixed session length or daily session-count cap. Return date as YYYY/MM/DD and positive integer minutes. Use only the listed topic names and dates, include every required topic named in the analysis result, and keep each date within its usable minutes. The application validates the proposal, preserves total minutes and each date's total, then rebalances diagnosed topics using weight 2 - score_percent/100 after reserving one minute per topic. The returned topic_budget and daily_topic_minutes describe actual allocations; summarize those returned values. It places this workload within the user's available time. Call analyze_exam_results first.",
          "parameters": {"type": "object", "properties": {"daily_topic_minutes": {"type": "array", "items": {"type": "object", "properties": {"date": build_date, "topic": build_topic, "minutes": {"type": "integer"}}, "required": ["date", "topic", "minutes"]}}}, "required": ["daily_topic_minutes"]}},
     ]
+    if workload_only:
+        schemas[-1] = {
+            "name": "build_study_schedule",
+            "description": (
+                "After analyze_exam_results, choose total study workload and daily totals using diagnosis, "
+                "self-assessment, preparation period and actual available minutes. Return only dates and "
+                "positive integer minutes in daily_minutes. Do not return, translate or calculate topic names "
+                "or per-topic allocations; the backend computes and places every diagnosed topic. "
+                "Use only listed dates and keep each date at or below usable_minutes_by_date, which already "
+                "accounts for busy events, overrides and midnight clipping. Cover at least the minimum total "
+                "minutes stated in build_requirements. Balance equivalent dates where practical; do not "
+                "invent readiness levels or impose a fixed session length. Do not request more time than "
+                "needed merely to fill capacity."),
+            "parameters": {"type": "object", "properties": {
+                "daily_minutes": {"type": "array", "minItems": 1, "items": {
+                    "type": "object", "properties": {"date": build_date, "minutes": {"type": "integer", "minimum": 1}},
+                    "required": ["date", "minutes"], "additionalProperties": False}}},
+                "required": ["daily_minutes"], "additionalProperties": False}}
+    return schemas
 

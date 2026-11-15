@@ -89,7 +89,7 @@ def available_minutes(request: PlanRequest) -> int:
 
 def generate_schedule(request: PlanRequest, cert: Certification,
                       topic_statistics: tuple[TopicStatistics, ...],
-                      daily_topic_minutes: list[dict]) -> list[StudyBlock]:
+                      daily_topic_minutes: list[dict], *, preserve_topic_order: bool = False) -> list[StudyBlock]:
     """Place Agent-proposed topic minutes on chosen dates within user windows.
 
     The Agent chooses the study dates and flexible durations. This function
@@ -148,11 +148,12 @@ def generate_schedule(request: PlanRequest, cert: Certification,
 
     for day in sorted(planned_by_day):
         remaining_by_topic = dict(planned_by_day[day])
+        day_order = list(remaining_by_topic) if preserve_topic_order else topic_order
         for segment_start, segment_end in free_by_day[day]:
             cursor = segment_start
             segment_minutes = _segment_minutes(segment_start, segment_end)
             while cursor < segment_end and segment_minutes > 0:
-                topic = next((name for name in topic_order if remaining_by_topic.get(name, 0) > 0), None)
+                topic = next((name for name in day_order if remaining_by_topic.get(name, 0) > 0), None)
                 if topic is None:
                     break
                 remaining_segment = _segment_minutes(cursor, segment_end)

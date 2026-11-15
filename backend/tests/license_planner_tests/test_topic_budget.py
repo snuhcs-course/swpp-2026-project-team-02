@@ -2,6 +2,8 @@
 import copy
 from collections import defaultdict
 from datetime import datetime
+from dataclasses import replace
+from itertools import permutations, groupby
 import random
 import unittest
 
@@ -76,6 +78,64 @@ class TopicBudgetTests(unittest.TestCase):
         self.assertEqual(proposal, before)
         self.assertEqual(rebalance_topic_minutes(statistics(0, 50, 100), proposal), (rows, budget))
 
+    def test_contiguous_blocks_match_small_exhaustive_oracle(self):
+        workloads = [{"date": f"2026/11/{day:02d}", "minutes": 61} for day in (9, 10, 11)]
+        rows, budget = rebalance_topic_minutes(statistics(0, 50, 100), workloads)
+        candidates = []
+        for order in permutations(budget):
+            timeline = [topic for topic in order for _ in range(budget[topic])]
+            lengths = [len(list(group)) for start in (0, 61, 122)
+                       for _, group in groupby(timeline[start:start + 61])]
+            candidates.append((sum(length < 15 for length in lengths), len(lengths)))
+        actual = (sum(row["minutes"] < 15 for row in rows), len(rows))
+        self.assertLessEqual(actual, min(candidates))
+        self.assertLessEqual(len(rows), 5)
+        self.assertTrue(all(row["minutes"] >= 15 for row in rows))
+
+    def test_tiny_windows_are_not_rejected_by_the_soft_target(self):
+        rows, budget = rebalance_topic_minutes(statistics(0, 100), [
+            {"date": "2026/11/09", "minutes": 2}, {"date": "2026/11/10", "minutes": 2}])
+        self.assertEqual(sum(row["minutes"] for row in rows), 4)
+        self.assertEqual(sum(budget.values()), 4)
+        self.assertTrue(all(row["minutes"] > 0 for row in rows))
+
+    def test_boundary_smoothing_preserves_both_margins_for_typical_daily_loads(self):
+        workloads = [{"date": f"2026/11/{day:02d}", "minutes": 60} for day in range(9, 21)]
+        rows, budget = rebalance_topic_minutes(statistics(0, 50, 100, 100, 100, 100, 100, 100), workloads)
+        daily, totals = defaultdict(int), defaultdict(int)
+        for row in rows:
+            daily[row["date"]] += row["minutes"]
+            totals[row["topic"]] += row["minutes"]
+        self.assertEqual(daily, {row["date"]: row["minutes"] for row in workloads})
+        self.assertEqual(totals, budget)
+        self.assertLessEqual(sum(row["minutes"] < 15 for row in rows)/len(rows), 0.1)
+
+    def test_large_catalog_has_bounded_deterministic_fallback(self):
+        rows, budget = rebalance_topic_minutes(statistics(*range(11)), [
+            {"date": "2026/11/09", "minutes": 90}, {"date": "2026/11/10", "minutes": 90}])
+        self.assertEqual(sum(budget.values()), 180)
+        self.assertLessEqual(len(rows), 12)
+
+    def test_varied_workloads_preserve_both_margins_and_stable_order(self):
+        rng = random.Random(29)
+        for trial in range(60):
+            stats = statistics(*(rng.choice((0, 25, 50, 100)) for _ in range(rng.randint(2, 11))))
+            workloads = [{"date": f"2026/11/{day:02d}", "minutes": rng.randint(1, 150)}
+                         for day in range(1, rng.randint(3, 20))]
+            if sum(row["minutes"] for row in workloads) < len(stats):
+                workloads[0]["minutes"] += len(stats)
+            with self.subTest(trial=trial):
+                rows, budget = rebalance_topic_minutes(stats, workloads)
+                daily, totals = defaultdict(int), defaultdict(int)
+                for row in rows:
+                    self.assertGreater(row["minutes"], 0)
+                    daily[row["date"]] += row["minutes"]
+                    totals[row["topic"]] += row["minutes"]
+                self.assertEqual(daily, {row["date"]: row["minutes"] for row in workloads})
+                self.assertEqual(totals, budget)
+                self.assertEqual(rebalance_topic_minutes(tuple(reversed(stats)), list(reversed(workloads))),
+                                 (rows, budget))
+
 
 class TopicBudgetPlacementTests(unittest.TestCase):
     def make_tools(self, availability=None):
@@ -133,6 +193,46 @@ class TopicBudgetPlacementTests(unittest.TestCase):
         self.assertEqual(result["total_planned_minutes"], 120)
         self.assertTrue(all(datetime(2026, 11, 9, 23) <= row.start_datetime < row.end_datetime <= datetime(2026, 11, 10, 1)
                             for row in tools.schedule))
+
+    def test_date_only_workloads_match_legacy_totals_without_topic_names(self):
+        old = self.make_tools().build_study_schedule(self.proposal())
+        tools = self.make_tools()
+        new = tools.build_study_schedule(daily_minutes=[
+            {"date": "2026/11/09", "minutes": 90}, {"date": "2026/11/10", "minutes": 90}])
+        self.assertEqual(new["topic_budget"], old["topic_budget"])
+        self.assertEqual(new["schedule"], old["schedule"])
+        self.assertEqual(new["topic_placement_policy"], "contiguous-topic-blocks-v2")
+        self.assertEqual(len(tools.schedule), 4)
+
+    def test_date_only_workloads_validate_capacity_dates_types_and_extra_fields(self):
+        invalid = [[], [None], [{"date": "2026/11/09", "minutes": True}],
+                   [{"date": "2026/11/09", "minutes": 1.5}],
+                   [{"date": "2026/11/9", "minutes": 90}],
+                   [{"date": "2026/11/08", "minutes": 90}],
+                   [{"date": "2026/11/09", "minutes": 121}],
+                   [{"date": "2026/11/09", "minutes": 2}],
+                   [{"date": "2026/11/09", "minutes": 90, "topic": "translated name"}]]
+        for rows in invalid:
+            tools = self.make_tools()
+            with self.subTest(rows=rows):
+                self.assertIsInstance(tools.build_study_schedule(daily_minutes=rows), str)
+                self.assertIsNone(tools.schedule)
+
+    def test_duplicate_dates_cannot_bypass_capacity_and_modes_are_exclusive(self):
+        tools = self.make_tools()
+        self.assertIsInstance(tools.build_study_schedule(daily_minutes=[
+            {"date": "2026/11/09", "minutes": 70}, {"date": "2026/11/09", "minutes": 70}]), str)
+        self.assertIsInstance(tools.build_study_schedule(self.proposal(), daily_minutes=[
+            {"date": "2026/11/09", "minutes": 90}]), str)
+        self.assertIsNone(tools.schedule)
+
+    def test_date_only_does_not_invent_diagnostic_scores(self):
+        request = replace(self.make_tools().request, problem_results=())
+        tools = PlannerTools(request)
+        tools.analyze_exam_results()
+        self.assertIsInstance(tools.build_study_schedule(daily_minutes=[
+            {"date": "2026/11/09", "minutes": 90}]), str)
+        self.assertIsNone(tools.schedule)
 
 
 if __name__ == "__main__":

@@ -7,12 +7,73 @@ their topic labels using reviewed/validated diagnostic statistics.
 from __future__ import annotations
 
 from collections import defaultdict
+from bisect import bisect_right
 from fractions import Fraction
+from functools import lru_cache
+from itertools import accumulate
 import math
 
 from .models import TopicStatistics
 
 POLICY_VERSION = "diagnostic-linear-v1"
+PLACEMENT_POLICY_VERSION = "contiguous-topic-blocks-v2"
+SHORT_BLOCK_TARGET = 15  # Soft cost only, never a minimum allowed duration.
+EXACT_ORDER_LIMIT = 10  # Bound exponential work for arbitrary internal catalogs.
+REPAIR_STEP_LIMIT = 32
+
+
+def _smooth_boundaries(rows, topics):
+    """Bounded 2x2 minute exchanges; preserve both daily totals and topic budgets.
+
+    Only accept a strict improvement in (short chunks, chunk count). No minimum
+    length is imposed: unavoidable small budgets/windows remain valid.
+    """
+    days = {}
+    for row in rows:
+        days.setdefault(row["date"], {})[row["topic"]] = row["minutes"]
+    dates = list(days)
+    rank = {topic: i for i, topic in enumerate(topics)}
+
+    def cost(values):
+        return sum(0 < x < SHORT_BLOCK_TARGET for x in values), sum(x > 0 for x in values)
+
+    for _ in range(REPAIR_STEP_LIMIT):
+        short, blocks = cost([m for day in days.values() for m in day.values()])
+        best = None
+        for ai, a in enumerate(dates):
+            for topic, small in list(days[a].items()):
+                if not 0 < small < SHORT_BLOCK_TARGET:
+                    continue
+                for other, donor_a in list(days[a].items()):
+                    if other == topic or donor_a <= 0:
+                        continue
+                    for bi, b in enumerate(dates):
+                        donor_b = days[b].get(topic, 0)
+                        if a == b or donor_b <= 0:
+                            continue
+                        receiver = days[b].get(other, 0)
+                        before = cost((small, donor_a, donor_b, receiver))
+                        deltas = {1, SHORT_BLOCK_TARGET, SHORT_BLOCK_TARGET-small,
+                                  SHORT_BLOCK_TARGET-receiver, donor_a, donor_b,
+                                  donor_a-SHORT_BLOCK_TARGET, donor_b-SHORT_BLOCK_TARGET}
+                        for delta in sorted(deltas):
+                            if not 0 < delta <= min(donor_a, donor_b):
+                                continue
+                            after = cost((small+delta, donor_a-delta, donor_b-delta, receiver+delta))
+                            candidate = (short+after[0]-before[0], blocks+after[1]-before[1],
+                                         delta, ai, rank[topic], bi, rank[other])
+                            if candidate[:2] < (short, blocks) and (best is None or candidate < best):
+                                best = candidate
+        if best is None:
+            break
+        _, _, delta, ai, ti, bi, ui = best
+        a, b, topic, other = dates[ai], dates[bi], topics[ti], topics[ui]
+        days[a][topic] += delta
+        days[a][other] -= delta
+        days[b][topic] -= delta
+        days[b][other] = days[b].get(other, 0) + delta
+    return [{"date": day, "topic": topic, "minutes": minutes}
+            for day, values in days.items() for topic, minutes in values.items() if minutes]
 
 
 def _scores(statistics: tuple[TopicStatistics, ...]) -> dict[str, Fraction]:
@@ -80,25 +141,66 @@ def rebalance_topic_minutes(statistics: tuple[TopicStatistics, ...], daily_plan:
 
     The caller validates the original plan before rebalancing, and runs the
     result through normal availability/busy-calendar placement afterwards.
-    Dates receive proportional shares of remaining budgets; integer leftovers
-    follow the same deterministic order. No topic receives a negative remainder.
+    Pack each topic's budget contiguously across the selected study dates.
+    A bounded subset dynamic program chooses the topic order with the fewest
+    short chunks, then fewest chunks, then weakest-first deterministic ties.
+    This optimizes the contiguous-topic family, then bounded pairwise exchanges
+    reduce short tails while preserving both daily and topic totals. Neither
+    stage claims a globally optimal solution over all possible schedules.
+    Physical busy-window cuts are still handled by the normal scheduler.
     """
     daily_totals: dict[str, int] = defaultdict(int)
     for item in daily_plan:
         daily_totals[item["date"]] += item["minutes"]
     total = sum(daily_totals.values())
     budget = calculate_topic_budget(statistics, total)
-    remaining = dict(budget)
-    order = {topic: index for index, topic in enumerate(budget)}
+    topics = list(budget)
+    amounts = list(budget.values())
+    days = sorted(daily_totals)
+    ends = list(accumulate(daily_totals[day] for day in days))
+
+    def chunk_cost(start, amount):
+        end = start + amount
+        index = bisect_right(ends, start)
+        short = blocks = 0
+        while start < end:
+            right = min(end, ends[index])
+            short += right - start < SHORT_BLOCK_TARGET
+            blocks += 1
+            start = right
+            index += 1
+        return short, blocks
+
+    if len(topics) <= EXACT_ORDER_LIMIT:
+        positions = [0] * (1 << len(topics))
+        for mask in range(1, len(positions)):
+            bit = mask & -mask
+            positions[mask] = positions[mask ^ bit] + amounts[bit.bit_length() - 1]
+
+        @lru_cache(None)
+        def best(mask):
+            if mask == len(positions) - 1:
+                return 0, 0, ()
+            choices = []
+            for i, amount in enumerate(amounts):
+                if not mask & (1 << i):
+                    short, blocks = chunk_cost(positions[mask], amount)
+                    later_short, later_blocks, later_order = best(mask | (1 << i))
+                    choices.append((short + later_short, blocks + later_blocks, (i,) + later_order))
+            return min(choices)
+
+        order = best(0)[2]
+    else:
+        order = tuple(range(len(topics)))
     normalized = []
-    for day in sorted(daily_totals):
-        weights = {topic: Fraction(minutes) for topic, minutes in remaining.items() if minutes > 0}
-        allocated = _apportion(daily_totals[day], weights, order)
-        for topic in sorted(allocated, key=order.get):
-            minutes = allocated[topic]
-            if minutes:
-                normalized.append({"date": day, "topic": topic, "minutes": minutes})
-                remaining[topic] -= minutes
-    if any(remaining.values()):
-        raise ValueError("daily allocation did not consume the topic budget")
-    return normalized, budget
+    cursor = day_index = 0
+    for i in order:
+        left = amounts[i]
+        while left:
+            minutes = min(left, ends[day_index] - cursor)
+            normalized.append({"date": days[day_index], "topic": topics[i], "minutes": minutes})
+            left -= minutes
+            cursor += minutes
+            if cursor == ends[day_index]:
+                day_index += 1
+    return _smooth_boundaries(normalized, topics), budget

@@ -31,6 +31,11 @@ Check connectivity with `GET /api/v1/health`, which returns
 
 The current MVP uses `computer_specialist_level_2`.
 
+P10 v2 changes the internal model tool, not the HTTP request: diagnosed plans use
+model-proposed date totals and backend-computed topic budgets/blocks. The frontend
+continues to send the same assessment and availability fields and render returned
+`schedules`. It must not send the internal `daily_minutes` tool argument.
+
 ## Question bank
 
 `GET /api/v1/certifications/{certification_id}/questions` returns the bank's

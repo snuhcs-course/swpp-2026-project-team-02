@@ -3,17 +3,19 @@
 ## Scope and baseline
 
 - Branch: `feat/p10-topic-budget`, based on `cad66888200633bd6b378dc01894b2e67fbfb37d`.
-- The baseline includes P21 overnight windows, A1 whole-week replacements and P6 local check-ins.
+- The baseline includes P21 overnight windows and A1 whole-week replacements.
+  The integrated working branch also includes P6 local check-ins.
 - Shared evaluator/dataset: commit `eae17c7`, version `p10-flexible-availability-v3`, 46 cases.
 - The baseline and candidate must use that same evaluator and dataset. The baseline backend remains `cad6688`, not the later evaluator commit.
 - No FE request/response field is required. CSV identity, availability snapshots, manual/automatic adjustment and storage remain compatible.
 
 ## Allocation rule
 
-The model continues to choose the total planned minutes and daily totals, using
-the preparation period, availability and self-assessment. Its proposal must still
-contain every assessed topic and fit each day's actual capacity. Invalid proposals
-remain tool errors; P10 is not an inference fallback.
+The model chooses total planned minutes and daily totals from the preparation
+period, availability and self-assessment. For diagnosed requests its internal
+build call supplies only `daily_minutes` (`date`, `minutes`). Backend code owns
+topic labels and budgets. Each day's proposal must fit actual capacity; invalid
+proposals remain tool errors. Legacy topic-based internal calls remain supported.
 
 For diagnosed topics, code reserves one minute per topic, then apportions the
 remaining proposed minutes with weight `2 - score_percent / 100`. A 0% topic has
@@ -21,8 +23,10 @@ weight 2, a 100% topic weight 1. Largest-remainder rounding preserves the exact
 sum; remainder ties prefer a weaker score and then a stable topic-name order.
 For scores 0%, 50%, 100% and a 183-minute workload, budgets are 81, 61, 41 minutes.
 
-Each date receives a proportional share of the remaining topic budgets without
-changing that date's total. Normal placement then enforces the effective windows,
+V2 packs global topic budgets into coherent blocks across dates. A bounded subset
+dynamic program chooses topic order; bounded pairwise minute exchanges reduce
+short tails while preserving each day's total and each topic's budget. Normal
+placement then enforces the effective windows,
 week overrides, midnight clipping, exam deadline and busy-calendar exclusions.
 The code validates actual placed totals against the budget, positive coverage
 and every unequal-score pair: a weaker topic must never get fewer minutes.
@@ -31,7 +35,7 @@ at most one minute. There is no invented score for an undiagnosed topic: when no
 topic statistics exist, the original valid model proposal is retained.
 
 The tool response records `topic_budget`, `topic_budget_policy` and the actual
-`daily_topic_minutes`. The API CSV and summary derive from the actual schedule.
+`daily_topic_minutes`, plus `topic_placement_policy`. The API CSV and summary derive from the actual schedule.
 Rebalancing can change topic/date combinations and session count while preserving
 total minutes and each day's workload. No fixed session-length floor is added.
 
@@ -48,10 +52,17 @@ Record the actual source commit or uncommitted source hashes, model settings and
 prompt/tool-schema hashes for each service. Each full run is 147 requests at most.
 Do not run against the shared production plan directory (100-plan retention).
 
-Actual OpenRouter evaluation started after the local key was configured.
-The baseline completed; the candidate stopped after five consecutive provider
-credit/key-limit rejections (HTTP 402, mapped to API 502). The comparison remains
-incomplete. See [the actual-model evaluation report](AI_EVALUATION.md).
+Actual OpenRouter evaluation completed on 2026-11-15 after funding and resuming
+only the remaining attempts. Both 132-generation ledgers are complete, with ten
+historical credit failures retained in the candidate ledger. Successful-plan
+weak ordering improved from 67.0% to 100%, but generation reliability and
+session fragmentation require follow-up; the registered candidate verdict is
+FAIL. See [the actual-model evaluation report and evidence](AI_EVALUATION.md).
+That run evaluated v1; [v2 design and offline validation](V2_DESIGN.md) separately
+documents the subsequent correction. The [fresh v2 actual-model evaluation](V2_AI_EVALUATION.md)
+completed on November 15 with an unchanged T1–T8 **PASS**: 126/126 valid plans,
+six expected boundary responses and 14/15 successful adjustments. Short-session
+share improved from v1 to 37.2%, while workload adequacy remains unverified.
 No secrets were copied, no fallback responses were reported as AI results, and
 the deployed service was not changed.
 

@@ -120,6 +120,14 @@ The API request combines these results with the free-form self-assessment, prepa
 
 Study sessions are placed only inside the user's weekly availability. Supply at least one window in `weekly_availability` or `availability_overrides`, or save a profile through `PUT /api/v1/availability`; the backend stores it in `config/user_availability.json`. If neither a request nor saved profile contains an available window, Planning API returns HTTP 422 with an input error instead of using common default hours. The generated `topic` column records each study block's assigned topic; external events have a blank topic unless supplied. The agent is instructed to balance date-specific workload across equivalent dates (for example, 120 minutes across two equivalent dates becomes about 60 minutes per date), while the backend enforces only date-level available capacity and does not guarantee this balance. Busy event ranges are excluded; intervals include their start and exclude their end. There is no fixed session length or maximum number of study blocks per day. After saving a plan, the API attempts to retain the 100 most recent generated plan CSVs by removing older matching files; locked files can prevent cleanup.
 
+For diagnosed requests, P10 v2's internal model build call contains only
+`daily_minutes` (date and minutes); backend code supplies the topic labels and
+budgets. It packs coherent topic blocks and applies bounded exchanges to reduce
+short tails while preserving each daily and topic total. Fifteen minutes is a
+soft optimization target, not a minimum duration. Legacy topic-based internal
+calls remain supported. The public HTTP contract is unchanged. See the
+[v2 design and offline replay results](../docs/iter4-p10/V2_DESIGN.md).
+
 Example weekly availability JSON:
 
 ```json
