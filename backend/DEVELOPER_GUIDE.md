@@ -115,7 +115,6 @@ License Planner MVP는 자기평가, 문항별 시험 결과, 준비 기간, 기
 
 | 경로 | 역할 |
 | --- | --- |
-| `run_planner.py` | 단일 사용자 요청을 처리하는 CLI 진입점 |
 | `api_server.py` | 로컬/배포 환경에서 HTTP API를 실행하는 표준 라이브러리 서버 |
 | `api_service.py` | API JSON과 두 프로그램의 도메인 객체/Agent 사이 변환 |
 | `config/api_server.json` | API bind 주소·포트, 허용 origin, 요청 크기 제한 |
