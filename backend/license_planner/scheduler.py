@@ -90,11 +90,12 @@ def available_minutes(request: PlanRequest) -> int:
 def generate_schedule(request: PlanRequest, cert: Certification,
                       topic_statistics: tuple[TopicStatistics, ...],
                       daily_topic_minutes: list[dict], *, preserve_topic_order: bool = False) -> list[StudyBlock]:
-    """Place Agent-proposed topic minutes on chosen dates within user windows.
+    """Place per-date topic minutes within user windows.
 
-    The Agent chooses the study dates and flexible durations. This function
-    validates date/topic/time constraints and packs the plan into free windows;
-    it applies no fixed session length or daily block-count limit.
+    Minutes come from the backend's budgets for diagnosed plans or the Agent's
+    legacy proposal when no topic statistics exist. This function validates
+    date/topic/time constraints and packs the plan into free windows; it applies
+    no fixed session length or daily block-count limit.
     """
     if request.preparation_start is None or request.exam_date is None:
         raise ValueError("preparation_start and exam_date are required before generating a dated schedule")

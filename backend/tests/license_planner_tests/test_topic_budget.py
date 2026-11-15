@@ -1,4 +1,4 @@
-"""P10 allocation invariants, adversarial proposals and real placement checks."""
+"""Allocation invariants, adversarial proposals and real placement checks."""
 import copy
 from collections import defaultdict
 from datetime import date, datetime, timedelta

@@ -1,8 +1,8 @@
-"""P10: deterministic score-based budgets inside the model's chosen workload.
+"""Deterministic score-based budgets within caller-supplied daily totals.
 
-No dates, availability or readiness levels are invented here. The model still
-chooses total study minutes and daily workloads; the backend redistributes
-their topic labels using reviewed/validated diagnostic statistics.
+Callers supply each date's total: the usable entered minutes for diagnosed plans.
+This module splits those minutes across topics using reviewed/validated diagnostic
+scores. No dates, availability or readiness levels are invented here.
 """
 from __future__ import annotations
 

@@ -32,7 +32,8 @@ Check connectivity with `GET /api/v1/health`, which returns
 The current MVP uses `computer_specialist_level_2`.
 
 P10 v2 changes the internal model tool, not the HTTP request: diagnosed plans use
-model-proposed date totals and backend-computed topic budgets/blocks. The frontend
+every date's usable minutes (`usable_date_minutes`) as its total, with
+backend-computed topic budgets/blocks; the model does not choose the workload. The frontend
 continues to send the same assessment and availability fields and render returned
 `schedules`. It must not send the internal `daily_minutes` tool argument.
 
@@ -484,8 +485,9 @@ no rollback or exactly-once guarantee: reload before choosing again.
 
 `"mode": "remaining"` places the remaining minutes of several study rows of a
 saved plan in one deterministic batch, without any model request and without
-reading or writing the shared availability profile. This is available in the
-week-one backend. The Android review and result flow is planned. Every field below is
+reading or writing the shared availability profile. The live Android 남은 공부
+다시 계획하기 review and result flow sends it; the demo flavor computes the batch
+on the device. Every field below is
 required and must not be null:
 
 | Field | Meaning |

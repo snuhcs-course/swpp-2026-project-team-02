@@ -43,15 +43,17 @@ implemented.
 - `feat/iteration-4-week-1` has per-day multi-window editing, weekly overrides,
   local drafts and study reports, accepted move and save feedback, and calendar
   conflict review, notices and per-occurrence keep decisions.
-- `fix/iter4-p8-he-issues` adds contextual help, opt-in error diagnostics,
-  generation Back confirmation, day-by-day available/assigned time, and a link
-  from an adjustment's original position to its destination. Its live planner
-  also adds complete review rounds when capacity permits.
-- `feat/p10-topic-budget` rebalances the live planner's diagnostic topic minutes
-  while retaining its proposed base workload and each date's total. Android
-  displays the returned study rows through the existing plan screen.
+- The HE fixes from `fix/iter4-p8-he-issues` are merged into it: contextual
+  help, error details, generation Back confirmation, day-by-day
+  available/assigned time, and a link from an adjustment's original position to
+  its destination. The HE branch's review rounds were not merged.
+- The topic budgets from `feat/p10-topic-budget` are merged. Diagnosed live
+  plans use every usable entered minute: the backend, not the model, sets each
+  date's total and splits it across topics by score. The demo planner fills the
+  same free minutes locally. Android displays the returned study rows through
+  the existing plan screen.
 - **Remaining study re-plan.** The [backend batch endpoint](../backend/FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
-  is implemented on the week-one branch. The Android flow is available for new and
+  is implemented on this branch. The Android flow is available for new and
   reopened plans. Its review shows scheduled, actual and remaining minutes
   before confirmation. Done rows contribute zero. Missed and unreported rows
   contribute their scheduled duration. A partly completed 60-minute row with
@@ -61,13 +63,10 @@ implemented.
   existing phone events. The UI distinguishes local save retry from
   reloading an uncertain live outcome.
 
-The HE review rounds and P10 budgets are implemented on separate branch tips.
-Their joint allocation behavior requires an integrated candidate.
-
 [Iteration 4 Figma screens](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3690)
 cover drafts, availability, study reports and HE behavior. See also
 [calendar review states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3850)
-and the [planned remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3984).
+and the [remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3984).
 
 ## Build and run
 
@@ -310,18 +309,17 @@ about the model or the deployed server.
 | `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (OpenRouter `openai/gpt-6-luna`, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
-calculation, not backend or AI output. Demo workload: each topic shown on the
-score screen gets its own session count, one base session plus one extra when
-its score is below 60%. Each part is multiplied by the stricter of the chosen
-level and the overall-score level (80% advanced ×0.5, 60% intermediate ×1,
-otherwise beginner ×2) and rounded up separately, so an advanced learner still
-gets a weak topic's extra session. Extra sessions go to the weak topics that
-earned them. All 18 answered 모르겠음 at beginner level needs 32 sessions (four
-per topic); all 18 correct at advanced level needs eight (one per topic). These
-are demonstration assumptions for a practical evaluation journey, not the live
-model's allocation or an estimate of the preparation the exam needs; a perfect
-score keeps every topic and does not mean mastery. When the sessions do not fit,
-the demo shows the required and available counts and no partial plan. The live flavor never falls back to demo
+calculation, not backend or AI output. Demo workload: like a live plan, it
+fills every free minute of the entered windows inside the preparation period,
+outside imported busy rows. It splits those minutes across the topics on the
+score screen in the backend's proportions: one reserved minute per topic, the
+rest by weight `2 - score/100` with largest-remainder rounding. It then places
+the weakest topic first in time order, splitting a topic only where a free
+segment or its budget ends. It does not copy the backend's topic-order search or
+boundary smoothing, so its rows can differ from a live plan's. The chosen level
+does not change the amount. A perfect score keeps every topic and does not mean
+mastery. When there are fewer free minutes than topics, the demo shows the topic
+count and the free minutes and no partial plan. The live flavor never falls back to demo
 data: on failure it shows an error with retry and keeps all inputs.
 
 ## Live backend
@@ -1154,9 +1152,10 @@ its result. Earlier dated device, deployment and emulator runs are kept in the
 Use this procedure on a device or emulator connected to a real backend (a local
 `python api_server.py` or the public server). It makes real model requests and
 writes plans to that server; use the public server only when its owner agrees.
-It checks rules the app and backend enforce, not a particular schedule: model
-output, session counts and response times vary between runs, so do not compare
-against a schedule or timing from an earlier run.
+It checks rules the app and backend enforce, not a particular schedule. The
+backend sets the workload, but response times vary between runs, and a changed
+calendar, date or server revision changes the rows, so do not compare against a
+schedule or timing from an earlier run.
 
 1. **Generate.** Choose 컴퓨터활용능력 2급, a preparation start and exam date,
    a level, answers to the example questions (including 모르겠음 at least once),
@@ -1293,14 +1292,20 @@ Both cases choose 기본 기능은 알아요 and answer every example question
 correctly, with preparation starting 2026-10-19. The demo results below were
 observed on 2026-10-17 with the earlier five-question build (answers B, B, A, A,
 C) and the earlier demo workload rule; the 18-question bank has more topics and
-the demo now uses per-topic quotas, so re-observe them before comparing.
+the demo now fills every free minute, so re-observe them before comparing. With
+every window filled, case A's recorded moves no longer apply: adjusting a session
+is expected to report 옮길 수 있는 시간이 없어요, as in case B, and the session can
+still be moved with 시간 직접 옮기기. This expectation has not been re-observed.
 
 | Case | Exam date and study windows | Demo result (five-question build, 2026-10-17) |
 | --- | --- | --- |
 | A: adjustment | 2026-12-14; Mon 18:00 for 2 h, Tue 18:00 for 1 h, Wed 18:00 for 2 h | Six sessions. Adjusting `study-1` moves it to 10/26 19:00–20:00; adjusting it again moves it to 10/28 19:00–20:00. |
 | B: no free slot | 2026-11-02; Mon, Wed, Fri 18:00 for 1 h | Six sessions fill every slot; adjusting one reports 옮길 수 있는 시간이 없어요. |
 
-In the live build, model output varies, so run each case several times. Check
+In the live build, the backend sets each date's total and the topic split, and
+the 18 reviewed questions need no model classification, so repeated runs should
+return the same rows unless the model call fails. Run each case several times
+to check that and the response time. Check
 the returned `schedules` against the inputs: sessions inside the chosen windows,
 no overlaps, everything before the exam date, topic coverage, and response
 time. Live adjustment results mean nothing until the backend dependency in
@@ -1431,12 +1436,13 @@ operation has no network, model or calendar dependency.
   saved plan file on the server is repaired; the plan stays viewable and unchanged.
 - Unsaved form edits are held in memory. An explicitly saved creation draft and
   the generated-plan list can be reopened on the same device.
-- Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
-- Demo session counts follow the fixed demonstration rule in
-  [Flavors](#flavors) (32 sessions for all 모르겠음 at beginner level,
-  eight for a perfect advanced score). They are not the live model's allocation
-  or an estimate of the preparation the exam needs, and the 2026-10-17 demo
-  evaluation results predate this rule.
+- Live plans pass through the OpenRouter Luna model, but with the 18 reviewed
+  questions it decides neither the amount nor the dates: the backend fills every
+  usable entered minute and splits it by score. A model failure or timeout still
+  fails generation, and unreviewed questions still need model classification.
+- Demo plans follow the local rule in [Flavors](#flavors). They fill every free
+  minute and are not an estimate of the preparation the exam needs. The
+  2026-10-17 demo evaluation results predate this rule.
 - Proven live insufficient capacity arrives as HTTP 422 and is shown as described
   in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It
   does not open the demo shortfall screen; the warning-origin exam-date editor

@@ -157,19 +157,19 @@ python -m scenarios.run_license_planner_test_cases --case-id license_planner_cas
 
 The first two commands do not call a model. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `scenarios/results/license_planner_availability/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes real OpenRouter `openai/gpt-6-luna` requests, requires `OPENROUTER_API_KEY`, network access, and available credit, and records the HTTP result, tool calls, generated schedule, and an `inference` record (the `selected_model` the case's agent actually requested, or `null` when the case made no model request; model request count; elapsed seconds; and per-response token/cost usage with the provider-returned model, `null` when the provider does not return it) under `scenarios/results/license_planner/`. Omit `--case-id` to run all live scenarios. Add offline availability cases under `scenarios/inputs/license_planner_availability/`.
 
-The Iteration 4 HE branch adds whole review rounds. Each round repeats the
-accepted primary topic-minute mix, and any capacity left after the last complete
-round stays spare. The topic-budget branch instead rebalances the proposed
-diagnostic workload across topics. It reserves one minute per assessed topic,
-then apportions the rest by `2 - score_percent/100` using largest remainders.
-It preserves the proposed base total and every date's total, gives weaker
-topics at least as many minutes as stronger topics, and verifies the placed
-totals. These branches have separate planner implementations.
+For diagnosed requests, every date's total is that date's usable minutes (the
+entered windows inside the preparation period minus busy rows); the model does
+not choose the workload. The backend splits those minutes across topics: it
+reserves one minute per assessed topic, then apportions the rest by
+`2 - score_percent/100` using largest remainders. It preserves every date's
+total, gives weaker topics at least as many minutes as stronger topics, and
+verifies the placed totals. No capacity is left spare. Review rounds from the
+Iteration 4 HE branch were not merged.
 
 ## Schedule Adjuster
 
 The Schedule Adjuster CLI requires a target ID (`study-N` or `external-N`) and an input schedule CSV. It moves study intervals after the old end while preserving interval length, topic, and other rows. When `config/user_availability.json` exists, the new study interval must also fit inside one of the user's effective study windows (recurring week or week override, including windows that cross midnight). Over HTTP, a saved plan uses its retained availability context first, and `mode: "manual"` moves a session to a chosen time without a model call; see `FRONTEND_INTEGRATION_GUIDE.md`. Cancelled external rows are removed while other rows remain unchanged. The
-week-one backend also accepts a [remaining-work batch](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
+backend also accepts a [remaining-work batch](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
 for a saved plan. It places each positive remaining workload as one whole session
 using retained availability and busy rows and writes the batch only if all
 sessions fit.
@@ -339,9 +339,10 @@ plans there can prune other people's plans; agree with the server owner before
 writing to it. Keep API keys, raw provider error bodies and `.env` contents out
 of recorded results. A passing live run describes that
 run only; it does not establish provider reliability, latency or the quality of
-a plan. For P10 weak-topic allocation evaluation, use the restored
-[AI evaluation runner](../docs/iter3-ai-eval/README.md), updated for the selected
-18-question, eight-topic bank. The earlier frozen evaluation and its failed result are preserved in the
+a plan. The P10 weak-topic AI evaluation runner (18-question, eight-topic
+bank) is archived under `docs/iter3-ai-eval/` in the `ai-eval-archive-20261116`
+git tag; rebuild its cases against the current question bank before reusing it.
+The earlier three-topic evaluation and its failed result are preserved in the
 [archived AI evaluation](https://github.com/snuhcs-course/swpp-2026-project-team-02/tree/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-ai-eval).
 
 ## Model configuration

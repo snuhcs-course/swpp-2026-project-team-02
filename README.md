@@ -60,7 +60,7 @@ It can read calendar conflicts and copy study sessions to a chosen device
 calendar. Build and verification instructions are in
 [`frontend/README.md`](frontend/README.md#checks). The
 [Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)
-track the separate HE and topic-budget branches and the remaining-work rollout.
+record which HE and topic-budget branch work was merged and the remaining-work rollout.
 
 ## Continuous integration
 
