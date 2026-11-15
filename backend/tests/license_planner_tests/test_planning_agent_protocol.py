@@ -83,6 +83,19 @@ class PlanningProtocolTests(unittest.TestCase):
     def setUp(self):
         isolate_model_configuration(self)
 
+    def test_date_only_build_uses_real_tools_and_local_topics(self):
+        provider, agent, (tools, summary) = self.run_agent([
+            reply(call("analysis", *ANALYSIS)),
+            reply(call("build", "build_study_schedule", {"daily_minutes": [{"date": "2026/10/05", "minutes": 60}]}))])
+        self.assertEqual(len(provider.bodies), 2)
+        for body in provider.bodies:
+            builder = next(tool for tool in body["tools"] if tool["name"] == "build_study_schedule")
+            self.assertEqual(set(builder["parameters"]["properties"]), {"daily_minutes"})
+            self.assertEqual(set(builder["parameters"]["properties"]["daily_minutes"]["items"]["properties"]), {"date", "minutes"})
+        self.assertEqual({row.topic for row in tools.schedule}, {CHARTS})
+        self.assertEqual(sum(int((row.end_datetime-row.start_datetime).total_seconds()/60) for row in tools.schedule), 60)
+        self.assertIn("60", summary)
+
     def run_agent(self, replies, payload=PAYLOAD, api_key="synthetic-openrouter-key"):
         provider = ScriptedProvider(replies)
         agent = PlanningAgent(api_key=api_key)
@@ -120,8 +133,8 @@ class PlanningProtocolTests(unittest.TestCase):
                              ("openai/gpt-6-luna", {"effort": "low"}, 16384))
             build, = [tool for tool in body["tools"] if tool["name"] == "build_study_schedule"]
             self.assertEqual(build["type"], "function")
-        build_dates = provider.bodies[2]["tools"][2]["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
-        self.assertEqual(build_dates["topic"]["enum"], [CHARTS])
+        build_dates = provider.bodies[2]["tools"][2]["parameters"]["properties"]["daily_minutes"]["items"]["properties"]
+        self.assertEqual(set(build_dates), {"date", "minutes"})
         self.assertEqual(len(tools.schedule), 1)
         self.assertIn("60분", summary)
 
@@ -271,9 +284,9 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
 
     def test_summary_sentences_are_separated_and_need_no_model_request(self):
         expected = {
-            "20:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
+            "20:00": "3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
                      "공부 가능 시간의 일부는 여유 시간으로 남겼습니다.",
-            "19:00": "3개 학습 주제에 학습 일정 4개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
+            "19:00": "3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
         }
         for wednesday_end, text in expected.items():
             with self.subTest(wednesday_end):
@@ -283,7 +296,7 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
                 ], payload=three_topic_payload(wednesday_end))
                 self.assertEqual(summary, text)
                 self.assertEqual((len(provider.bodies), agent.api_request_count, len(provider.replies)), (2, 2, 1))
-                self.assertEqual(len(tools.schedule), 4)
+                self.assertEqual(len(tools.schedule), 3)
 
     def run_dense(self, busy):
         build = ("build_study_schedule", {"daily_topic_minutes": [

@@ -25,7 +25,7 @@ class EvaluationTests(unittest.TestCase):
         cls.topics = build_cases.TOPICS
 
     def test_dataset_matches_bank_and_api_contract(self):
-        self.assertEqual(len(self.cases), 42)
+        self.assertEqual(len(self.cases), 46)
         self.assertEqual(len(self.topics), 8)
         self.assertEqual(set(self.topics), set(get_certification(self.bank["certification_id"]).topics))
         for case in self.cases:
@@ -60,6 +60,42 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(build_cases.build(bank), self.cases)
         with self.assertRaises(ValueError):
             build_cases.assessment(self.bank, ["A"] * 5)
+
+    def test_overnight_and_override_oracle_has_independent_expected_minutes(self):
+        from license_planner.scheduler import available_minutes
+        expected = {"G01": 270, "G02": 780, "G03": 900, "G04": 330}
+        for case in self.cases:
+            if case["case_id"] in expected:
+                with self.subTest(case=case["case_id"]):
+                    minutes = expected[case["case_id"]]
+                    self.assertEqual(run_eval.available_minutes(case["request"]), minutes)
+                    self.assertEqual(available_minutes(build_plan_request(case["request"])), minutes)
+
+    def test_override_ownership_at_week_boundary_and_preparation_clipping(self):
+        request = {"preparation_start": "2026/11/16/00/15", "exam_date": "2026/11/16/09/00",
+                   "weekly_availability": {"sunday": [{"start": "23:00", "duration_minutes": 120}]},
+                   "availability_overrides": {"2026/11/16": {}}}
+        self.assertEqual(run_eval.available_minutes(request), 45)
+        request["availability_overrides"]["2026/11/09"] = {}
+        self.assertEqual(run_eval.available_minutes(request), 0)
+
+    def test_pairwise_order_detects_a_nonweakest_inversion(self):
+        topics = ["weak", "middle", "strong"]
+        case = {"case_id": "order-oracle", "request": {
+            "preparation_start": "2026/11/09/00/00", "exam_date": "2026/11/10/00/00",
+            "weekly_availability": {"monday": [{"start": "09:00", "duration_minutes": 180}]}},
+            "expect": {"ordering_applies": True, "topic_scores": dict(zip(topics, [0, 50, 100])), "weakest_topics": ["weak"]}}
+        rows, start = [], run_eval.dt("2026/11/09/09/00")
+        for topic, minutes in zip(topics, [60, 10, 20]):
+            end = start + run_eval.timedelta(minutes=minutes)
+            rows.append({"schedule_id": "study-" + topic, "topic": topic,
+                         "start_date": start.strftime(run_eval.FMT), "end_date": end.strftime(run_eval.FMT)})
+            start = end
+        hard, quality, _ = run_eval.check_plan(case, rows, topics)
+        self.assertTrue(all(hard.values()))
+        self.assertTrue(quality["Q1"])
+        self.assertFalse(quality["Q7_weak_order"])
+        self.assertEqual(quality["Q7_inversions"], 1)
 
     def test_quality_detects_reversed_allocation_and_overlap(self):
         case = next(c for c in self.cases if c["case_id"] == "A03")

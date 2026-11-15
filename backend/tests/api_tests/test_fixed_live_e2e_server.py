@@ -146,7 +146,10 @@ class FixedLiveE2EServerTests(unittest.TestCase):
             self.assertEqual([call["tool"] for call in moved["tool_calls"]],
                              ["inspect_schedule", "inspect_topic_schedule", "reschedule_failed_study"])
             target = next(row for row in moved["schedules"] if row["schedule_id"] == "study-1")
-            self.assertEqual((target["start_date"], target["end_date"]), ("2026/11/02/18/00", "2026/11/02/19/00"))
+            original = next(row for row in plan_a["schedules"] if row["schedule_id"] == "study-1")
+            self.assertEqual(target["start_date"], "2026/11/02/18/00")
+            self.assertEqual(datetime.strptime(target["end_date"], WIRE) - datetime.strptime(target["start_date"], WIRE),
+                             datetime.strptime(original["end_date"], WIRE) - datetime.strptime(original["start_date"], WIRE))
             self.assertLessEqual(datetime.strptime(target["end_date"], WIRE), datetime.strptime(ROOMY_EXAM, WIRE))
             self.assertEqual(self.readback(server, plan_a["schedule_csv_file"]), moved["schedules"])
 
@@ -372,8 +375,14 @@ class IsolatedScriptedServerTests(unittest.TestCase):
         starts = [datetime.strptime(row["start_date"], WIRE) for row in studies]
         override_week = {self.monday + timedelta(days=7 + offset) for offset in range(7)}
         self.assertEqual({start.date() for start in starts} & override_week, {self.monday + timedelta(days=8)})
-        self.assertEqual({start.strftime("%H:%M") for start in starts if start.date() in override_week}, {"20:00"})
-        self.assertTrue(all(start.strftime("%H:%M") == "23:00" for start in starts if start.weekday() == 6))
+        # P10 can split a proposed day's 60 minutes among topics; preserve
+        # its exact workload and effective interval, not the old block count.
+        override_rows = [row for row in studies if datetime.strptime(row["start_date"], WIRE).date() in override_week]
+        self.assertEqual(min(row["start_date"][-5:] for row in override_rows), "20/00")
+        self.assertEqual(sum((datetime.strptime(row["end_date"], WIRE) - datetime.strptime(row["start_date"], WIRE)).total_seconds()
+                             for row in override_rows), 60 * 60)
+        self.assertTrue(all("20:00" <= start.strftime("%H:%M") < "21:00" for start in starts if start.date() in override_week))
+        self.assertTrue(all("23:00" <= start.strftime("%H:%M") for start in starts if start.weekday() == 6))
         self.assertTrue(any(start.weekday() == 6 for start in starts))
         self.assertIn((self.monday + timedelta(days=7)).strftime("%Y/%m/%d"),
                       plan["availability_snapshot"]["availability_overrides"])

@@ -23,7 +23,12 @@ AGENT_SYSTEM_PROMPT = (
     "knowledge it requires to one or more topics from the certification profile; assign contribution weights "
     "summing to 1 per question. Reviewed questions already have fixed topics and must not be classified. "
     "Use the user's validated local correctness as supplied. Use the user's free-form self-assessment and topic scores "
-    "directly to choose study minutes per topic and date. Do not classify users into fixed readiness "
+    "to choose the total study workload and daily totals. When diagnostics are supplied, submit only "
+    "daily_minutes (date and positive integer minutes). Do not output or translate topic names for schedule "
+    "creation and do not calculate topic budgets yourself. The backend computes topic budgets and coherent "
+    "blocks while preserving your total minutes and each date's workload. For requests without diagnostics, "
+    "use the legacy daily_topic_minutes proposal as described by the tool. "
+    "Do not classify users into fixed readiness "
     "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
     "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
     "more time. For example, distribute 120 planned minutes across two equivalent available dates "
@@ -121,7 +126,8 @@ class PlanningAgent:
             classification = "Topic classification is already supplied; call analyze_exam_results without problem_topics. "
         history: list[dict] = [{"role": "user", "content": "Prepare this user's plan using tools. " + classification + "Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]  # 요청 안에서만 쓰는 모델 대화 기록입니다.
         for _ in range(self.max_steps):
-            schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()))
+            schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()),
+                                   workload_only=bool(request.assessment_items or request.problem_results))
             output, calls, answer = parse_reply(self._ask_model(history, schemas))
             history.extend(output)
             if not calls:
@@ -145,6 +151,10 @@ class PlanningAgent:
                 if name == "analyze_exam_results" and isinstance(outcome, dict):
                     # 다음 일정 제안이 분석된 필수 토픽과 날짜별 용량을 그대로 쓰도록 알려줍니다.
                     response["build_requirements"] = {"required_topics": tools.build_topics()}
+                    if tools.topic_statistics:
+                        response["build_requirements"].update(
+                            workload_field="daily_minutes", topic_allocation_owner="backend",
+                            minimum_total_minutes=len(tools.build_topics()))
                     if date_minutes is not None:
                         response["build_requirements"]["usable_minutes_by_date"] = date_minutes
                 history.append(function_output(call_id, response))

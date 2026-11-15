@@ -13,12 +13,18 @@ benchmark. No new model-quality results are claimed by this restoration.
 the scheduler. `cases.json` records the UTF-8 bank SHA-256 after normalizing
 line endings to LF so Windows and Linux checkouts match.
 
-42 cases: 15 weak-topic allocation, eight availability, six busy-calendar,
-six capacity/input, five adjustment and two self-assessment cases. Five new
+46 cases: 15 weak-topic allocation, eight availability, six busy-calendar,
+six capacity/input, five adjustment, two self-assessment and four flexible-availability cases. Five new
 allocation cases individually weaken computer-system use, internet use, system
 protection, printing and macros. Existing weak-topic patterns now miss all
 questions in those topics; A10 misses only question 2. The HE pattern retains
 UNKNOWN for question 3 and a wrong answer for question 4.
+
+P10 baseline backend: `cad66888200633bd6b378dc01894b2e67fbfb37d`.
+Version `p10-flexible-availability-v3` adds duration-only/overnight windows,
+an empty replacement week, a different replacement week and an overnight busy
+interval. Its interval oracle is independent of the backend's resolver and
+uses the starting date's week for Sunday spill into Monday.
 
 Fixed default dates: 2026-11-09 through 2026-11-30 09:00. Boundary cases have
 explicit dates. These are reproducible benchmark inputs, not today's dates.
@@ -53,8 +59,8 @@ IDs and separate output directories. Compare Q1/Q2, per-topic minutes and shares
 Q6 variation, utilization and latency. Do not compare old three-topic results
 directly with this eight-topic version.
 
-Model cases run three times; D01/D02/D06 once: 120 generation requests and up to
-15 adjustments, 135 total. Requests are sequential with three-second pauses,
+Model cases run three times; D01/D02/D06 once: 132 generation requests and up to
+15 adjustments, 147 total. Requests are sequential with three-second pauses,
 a 120-second timeout and no automatic retries. Five consecutive 5xx stop the run;
 partial results are retained. Subset, overridden-repetition and interrupted runs
 are not full acceptance results.
@@ -71,11 +77,14 @@ dataset/criteria before collecting the P10 baseline; do not tune after results.
 | Q2 | Pearson correlation between topic scores and minutes ≤ −0.5 |
 | Q3 | Every topic receives positive minutes (except D03) |
 | Q4/Q5/Q6 | Utilization / share of sessions under 15 minutes / repeated-run topic-share range |
+| Q7 | No score-ordered pair receives fewer minutes for the weaker topic; integer-minute ties are allowed |
 | J1–J5 | Successful rescheduling; target moved; topic/duration preserved; other rows unchanged; available and conflict-free |
 | J6 | Movement beyond the exam reported separately, as in the original evaluator |
 
-Q1/Q2 apply when scores differ. Inspect per-topic scores/minutes too: Q1 alone
-does not prove complete weak-topic ordering.
+Q1/Q2/Q7 apply when scores differ. Q7 is the P10 ordering criterion: all
+successful, hard-valid applicable candidate plans must pass it. It is reported
+separately from the original T1–T8 verdict; keep both visible. The criterion,
+dataset and oracle must be identical for the baseline and candidate runs.
 
 | Criterion | Threshold |
 | --- | --- |

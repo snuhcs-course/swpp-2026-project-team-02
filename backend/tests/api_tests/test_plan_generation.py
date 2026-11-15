@@ -359,8 +359,8 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(self.saved_files(), [])
         self.assertEqual((len(sent_tools), self.replies), (6, []))
         build = next(tool for tool in sent_tools[-1] if tool["name"] == "build_study_schedule")
-        item = build["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
-        self.assertCountEqual(item["topic"]["enum"], topics)
+        item = build["parameters"]["properties"]["daily_minutes"]["items"]["properties"]
+        self.assertEqual(set(item), {"date", "minutes"})
         self.assertNotIn("2026/10/20", item["date"]["enum"])
         self.assertIn("2026/10/19", item["date"]["enum"])
 
@@ -382,9 +382,9 @@ class PlanGenerationHttpTests(unittest.TestCase):
         topics = list(dict.fromkeys(reviewed.values()))
         days = ("2026/10/19", "2026/10/21", "2026/10/23")
         self.replies = [model_reply("analyze_exam_results", {}),
-                        model_reply("build_study_schedule", {"daily_topic_minutes": [
-                            {"date": days[index % len(days)], "topic": topic, "minutes": 30}
-                            for index, topic in enumerate(topics)]})]
+                        model_reply("build_study_schedule", {"daily_minutes": [
+                            {"date": day, "minutes": minutes}
+                            for day, minutes in zip(days, (90, 90, 60))]})]
 
         status, body = self.post(payload)
 
@@ -392,6 +392,10 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(len(bank["questions"]), 18)
         self.assertEqual(len(topics), 8)
         self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        total = sum(int((datetime.strptime(row["end_date"], WIRE_DATETIME_FORMAT)
+                         - datetime.strptime(row["start_date"], WIRE_DATETIME_FORMAT)).total_seconds() / 60)
+                    for row in body["schedules"])
+        self.assertEqual(total, 240)
         self.assertEqual([call["tool"] for call in body["tool_calls"]],
                          ["analyze_exam_results", "build_study_schedule"])
         self.assertEqual(self.replies, [])

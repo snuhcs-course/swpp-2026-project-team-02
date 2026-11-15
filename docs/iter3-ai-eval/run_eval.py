@@ -65,12 +65,27 @@ def overlap(a, b):
 
 
 def windows_by_date(request):
+    """Independent oracle for origin-owned windows and whole-week replacements.
+
+    Do not import the backend resolver: a shared placement bug must not make
+    the evaluator accept the same incorrect intervals.
+    """
     start, exam = dt(request["preparation_start"]), dt(request["exam_date"])
-    out, day = [], start.date()
-    while day <= exam.date():
-        for w in request["weekly_availability"].get(DAYS[day.weekday()], []):
+    raw = request["weekly_availability"]
+    wrapped = "weekly_availability" in raw
+    base = raw["weekly_availability"] if wrapped else raw
+    overrides = request.get("availability_overrides", raw.get("availability_overrides", {}) if wrapped else {})
+    # The previous day's window can spill into the preparation start date.
+    out, day = [], start.date() - timedelta(days=1)
+    while day <= exam.date() and start < exam:
+        monday = (day - timedelta(days=day.weekday())).strftime("%Y/%m/%d")
+        week = overrides.get(monday, base)
+        for w in week.get(DAYS[day.weekday()], []):
             a = datetime.combine(day, datetime.strptime(w["start"], "%H:%M").time())
-            b = datetime.combine(day, datetime.strptime(w["end"], "%H:%M").time())
+            if "duration_minutes" in w:
+                b = a + timedelta(minutes=w["duration_minutes"])
+            else:
+                b = datetime.combine(day, datetime.strptime(w["end"], "%H:%M").time())
             a, b = max(a, start), min(b, exam)
             if a < b:
                 out.append((a, b))
@@ -168,6 +183,11 @@ def check_plan(case, rows, topics):
         r = pearson(scores, [minutes[t] for t in topics])
         q["Q2_value"] = None if r is None else round(r, 3)
         q["Q2"] = r is not None and r <= -0.5
+        pairs = [(a, b) for a in topics for b in topics
+                 if exp["topic_scores"][a] < exp["topic_scores"][b]]
+        inversions = sum(minutes[a] < minutes[b] for a, b in pairs)
+        q["Q7_weak_order"] = total > 0 and inversions == 0
+        q["Q7_inversions"] = inversions
     if case["case_id"] != "D03":
         q["Q3"] = all(minutes[t] > 0 for t in topics)
     avail = available_minutes(req)
@@ -208,7 +228,8 @@ def check_adjust(case, before, after_json, target):
     # J5 checks the weekly window only; landing after the exam is reported separately as J6.
     weekly = windows_by_date({"preparation_start": req["preparation_start"],
                               "exam_date": max(moved[1], dt(req["exam_date"])).strftime(FMT),
-                              "weekly_availability": req["weekly_availability"]})
+                              "weekly_availability": req["weekly_availability"],
+                              "availability_overrides": req.get("availability_overrides", {})})
     j["J5"] = inside_window(moved, weekly) and not any(overlap(moved, o) for o in others + busy)
     j["J6_after_exam"] = moved[1] > dt(req["exam_date"])
     return j
@@ -294,6 +315,8 @@ def summarize(runs, cases_by_id):
     for r in runs:
         outcomes[r["outcome"]] = outcomes.get(r["outcome"], 0) + 1
     report = {
+        "Q7_weak_order_pass_rate": rate(sum(r["quality"]["Q7_weak_order"] for r in ok_plans if "Q7_weak_order" in r["quality"]),
+                                        sum("Q7_weak_order" in r["quality"] for r in ok_plans)),
         "Q4_utilization_median": statistics.median(util) if util else None,
         "Q5_short_share_mean": round(statistics.mean(short), 3) if short else None,
         "Q6_share_range_max": round(max(stab), 3) if stab else None,
@@ -406,6 +429,8 @@ def main():
                             "schedule_csv_file": resp["json"].get("schedule_csv_file"),
                             "weekly_availability": c["request"]["weekly_availability"],
                             "exam_date": c["request"]["exam_date"]}
+                    if "availability_overrides" in c["request"]:
+                        body["availability_overrides"] = c["request"]["availability_overrides"]
                     aresp = post(base + "/schedules/adjust", body)
                     record_exchange(c["case_id"], rep, "adjust", body, aresp)
                     aout = classify("200", aresp)

@@ -475,7 +475,7 @@ def run_recording_agent(request, replies, max_steps=6):
 
 def build_item_schema(sent_request):
     build, = [tool for tool in sent_request["tools"] if tool["name"] == "build_study_schedule"]
-    return build["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
+    return build["parameters"]["properties"]["daily_minutes"]["items"]["properties"]
 
 
 def function_responses(sent_request):
@@ -509,13 +509,15 @@ class ProposalGuidanceTests(unittest.TestCase):
         (tools, _), sent = run_recording_agent(self.request(questions=3), replies)
 
         before, after = build_item_schema(sent[0]), build_item_schema(sent[1])
-        self.assertEqual(before["topic"]["enum"], list(CERT.topics))
+        self.assertEqual(set(before), {"date", "minutes"})
         self.assertEqual(before["date"]["enum"], list(self.USABLE))
-        self.assertCountEqual(after["topic"]["enum"], [CHARTS, BASICS])
+        self.assertEqual(set(after), {"date", "minutes"})
         self.assertEqual(after["date"]["enum"], list(self.USABLE))
         guidance = function_responses(sent[1])["analyze_exam_results"]["build_requirements"]
         self.assertCountEqual(guidance["required_topics"], [CHARTS, BASICS])
         self.assertEqual(guidance["usable_minutes_by_date"], self.USABLE)
+        self.assertEqual(guidance["topic_allocation_owner"], "backend")
+        self.assertEqual(guidance["minimum_total_minutes"], 2)
         self.assertEqual({block.topic for block in tools.schedule}, {CHARTS, BASICS})
         self.assertEqual([call["tool"] for call in tools.trace.calls],
                          ["analyze_exam_results", "build_study_schedule"])
@@ -530,8 +532,8 @@ class ProposalGuidanceTests(unittest.TestCase):
 
         (tools, _), sent = run_recording_agent(self.request(questions=0, problem_results=results), replies)
 
-        self.assertEqual(build_item_schema(sent[0])["topic"]["enum"], [legacy, CHARTS])
-        self.assertCountEqual(build_item_schema(sent[1])["topic"]["enum"], [legacy, CHARTS])
+        self.assertEqual(set(build_item_schema(sent[0])), {"date", "minutes"})
+        self.assertEqual(set(build_item_schema(sent[1])), {"date", "minutes"})
         self.assertCountEqual(function_responses(sent[1])["analyze_exam_results"]
                               ["build_requirements"]["required_topics"], [legacy, CHARTS])
         self.assertIn(f"missing=['{legacy}']", function_responses(sent[2])["build_study_schedule"]["result"])
@@ -550,7 +552,7 @@ class ProposalGuidanceTests(unittest.TestCase):
         self.assertRegex(responses["build_study_schedule"]["result"], "^SCHEDULE_ERROR: .*extra=\\['스프레드시트 기초'\\]")
         self.assertCountEqual(responses["analyze_exam_results"]["build_requirements"]["required_topics"],
                               [CHARTS, BASICS])
-        self.assertCountEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS, BASICS])
+        self.assertEqual(set(build_item_schema(sent[1])), {"date", "minutes"})
         self.assertEqual(len(sent), 2)
         self.assertEqual(len(tools.schedule), 2)
 
@@ -575,7 +577,7 @@ class ProposalGuidanceTests(unittest.TestCase):
         self.assertRegex(errors[2], "exceed 0 available minutes on 2026-10-20")
         self.assertRegex(errors[3], "exceed 120 available minutes on 2026-10-19")
         for request in sent[1:]:
-            self.assertCountEqual(build_item_schema(request)["topic"]["enum"], [BASICS, FUNCTIONS, CHARTS])
+            self.assertEqual(set(build_item_schema(request)), {"date", "minutes"})
             self.assertEqual(build_item_schema(request)["date"]["enum"], list(self.USABLE))
         self.assertEqual(sum((b.end_datetime - b.start_datetime for b in tools.schedule), timedelta()),
                          timedelta(minutes=180))
@@ -619,9 +621,10 @@ class ProposalGuidanceTests(unittest.TestCase):
             run_recording_agent(request, replies)
         sent = raised.exception.sent
         self.assertNotIn("enum", build_item_schema(sent[1])["date"])
-        self.assertEqual(build_item_schema(sent[1])["topic"]["enum"], [CHARTS])
+        self.assertEqual(set(build_item_schema(sent[1])), {"date", "minutes"})
         self.assertEqual(function_responses(sent[1])["analyze_exam_results"]["build_requirements"],
-                         {"required_topics": [CHARTS]})
+                         {"required_topics": [CHARTS], "workload_field": "daily_minutes",
+                          "topic_allocation_owner": "backend", "minimum_total_minutes": 1})
         self.assertNotIn("usable_minutes_by_date", sent[0]["input"][0]["content"])
 
 
