@@ -894,7 +894,9 @@ export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
 works without a further prompt while export still asks for write access. The
 prompts and the provider checks share one definition of these permissions. If
 access is withdrawn after the prompt, the import reports the permission
-message and the plan can still be generated without calendar data.
+message and the plan can still be generated. Generation never asks for calendar
+permission: without read access it uses retained imported rows, or none if empty,
+without a calendar dialog. Regeneration uses the selected plan's original busy rows.
 
 **Which events count.** Android returns occurrences of visible calendars only,
 with recurrences expanded. Of those, busy and tentative occurrences block time;
@@ -920,12 +922,18 @@ are not counted or exported as study sessions.
 
 ## Calendar conflict review
 
-계획 만들기 checks the device calendar with read permission before sending a plan
-request. The check compares every effective dated study window, including overnight
+계획 만들기 and 이 계획 다시 만들기 never request calendar permission. Without read
+access, generation sends one request without a provider query or calendar dialog,
+using the current import's busy rows for a new plan or the selected plan's original
+busy rows for a replacement (none if empty). With read access, generation checks the
+device calendar before sending a plan request. The check compares every effective dated study window, including overnight
 carry-in and week replacements. A conflict offers 겹치지 않게 계획 만들기,
 하나씩 확인 and 공부 시간 수정. Reviewing or editing sends no planning request.
 The avoiding choice sends all freshly read generic busy rows with the original
-assessment, dates and complete study context. A repeated-weekday suggestion needs
+assessment, dates and complete study context. For a new plan, conflicts already
+covered by imported rows with the same outward-rounded start and end minutes skip
+review and proceed with the complete fresh snapshot. A new conflict still opens
+review, and replacement conflicts always require review. A repeated-weekday suggestion needs
 at least two distinct occurrences of the same recurring series.
 
 The reader keeps timing-only local occurrence identities built from the event ID,
@@ -935,8 +943,10 @@ are unchanged. Neither identity enters HTTP requests, saved plans or diagnostics
 Titles, accounts and attendees are never queried for conflict comparison.
 Descriptions are used only for the existing app-copy exclusion and then dropped.
 
-Denied permission or failed/null queries show 캘린더 확인 안 됨. 다시 확인 requests
-another explicit check, 취소 sends nothing, and 확인 없이 계속 is explicit unchecked
+Permission lost during a granted generation check, denied export permission or
+failed/null queries show 캘린더 확인 안 됨. 다시 확인 requests
+another explicit check; a generation retry without read access stays unchecked
+without a permission prompt or planning request. 취소 sends nothing, and 확인 없이 계속 is explicit unchecked
 consent. Generation retains earlier imported busy rows, labeled potentially stale,
 or uses an empty list when none exists. Network retry also checks afresh. The app
 re-reads immediately before dispatch and returns to review when any occurrence

@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.domain
 import com.swpp.licenseplanner.data.CalendarOccurrence
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.security.MessageDigest
 
 /** A dated availability window or an existing study session. */
@@ -20,6 +21,13 @@ data class CalendarConflictResult(val matches: List<CalendarConflict>) {
 
 /** Pure half-open comparison shared by creation and saved-plan review. */
 object CalendarConflicts {
+    fun isImported(occurrence: CalendarOccurrence, busyRows: List<ScheduleRow>): Boolean {
+        val start = occurrence.start.truncatedTo(ChronoUnit.MINUTES)
+        val endMinute = occurrence.end.truncatedTo(ChronoUnit.MINUTES)
+        val end = if (occurrence.end == endMinute) endMinute else endMinute.plusMinutes(1)
+        return busyRows.any { WireDateTime.parseOrNull(it.startDate) == start && WireDateTime.parseOrNull(it.endDate) == end }
+    }
+
     /** Length-prefixed fields prevent ambiguous concatenation; raw occurrence keys stay transient. */
     fun keepDigest(ordinal: Int, conflict: CalendarConflict): String {
         val fields = listOf(ordinal.toString(), conflict.target.scheduleId.orEmpty(),

@@ -253,6 +253,35 @@ class MainFlowUiTest {
     }
 
     @Test
+    fun importedConflictsGenerateWithoutAnotherReviewAndStayOutsideStudySessions() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        for (day in Weekday.entries.filter { it.dayOfWeek.value <= 5 }) setWeekdayMinutes(day)
+        val row = ScheduleRow("71", "2026/11/16/18/00", "2026/11/16/19/00", "외부 일정")
+        host.calendarOutcome = conflictingCalendar(row)
+        click("캘린더 일정 불러오기")
+        compose.waitUntil(10_000) { host.viewModel.calendarRead.value is CalendarReadState.Loaded }
+        show("반영한 일정")
+        show("1개")
+        click("계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        compose.onAllNodesWithText("공부 시간과 캘린더가 겹쳐요").assertCountEquals(0)
+        assertNull(host.viewModel.calendarConflict.value)
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(listOf(row), host.planningRequests.single().busySchedules)
+        assertTrue(host.calendarReads.get() >= 3)
+        val start = WireDateTime.parseOrNull(row.startDate)!!
+        val end = WireDateTime.parseOrNull(row.endDate)!!
+        val sessions = PlanGrouping.sessions(host.snapshot().plans.single().current.schedules).filter { !it.isExternal }
+        assertTrue(sessions.isNotEmpty())
+        assertTrue(sessions.none { it.start < end && start < it.end })
+        assertEquals(0, host.calendarWrites.get())
+        host.capture("imported-conflict-plan")
+    }
+
+    @Test
     fun freshGenerationConflictReviewCancelAndChangedFinalObservationSendOnlyOnePlan() = withApp { host ->
         startQuestions(host)
         answerAll(host)

@@ -981,6 +981,16 @@ class PlanFormViewModel(
         _calendarConflict.value = generationReview(request, form, source, envelope)
     }
 
+    fun continueGenerationWithoutCalendar(operationId: Int): Boolean {
+        val review = _calendarConflict.value?.takeIf {
+            it.id == operationId && it.kind != ConflictKind.Export &&
+                it.phase == ConflictPhase.RequestingPermission && it.outcome == null
+        } ?: return false
+        if (!reviewSourceCurrent(review) || (review.kind == ConflictKind.Replacement && !regenerationSaveReady())) return false
+        sendReviewed(review.copy(outcome = CalendarReadOutcome.PermissionMissing), unchecked = true)
+        return true
+    }
+
     fun conflictPermissionPrompted(): Boolean {
         val review = _calendarConflict.value?.takeIf { it.phase == ConflictPhase.RequestingPermission } ?: return false
         _calendarConflict.value = review.copy(phase = ConflictPhase.AwaitingPermission)
@@ -1000,7 +1010,7 @@ class PlanFormViewModel(
     fun retryCalendarConflict() {
         val review = _calendarConflict.value?.takeIf { it.phase == ConflictPhase.Unchecked } ?: return
         if (!reviewSourceCurrent(review)) return cancelCalendarConflict()
-        _calendarConflict.value = review.copy(phase = ConflictPhase.RequestingPermission, outcome = null)
+        _calendarConflict.value = review.copy(phase = ConflictPhase.RequestingPermission)
     }
 
     fun showConflictDetails() {
@@ -1059,7 +1069,10 @@ class PlanFormViewModel(
                 if (snapshot == null && !unchecked) return@launch
                 if (review.kind == ConflictKind.Export) writeCalendarExport(updated)
                 else sendReviewed(updated, unchecked)
-            } else if (snapshot != null && updated.conflicts.matches.isEmpty()) {
+            } else if (snapshot != null && (updated.conflicts.matches.isEmpty() ||
+                    (review.kind == ConflictKind.Creation && updated.conflicts.matches.all {
+                        CalendarConflicts.isImported(it.occurrence, review.request.busySchedules)
+                    }))) {
                 if (review.kind == ConflictKind.Export) continueCalendarConflict()
                 else readConflict(updated, final = true)
             }

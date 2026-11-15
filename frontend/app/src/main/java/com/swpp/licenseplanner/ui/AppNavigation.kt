@@ -290,10 +290,13 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         viewModel.onConflictPermission(CalendarAccess.READ.isGranted(context), conflictPermissionOwner)
     }
     LaunchedEffect(calendarConflict?.id, calendarConflict?.phase) {
-        if (calendarConflict?.phase != ConflictPhase.RequestingPermission) return@LaunchedEffect
-        if (CalendarAccess.READ.isGranted(context)) viewModel.onConflictPermission(true, calendarConflict?.id)
+        val review = calendarConflict?.takeIf { it.phase == ConflictPhase.RequestingPermission } ?: return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onConflictPermission(true, review.id)
+        else if (review.kind != ConflictKind.Export) {
+            if (!viewModel.continueGenerationWithoutCalendar(review.id)) viewModel.onConflictPermission(false, review.id)
+        }
         else if (viewModel.conflictPermissionPrompted()) {
-            conflictPermissionOwner = calendarConflict?.id
+            conflictPermissionOwner = review.id
             conflictPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
         }
     }

@@ -12,6 +12,29 @@ class CalendarConflictsTest {
     private fun occurrence(key: String, day: LocalDate = monday, hour: Int = 19, series: String? = null) =
         CalendarOccurrence(key, series, day.atTime(hour, 30), day.atTime(hour + 1, 30), false)
 
+    @Test fun importedOccurrenceMatchesExactIntervalRegardlessOfIdentity() {
+        val busy = ScheduleRow("7", "2031/03/03/19/30", "2031/03/03/20/30", "외부 일정")
+        assertTrue(CalendarConflicts.isImported(occurrence("other"), listOf(busy)))
+        assertFalse(CalendarConflicts.isImported(occurrence("other"), emptyList()))
+    }
+
+    @Test fun importedOccurrenceRoundsSubMinuteEndpointsOutward() {
+        val event = occurrence("sub-minute").copy(start = monday.atTime(19, 30, 59, 1), end = monday.atTime(20, 30, 0, 1))
+        val busy = ScheduleRow("7", "2031/03/03/19/30", "2031/03/03/20/31")
+        assertTrue(CalendarConflicts.isImported(event, listOf(busy)))
+    }
+
+    @Test fun importedAllDayOccurrenceMatchesItsFullLocalDay() {
+        val event = occurrence("all-day").copy(start = monday.atStartOfDay(), end = monday.plusDays(1).atStartOfDay(), allDay = true)
+        assertTrue(CalendarConflicts.isImported(event, listOf(ScheduleRow("7", "2031/03/03/00/00", "2031/03/04/00/00"))))
+    }
+
+    @Test fun importedOccurrenceRejectsEitherEndpointOneMinuteOff() {
+        val event = occurrence("one")
+        assertFalse(CalendarConflicts.isImported(event, listOf(ScheduleRow("7", "2031/03/03/19/31", "2031/03/03/20/30"))))
+        assertFalse(CalendarConflicts.isImported(event, listOf(ScheduleRow("7", "2031/03/03/19/30", "2031/03/03/20/31"))))
+    }
+
     @Test fun keepMatchesOnlyTheReviewedPlanStudyIntervalAndExactOccurrences() {
         val row = ScheduleRow("study-1", "2031/03/03/19/00", "2031/03/03/21/00", "공부")
         val request = (com.swpp.licenseplanner.data.RequestMapper.map(

@@ -137,6 +137,166 @@ class CalendarConflictsViewModelTest {
         advanceUntilIdle()
     }
 
+    @Test fun creationWithoutPermissionSendsRetainedImportOnceWithoutReading() = runTest(dispatcher) {
+        for (imported in listOf(false, true)) {
+            val reader = Reader().apply { outcome = busy() }
+            val planning = Planning()
+            val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
+            creation(vm)
+            if (imported) {
+                assertTrue(vm.startCalendarRead())
+                vm.onCalendarReadPermission(true)
+                advanceUntilIdle()
+            }
+            val retained = vm.form.value.busySchedules
+            reader.calls = 0
+            assertTrue(vm.generate())
+            val id = vm.calendarConflict.value!!.id
+            assertFalse(vm.continueGenerationWithoutCalendar(id + 1))
+            assertTrue(vm.continueGenerationWithoutCalendar(id))
+            assertFalse(vm.continueGenerationWithoutCalendar(id))
+            assertNull(vm.calendarConflict.value)
+            advanceUntilIdle()
+            assertEquals(0, reader.calls)
+            assertEquals(retained, planning.requests.single().busySchedules)
+        }
+    }
+
+    @Test fun replacementWithoutPermissionSendsOriginalBusyRowsOnceWithoutReading() = runTest(dispatcher) {
+        val retained = (busy() as CalendarReadOutcome.Loaded).snapshot.schedules
+        val original = source.copy(plans = source.plans.map { it.copy(original = it.original.copy(busySchedules = retained)) })
+        val reader = Reader()
+        val planning = Planning()
+        val vm = model(Store(original), reader, planning)
+        advanceUntilIdle()
+        assertTrue(vm.startRegeneration(1))
+        assertTrue(vm.confirmRegeneration())
+        val id = vm.calendarConflict.value!!.id
+        assertTrue(vm.continueGenerationWithoutCalendar(id))
+        assertFalse(vm.continueGenerationWithoutCalendar(id))
+        assertEquals(ConflictPhase.Generating, vm.calendarConflict.value!!.phase)
+        advanceUntilIdle()
+        assertEquals(0, reader.calls)
+        assertEquals(retained, planning.requests.single().busySchedules)
+    }
+
+    @Test fun generationReadRetryWithoutPermissionStaysUncheckedWithoutDispatch() = runTest(dispatcher) {
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Unavailable }
+        val planning = Planning()
+        val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
+        creation(vm)
+        assertTrue(vm.generate())
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        assertEquals(ConflictPhase.Unchecked, vm.calendarConflict.value!!.phase)
+        reader.calls = 0
+        vm.retryCalendarConflict()
+        val id = vm.calendarConflict.value!!.id
+        assertFalse(vm.continueGenerationWithoutCalendar(id))
+        vm.onConflictPermission(false, id)
+        advanceUntilIdle()
+        assertEquals(ConflictPhase.Unchecked, vm.calendarConflict.value!!.phase)
+        assertEquals(CalendarReadOutcome.PermissionMissing, vm.calendarConflict.value!!.outcome)
+        assertEquals(0, reader.calls)
+        assertTrue(planning.requests.isEmpty())
+    }
+
+    @Test fun exportWithoutReadPermissionStillUsesThePermissionPrompt() = runTest(dispatcher) {
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Unavailable }
+        val planning = Planning()
+        val writer = Writer()
+        val vm = model(Store(source), reader, planning, writer)
+        advanceUntilIdle()
+        assertTrue(vm.startCalendarExport(1))
+        assertTrue(vm.calendarPermissionPrompted())
+        assertEquals(CalendarExportPhase.AwaitingPermission, vm.calendarExport.value!!.phase)
+        vm.onCalendarPermission(true)
+        advanceUntilIdle()
+        vm.chooseCalendar(writer.destination)
+        vm.reviewCalendarExport()
+        advanceUntilIdle()
+        vm.retryCalendarConflict()
+        val id = vm.calendarConflict.value!!.id
+        assertFalse(vm.continueGenerationWithoutCalendar(id))
+        assertTrue(vm.conflictPermissionPrompted())
+        assertEquals(ConflictPhase.AwaitingPermission, vm.calendarConflict.value!!.phase)
+        vm.onConflictPermission(false, id)
+        advanceUntilIdle()
+        assertEquals(ConflictPhase.Unchecked, vm.calendarConflict.value!!.phase)
+        assertEquals(1, reader.calls)
+        assertTrue(planning.requests.isEmpty())
+        assertEquals(0, writer.calls)
+    }
+
+    @Test fun importedCreationConflictsSkipReviewAndSendTheCompleteFreshSnapshot() = runTest(dispatcher) {
+        val imported = (busy() as CalendarReadOutcome.Loaded).snapshot
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Loaded(imported) }
+        val planning = Planning()
+        val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
+        creation(vm)
+        vm.startCalendarRead()
+        vm.onCalendarReadPermission(true)
+        advanceUntilIdle()
+        val fresh = imported.copy(schedules = imported.schedules + ScheduleRow("8", "2031/03/04/10/00", "2031/03/04/11/00", "외부 일정"))
+        reader.outcome = CalendarReadOutcome.Loaded(fresh)
+        assertTrue(vm.generate())
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        assertNull(vm.calendarConflict.value)
+        assertEquals(fresh.schedules, planning.requests.single().busySchedules)
+        assertEquals(3, reader.calls)
+    }
+
+    @Test fun importedAndNewCreationConflictsStillRequireReview() = runTest(dispatcher) {
+        val imported = (busy() as CalendarReadOutcome.Loaded).snapshot
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Loaded(imported) }
+        val planning = Planning()
+        val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
+        creation(vm)
+        vm.startCalendarRead()
+        vm.onCalendarReadPermission(true)
+        advanceUntilIdle()
+        val extra = CalendarOccurrence("new", null, day.atTime(18, 45), day.atTime(19, 15), false)
+        reader.outcome = CalendarReadOutcome.Loaded(imported.copy(
+            schedules = imported.schedules + ScheduleRow("8", "2031/03/03/18/45", "2031/03/03/19/15", "외부 일정"),
+            occurrences = imported.occurrences + extra,
+        ))
+        vm.generate()
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        assertEquals(ConflictPhase.Review, vm.calendarConflict.value!!.phase)
+        assertEquals(2, vm.calendarConflict.value!!.conflicts.matches.size)
+        assertTrue(planning.requests.isEmpty())
+    }
+
+    @Test fun replacementConflictsMatchingOriginalRowsStillRequireReview() = runTest(dispatcher) {
+        val imported = (busy() as CalendarReadOutcome.Loaded).snapshot
+        val original = source.copy(plans = source.plans.map { it.copy(original = it.original.copy(busySchedules = imported.schedules)) })
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Loaded(imported) }
+        val planning = Planning()
+        val vm = model(Store(original), reader, planning)
+        advanceUntilIdle()
+        replace(vm)
+        assertEquals(ConflictPhase.Review, vm.calendarConflict.value!!.phase)
+        assertTrue(planning.requests.isEmpty())
+    }
+
+    @Test fun changedFinalReadOfImportedConflictsRequiresReviewBeforeDispatch() = runTest(dispatcher) {
+        val reader = Reader().apply { outcome = busy() }
+        val planning = Planning()
+        val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
+        creation(vm)
+        vm.startCalendarRead()
+        vm.onCalendarReadPermission(true)
+        advanceUntilIdle()
+        reader.outcomes.addAll(listOf(busy(), busy("changed", 1)))
+        vm.generate()
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        assertEquals(ConflictPhase.Review, vm.calendarConflict.value!!.phase)
+        assertTrue(planning.requests.isEmpty())
+    }
+
     @Test fun creationReviewEditAndFinalChangedOccurrenceNeverSendStaleConsent() = runTest(dispatcher) {
         val reader = Reader().apply { outcome = busy() }
         val planning = Planning()
@@ -207,7 +367,11 @@ class CalendarConflictsViewModelTest {
         advanceUntilIdle()
         assertEquals(retained, planning.requests.single().busySchedules)
         planning.fail = false
-        reader.outcome = busy("new")
+        val changed = (busy("new") as CalendarReadOutcome.Loaded).snapshot
+        reader.outcome = CalendarReadOutcome.Loaded(changed.copy(
+            schedules = changed.schedules.map { it.copy(startDate = "2031/03/03/18/31") },
+            occurrences = changed.occurrences.map { it.copy(start = it.start.plusMinutes(1)) },
+        ))
         vm.retryGeneration()
         vm.onConflictPermission(true)
         advanceUntilIdle()
@@ -217,16 +381,15 @@ class CalendarConflictsViewModelTest {
         assertEquals(2, planning.requests.size)
     }
 
-    @Test fun deniedGenerationRequiresExplicitUncheckedAndFinalReadCannotReuseDenialForFreshData() = runTest(dispatcher) {
+    @Test fun revokedPermissionDuringGenerationReadRequiresExplicitUncheckedConsent() = runTest(dispatcher) {
         val reader = Reader().apply { outcome = CalendarReadOutcome.PermissionMissing }
         val planning = Planning()
         val vm = model(Store(PlanSnapshot.EMPTY), reader, planning)
         creation(vm)
         vm.generate()
-        assertTrue(vm.conflictPermissionPrompted())
-        assertFalse(vm.conflictPermissionPrompted())
-        vm.onConflictPermission(false)
-        assertEquals(0, reader.calls)
+        vm.onConflictPermission(true)
+        advanceUntilIdle()
+        assertEquals(1, reader.calls)
         assertEquals(ConflictPhase.Unchecked, vm.calendarConflict.value!!.phase)
         vm.continueCalendarConflict(true)
         advanceUntilIdle()
