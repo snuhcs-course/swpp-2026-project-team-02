@@ -218,6 +218,41 @@ class MainFlowUiTest {
     }
 
     @Test
+    fun cancellingAnInFlightCalendarCheckKeepsInputsAndRequiresANewGenerationAction() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        setWeekdayMinutes(Weekday.entries.first { it.dayOfWeek.value == 1 })
+        val form = host.viewModel.form.value
+        val pendingRead = CompletableDeferred<Unit>()
+        host.holdCalendarReads.set(pendingRead)
+        try {
+            click("계획 만들기")
+            waitForText("캘린더 시간을 확인하는 중이에요")
+            compose.waitUntil(10_000) { host.calendarReads.get() == 1 }
+            click("취소")
+            waitForText("보통 언제 공부할 수 있나요?")
+            assertEquals(form, host.viewModel.form.value)
+            compose.runOnIdle { pendingRead.complete(Unit) }
+            compose.waitForIdle()
+            assertNull(host.viewModel.calendarConflict.value)
+            assertEquals(0, host.planningCalls.get())
+            assertTrue(host.snapshot().plans.isEmpty())
+        } finally {
+            host.holdCalendarReads.set(null)
+            pendingRead.complete(Unit)
+        }
+
+        for (day in Weekday.entries.filter { it.dayOfWeek.value in 2..5 }) setWeekdayMinutes(day)
+        click("계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        assertEquals(3, host.calendarReads.get())
+        assertEquals(1, host.planningCalls.get())
+        assertEquals(1, host.snapshot().plans.size)
+    }
+
+    @Test
     fun freshGenerationConflictReviewCancelAndChangedFinalObservationSendOnlyOnePlan() = withApp { host ->
         startQuestions(host)
         answerAll(host)
