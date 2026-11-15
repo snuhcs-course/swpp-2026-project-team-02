@@ -22,6 +22,7 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
+import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,6 +41,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Duration
 import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -185,7 +187,7 @@ class CalendarReadViewModelTest {
 
     @Test fun laterExamDateAfterImportedShortfallChecksFreshBusyRows() = runTest(dispatcher) {
         val busy = listOf(
-            ScheduleRow("17", "2026/11/09/18/00", "2026/11/09/19/00", "외부 일정"),
+            ScheduleRow("17", "2026/11/09/18/00", "2026/11/09/18/55", "외부 일정"),
             ScheduleRow("23", "2026/11/11/18/00", "2026/11/11/19/00", "외부 일정"),
         )
         val calendar = Calendar(CalendarReadOutcome.Loaded(CalendarBusySnapshot(busy, 0, 0)))
@@ -203,7 +205,7 @@ class CalendarReadViewModelTest {
             calendarReadRepository = calendar,
         )
         vm.selectCertification(CERTIFICATION_ID)
-        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        vm.setExamDate(LocalDate.of(2026, 11, 10))
         vm.setLevel(CurrentLevel.BEGINNER)
         vm.loadQuestions()
         advanceUntilIdle()
@@ -222,17 +224,17 @@ class CalendarReadViewModelTest {
         val imported = vm.form.value
         assertEquals(busy, imported.busySchedules)
 
-        // 25 weekday slots before 2026-12-14, two of them taken by the import.
+        // Only Monday's 60-minute window precedes 2026-11-10, and the import leaves 5 minutes for 8 topics.
         assertTrue(generateReviewed(vm))
         advanceUntilIdle()
-        assertEquals(GenerationState.DemoShortfall(required = 32, available = 23), vm.generation.value)
+        assertEquals(GenerationState.DemoShortfall(required = 8, available = 5), vm.generation.value)
         assertEquals(busy, planning.requests.single().busySchedules)
 
         // An unchanged date keeps the import and the warning.
-        vm.setExamDate(LocalDate.of(2026, 12, 14))
+        vm.setExamDate(LocalDate.of(2026, 11, 10))
         assertEquals(imported, vm.form.value)
         assertEquals(CalendarReadState.Loaded(2, 0, 0), vm.calendarRead.value)
-        assertEquals(GenerationState.DemoShortfall(32, 23), vm.generation.value)
+        assertEquals(GenerationState.DemoShortfall(8, 5), vm.generation.value)
 
         // A later date clears the import. Explicit generation then reads fresh calendar rows.
         vm.setExamDate(LocalDate.of(2027, 1, 4))
@@ -252,17 +254,18 @@ class CalendarReadViewModelTest {
         val success = vm.generation.value as GenerationState.Success
         assertTrue(success.isDemo)
         val rows = success.response.schedules.filter { it.scheduleId.startsWith("study-") }
-        assertEquals(34, success.response.schedules.size)
-        assertEquals(32, rows.size)
-        assertTrue(rows.all { it.scheduleId.startsWith("study-") })
+        assertEquals(rows.size + 2, success.response.schedules.size)
         assertEquals(8, rows.groupingBy { it.topic }.eachCount().size)
-        assertTrue(rows.groupingBy { it.topic }.eachCount().values.all { it == 4 })
-        // Fresh checking still protects those external intervals.
-        assertFalse(rows.any { it.startDate == "2026/11/09/18/00" })
-        assertFalse(rows.any { it.startDate == "2026/11/11/18/00" })
+        // 40 weekday hours before 2027-01-04, less the 115 minutes the fresh import still blocks.
+        assertEquals(40L * 60 - 115, rows.sumOf { studyMinutes(it) })
+        assertTrue(rows.none { it.startDate.startsWith("2026/11/11/") })
+        assertEquals("2026/11/09/18/55", rows.first().startDate)
         assertTrue(success.response.scheduleCsv.contains("외부 일정"))
         assertEquals(1, vm.plans.value.size)
     }
+
+    private fun studyMinutes(row: ScheduleRow): Long =
+        Duration.between(WireDateTime.parseOrNull(row.startDate)!!, WireDateTime.parseOrNull(row.endDate)!!).toMinutes()
 
     private val studyPlan = StudyPlanResponse(
         listOf(ScheduleRow("study-1", "2026/11/02/18/00", "2026/11/02/19/00", "함수")),

@@ -3,13 +3,12 @@ package com.swpp.licenseplanner.data
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
-import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.LocalTopics
 import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
-import kotlin.math.ceil
+import kotlin.math.floor
 
 sealed interface DemoResult {
     data class Plan(val response: StudyPlanResponse) : DemoResult
@@ -17,19 +16,16 @@ sealed interface DemoResult {
 }
 
 /**
- * Deterministic local demonstration planner. Its workload
- * rules are demonstration assumptions; they do not mirror the backend's model
- * allocation, estimate necessary exam preparation, or use removed backend readiness rules.
+ * Deterministic local demonstration planner. Like a live plan, it fills every free minute of the
+ * entered windows inside the preparation period, outside imported busy rows, and splits those
+ * minutes in the backend's budget proportions: one reserved minute per topic, the rest by weight
+ * `2 - score/100` with largest-remainder rounding (ties: lower score, then catalog order).
  *
- * Each represented topic gets its own quota: one base session plus one extra when its
- * score is below 60%, each component multiplied by the effective level's multiplier and
- * rounded up separately, so even an advanced learner keeps a weak topic's extra session.
+ * It then walks the free minutes in time order, weakest topic first; a topic is split only where a
+ * free segment or its budget ends. It does not copy the backend's topic-order search or boundary
+ * smoothing, so its rows can differ from a live plan's.
  */
 object DemoPlanner {
-    private const val BASE_SESSIONS_PER_TOPIC = 1
-    private const val WEAK_TOPIC_EXTRA_SESSIONS = 1
-    private const val WEAK_TOPIC_PERCENT = 60.0
-    private const val SESSION_MINUTES = 60L
     const val CSV_HEADER = "schedule_id,start_date,end_date,topic"
 
     private data class TopicTotal(val topic: String, val possible: Double, val earned: Double) {
@@ -37,23 +33,22 @@ object DemoPlanner {
     }
 
     fun plan(request: StudyPlanRequest): DemoResult {
-        val topics = topicTotals(request)
-        val multiplier = levelMultiplier(request, topics)
-        val ordered = topics.sortedWith(compareBy<TopicTotal> { it.percent }
+        val topics = topicTotals(request).sortedWith(compareBy<TopicTotal> { it.percent }
             .thenBy { LocalTopics.catalogOrder.indexOf(it.topic) })
-        val assignments = assignTopics(ordered.map { it.topic to quota(it, multiplier) })
-        val required = assignments.size
         val busy = busyRows(request)
-        val slots = slots(request, busy.map { it.second })
-        if (slots.size < required) return DemoResult.Shortfall(required, slots.size)
+        val segments = freeSegments(request, busy.map { it.second })
+        val available = segments.sumOf { (start, end) -> Duration.between(start, end).toMinutes() }.toInt()
+        // Each topic needs at least one one-minute session, so M free minutes hold at most M sessions.
+        if (available < topics.size) return DemoResult.Shortfall(topics.size, available)
 
-        val study = slots.take(required).mapIndexed { index, (start, end) ->
+        val pieces = place(segments, topics.map { it.topic }.zip(budget(topics, available)))
+        val study = pieces.mapIndexed { index, (topic, interval) ->
             ScheduleRow(
                 scheduleId = "study-${index + 1}",
-                startDate = WireDateTime.format(start),
-                endDate = WireDateTime.format(end),
-                topic = assignments[index],
-            ) to (start to end)
+                startDate = WireDateTime.format(interval.first),
+                endDate = WireDateTime.format(interval.second),
+                topic = topic,
+            ) to interval
         }
         // Chronological like the backend CSV: start, then end, then ID.
         val rows = (busy + study)
@@ -85,46 +80,45 @@ object DemoPlanner {
                 )
             }
 
-    /** A topic's own session count: the rounded base (at least one) plus its rounded weak-topic extra. */
-    private fun quota(topic: TopicTotal, multiplier: Double): Int {
-        val base = maxOf(1, ceil(BASE_SESSIONS_PER_TOPIC * multiplier).toInt())
-        val extra = if (topic.percent < WEAK_TOPIC_PERCENT) ceil(WEAK_TOPIC_EXTRA_SESSIONS * multiplier).toInt() else 0
-        return base + extra
+    /**
+     * Minutes per topic in [ordered]'s order (weakest first) summing to [total]: one reserved minute
+     * each, the rest by weight `2 - score/100`, leftover minutes to the largest remainders with ties
+     * kept in [ordered]'s order.
+     */
+    private fun budget(ordered: List<TopicTotal>, total: Int): List<Int> {
+        if (ordered.isEmpty()) return emptyList()
+        val rest = total - ordered.size
+        val weights = ordered.map { 2.0 - it.percent / 100 }
+        val quotas = weights.map { rest * it / weights.sum() }
+        val minutes = quotas.map { floor(it).toInt() }.toMutableList()
+        val left = rest - minutes.sum()
+        ordered.indices.sortedWith(compareByDescending<Int> { quotas[it] - minutes[it] }.thenBy { it })
+            .take(left).forEach { minutes[it]++ }
+        return minutes.map { it + 1 }
     }
 
-    /**
-     * Topic per session in rounds over [quotas] in their given order (weakest first), skipping
-     * a topic once its own quota is filled, so extra sessions stay with the topics that earned them.
-     */
-    private fun assignTopics(quotas: List<Pair<String, Int>>): List<String> {
-        val remaining = quotas.map { it.second }.toIntArray()
-        val result = mutableListOf<String>()
-        while (remaining.any { it > 0 }) {
-            quotas.forEachIndexed { index, (topic, _) ->
-                if (remaining[index] > 0) {
-                    result += topic
-                    remaining[index]--
+    /** Consecutive minutes of each topic in order through the time-ordered [segments]; one row per piece. */
+    private fun place(
+        segments: List<Pair<LocalDateTime, LocalDateTime>>,
+        budgets: List<Pair<String, Int>>,
+    ): List<Pair<String, Pair<LocalDateTime, LocalDateTime>>> {
+        val result = mutableListOf<Pair<String, Pair<LocalDateTime, LocalDateTime>>>()
+        var topic = 0
+        var left = budgets.firstOrNull()?.second?.toLong() ?: 0L
+        for ((segmentStart, segmentEnd) in segments) {
+            var cursor = segmentStart
+            while (cursor < segmentEnd && topic < budgets.size) {
+                val end = cursor.plusMinutes(minOf(left, Duration.between(cursor, segmentEnd).toMinutes()))
+                result += budgets[topic].first to (cursor to end)
+                left -= Duration.between(cursor, end).toMinutes()
+                cursor = end
+                if (left == 0L) {
+                    topic++
+                    left = budgets.getOrNull(topic)?.second?.toLong() ?: 0L
                 }
             }
         }
         return result
-    }
-
-    private fun levelMultiplier(request: StudyPlanRequest, topics: List<TopicTotal>): Double {
-        val possible = topics.sumOf { it.possible }
-        val overall = if (possible > 0) topics.sumOf { it.earned } / possible * 100 else 0.0
-        val scoreLevel = when {
-            overall >= 80 -> CurrentLevel.ADVANCED
-            overall >= 60 -> CurrentLevel.INTERMEDIATE
-            else -> CurrentLevel.BEGINNER
-        }
-        val chosenLevel = CurrentLevel.fromSelfAssessment(request.selfAssessment) ?: CurrentLevel.BEGINNER
-        // The stricter (lower) of the chosen and score levels; enum order is beginner < advanced.
-        return when (minOf(chosenLevel, scoreLevel)) {
-            CurrentLevel.BEGINNER -> 2.0
-            CurrentLevel.INTERMEDIATE -> 1.0
-            CurrentLevel.ADVANCED -> 0.5
-        }
     }
 
     /** Imported busy rows as `external-<id>` rows with their parsed half-open intervals. */
@@ -137,49 +131,43 @@ object DemoPlanner {
         }
 
     /**
-     * One session per enabled day in its first window, from preparation start up to (excluding) the
-     * exam date: the earliest start where the whole session fits outside every busy interval.
+     * Free time in time order: every effective window starting on a date from preparation start up
+     * to (excluding) the exam date, clipped to the preparation period and cut by busy intervals.
+     * Touching ends do not overlap; only positive whole-minute pieces remain.
      */
-    private fun slots(
+    private fun freeSegments(
         request: StudyPlanRequest,
         busy: List<Pair<LocalDateTime, LocalDateTime>>,
     ): List<Pair<LocalDateTime, LocalDateTime>> {
-        val first = WireDateTime.parseOrNull(request.preparationStart)?.toLocalDate() ?: return emptyList()
+        val preparationAt = WireDateTime.parseOrNull(request.preparationStart) ?: return emptyList()
         val examAt = WireDateTime.parseOrNull(request.examDate) ?: return emptyList()
-        val exam = examAt.toLocalDate()
         val context = AvailabilityWire.context(request) ?: return emptyList()
         val result = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
-        var date: LocalDate = first
-        while (date.isBefore(exam)) {
-            // The date's own week decides its first window, which may run past midnight.
-            val window = context.windowsStarting(date).minByOrNull { it.start }
-            if (window != null) {
+        var date: LocalDate = preparationAt.toLocalDate()
+        while (date.isBefore(examAt.toLocalDate())) {
+            // The date's own week decides its windows, which may run past midnight.
+            for (window in context.windowsStarting(date)) {
                 val interval = window.intervalOn(date)
-                val windowStart = interval.start
-                val windowEnd = minOf(interval.end, examAt)
-                val duration = Duration.between(windowStart, minOf(windowStart.plusMinutes(SESSION_MINUTES), windowEnd))
-                if (!duration.isNegative && !duration.isZero) {
-                    freeStart(windowStart, windowEnd, duration, busy)?.let { start -> result += start to start.plus(duration) }
-                }
+                result += withoutBusy(maxOf(interval.start, preparationAt), minOf(interval.end, examAt), busy)
             }
             date = date.plusDays(1)
         }
-        return result
+        return result.sortedBy { it.first }
     }
 
-    /** Earliest start in [windowStart, windowEnd) leaving [duration] free of busy intervals; touching ends do not overlap. */
-    private fun freeStart(
-        windowStart: LocalDateTime,
-        windowEnd: LocalDateTime,
-        duration: Duration,
+    private fun withoutBusy(
+        from: LocalDateTime,
+        until: LocalDateTime,
         busy: List<Pair<LocalDateTime, LocalDateTime>>,
-    ): LocalDateTime? {
-        var candidate = windowStart
-        for ((busyStart, busyEnd) in busy.filter { it.first < windowEnd && windowStart < it.second }.sortedBy { it.first }) {
-            if (!candidate.plus(duration).isAfter(busyStart)) break
-            if (busyEnd.isAfter(candidate)) candidate = busyEnd
+    ): List<Pair<LocalDateTime, LocalDateTime>> {
+        val pieces = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
+        var cursor = from
+        for ((busyStart, busyEnd) in busy.filter { it.first < until && from < it.second }.sortedBy { it.first }) {
+            if (busyStart > cursor) pieces += cursor to busyStart
+            if (busyEnd > cursor) cursor = busyEnd
         }
-        return candidate.takeIf { !it.plus(duration).isAfter(windowEnd) }
+        if (cursor < until) pieces += cursor to until
+        return pieces.filter { (start, end) -> Duration.between(start, end).toMinutes() > 0 }
     }
 }
 
