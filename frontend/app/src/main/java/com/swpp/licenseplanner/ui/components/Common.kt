@@ -451,20 +451,3 @@ fun InputBox(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, h
         }
     }
 }
-
-/** 44dp square stepper button with the Figma minus/plus icons. */
-@Composable
-fun StepperButton(@DrawableRes icon: Int, description: String, enabled: Boolean, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        shape = MaterialTheme.shapes.small,
-        color = Paper,
-        border = BorderStroke(1.5.dp, if (enabled) ControlBorder else Divider),
-        modifier = Modifier.size(44.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Image(painterResource(icon), contentDescription = description, alpha = if (enabled) 1f else 0.3f)
-        }
-    }
-}
