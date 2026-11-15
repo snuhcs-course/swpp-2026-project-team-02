@@ -131,8 +131,9 @@ boundary exchanges. Weaker topics receive at least as many total minutes as
 stronger topics. The first session can belong to a stronger topic, and boundary
 exchanges can spread a topic across several blocks. Fifteen minutes is a
 soft optimization target, not a minimum duration. Legacy topic-based internal
-calls remain supported. The public HTTP contract is unchanged. See the
-[v2 design and offline replay results](../docs/iter4-p10/V2_DESIGN.md).
+calls remain supported. The public HTTP contract is unchanged. The v2 design
+and offline replay results are archived under `docs/iter4-p10/` in the
+`iter4-archive-20261116` git tag.
 
 Example weekly availability JSON:
 
