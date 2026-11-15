@@ -101,12 +101,13 @@ fun GenerateScreen(
 
 /**
  * Adapted from frame 2005:474 (frame 2123:2 shows it again after an exam-date change):
- * demo-only insufficient-time result with required and available session counts and
+ * demo-only insufficient-time result with the topic count and free minutes and
  * ways back to the exam-date editor (frames 2122:2/2122:58) or availability. No
  * partial plan.
  */
 @Composable
 fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEditAvailability: () -> Unit) {
+    val text = shortfallText(required, available)
     AppScreen(
         title = "공부 시간",
         onNav = onEditAvailability,
@@ -117,10 +118,17 @@ fun ShortfallScreen(required: Int, available: Int, onEditDates: () -> Unit, onEd
     ) {
         Heading("시험일 전에 시간이 부족해요")
         AlertCard(
-            title = "필요한 공부 ${required}회 중 ${available}회만 들어가요",
-            body = "시험일 전까지 고른 요일에 넣을 수 있는 공부는 ${available}회인데, 데모 계산으로는 ${required}회가 필요해요.",
+            title = text.title,
+            body = text.body,
         )
         Note("모의고사 답안과 공부 시간은 유지돼요.")
         Note("데모 플래너의 로컬 시연 계산이에요. 시험일을 늦추거나 공부하는 요일을 늘려 보세요.")
     }
 }
+
+internal data class ShortfallText(val title: String, val body: String)
+
+internal fun shortfallText(required: Int, available: Int) = ShortfallText(
+    title = "공부 주제 ${required}개에 비어 있는 시간이 ${available}분뿐이에요",
+    body = "데모 계획은 주제마다 최소 1분이 필요해요. 시험일 전까지 입력한 공부 시간 중 캘린더 일정과 겹치지 않는 시간은 ${available}분이에요.",
+)
