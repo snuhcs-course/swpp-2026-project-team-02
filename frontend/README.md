@@ -235,19 +235,19 @@ fails if either fails. Its always-run evidence upload preserves separate reports
 explicitly pulled UI diagnostics and fixture logs for seven days. A local pass
 does not establish a hosted run; hosted execution remains unverified until observed.
 
-On the HE branch, `WorkflowRecoveryUiTest` mounts the corresponding Compose
-screens with fixed state. It covers opening and dismissing contextual help,
-staying on or cancelling generation after Back, opting into the original
-error diagnostic and retrying, refreshing the daily chart when the week changes,
-and following a moved session from its source week to its destination. The live
-HTTP cancellation contract and backend review-round policy have their own tests.
+The HE branch's `WorkflowRecoveryUiTest` was not merged. In the demo
+`MainFlowUiTest`, `cancellingGenerationKeepsTheSavedDraftAndAllInputs` covers
+cancelling generation, and `overnightAndOverrideGraphsFollowThePlanThroughALaterWeekMove`
+covers the daily chart across weeks and following a moved session to its
+destination. No instrumentation test opens contextual help or the error-details
+retry path. The live HTTP cancellation contract has its own JVM tests.
 
-When the Android remaining-work flow is available, extend the full navigation
-suite with a 0/40/60/60-minute review, cancel and confirm, and a second re-plan
-that does not subtract the first report again. Check that completed rows,
-another saved plan and a creation draft survive the update and a fresh restore.
-Cover no-fit and zero-work outcomes, one confirmed request, and a failed local
-save followed by a retry without another request or calendar write.
+The remaining-work flow is covered by
+`remainingReviewCancelAndRepeatedReplanPreserveEffortIdentityAndOtherPlans`
+(a 60-minute row with 20 minutes reported, cancel and confirm, a repeated
+re-plan, another saved plan and the creation draft kept, no calendar write) and
+`remainingSaveFailureRetriesLocallyAndEmptyOrNoFitHasAReturnPath` (local save
+retry, zero-work and no-fit outcomes).
 
 ### Live instrumentation test
 

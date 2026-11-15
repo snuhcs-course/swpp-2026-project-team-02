@@ -79,6 +79,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     val planningRequests = java.util.concurrent.CopyOnWriteArrayList<StudyPlanRequest>()
     @Volatile var calendarOutcome: CalendarReadOutcome = CalendarReadOutcome.Loaded(CalendarBusySnapshot(emptyList(), 0, 0))
     val holdCalendarReads = AtomicReference<CompletableDeferred<Unit>?>(null)
+    val holdPlanning = AtomicReference<CompletableDeferred<Unit>?>(null)
     val destination = CalendarDestination(91, "테스트 전용 캘린더")
     val saveCalls = AtomicInteger()
     var storageScope = PlanStorageScope.DEMO
@@ -136,16 +137,19 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         }
         val planning = FlavorRepositories.planningRepository()
         val countedPlanning = object : PlanningRepository {
-            override suspend fun generate(request: StudyPlanRequest) = planning.generate(request).let { outcome ->
-                planningRequests += request
-                planningCalls.incrementAndGet()
-                val topic = returnedTopic
-                if (outcome is PlanOutcome.Success && topic != null) {
-                    val target = outcome.response.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId
-                    outcome.copy(response = outcome.response.copy(schedules = outcome.response.schedules.map {
-                        if (it.scheduleId == target) it.copy(topic = topic) else it
-                    }))
-                } else outcome
+            override suspend fun generate(request: StudyPlanRequest): PlanOutcome {
+                holdPlanning.get()?.await()
+                return planning.generate(request).let { outcome ->
+                    planningRequests += request
+                    planningCalls.incrementAndGet()
+                    val topic = returnedTopic
+                    if (outcome is PlanOutcome.Success && topic != null) {
+                        val target = outcome.response.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId
+                        outcome.copy(response = outcome.response.copy(schedules = outcome.response.schedules.map {
+                            if (it.scheduleId == target) it.copy(topic = topic) else it
+                        }))
+                    } else outcome
+                }
             }
         }
         val store = AtomicFilePlanStore.open(storeContext, storageScope)
@@ -221,6 +225,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         check(loaded is PlanStoreLoad.Loaded) { "Test-owned snapshot could not be read: $loaded" }
         loaded.snapshot
     }
+
+    fun snapshotBytes(): ByteArray = File(directory, PlanStorageScope.fileName(storageScope)).readBytes()
 
     fun seedDraft(draft: com.swpp.licenseplanner.domain.CreationDraft) = runBlocking {
         val store = AtomicFilePlanStore.open(storeContext, storageScope)

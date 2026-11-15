@@ -1529,6 +1529,126 @@ class MainFlowUiTest {
         }
     }
 
+    @Test
+    fun cancellingGenerationKeepsTheSavedDraftAndAllInputs() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        compose.runOnIdle {
+            for (day in Weekday.entries.take(5)) host.viewModel.setDuration(day, 120)
+        }
+        val draft = CreationDraft(host.viewModel.form.value, CreationStep.AVAILABILITY, host.viewModel.questionIndex.value)
+        host.seedDraft(draft)
+        host.recreate()
+        click("이어서 만들기")
+        val inputs = host.viewModel.form.value
+        val bytes = host.snapshotBytes()
+        val gate = CompletableDeferred<Unit>()
+        host.holdPlanning.set(gate)
+        click("계획 만들기")
+        compose.waitUntil(10_000) { host.viewModel.generation.value == GenerationState.Loading }
+        waitForText("계획을 만드는 중이에요")
+        pressBack()
+        waitForText("계획 생성을 취소할까요?")
+        show("계획 생성을 취소할까요?")
+        host.capture("generation-cancel-dialog")
+        click("뒤로 돌아가기 취소")
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("계획 생성을 취소할까요?").fetchSemanticsNodes().isEmpty() }
+        assertEquals(GenerationState.Loading, host.viewModel.generation.value)
+        pressBack()
+        waitForText("계획 생성을 취소할까요?")
+        click("계획 생성 취소")
+        waitForText("언제, 얼마나 공부할 건가요?")
+        show("언제, 얼마나 공부할 건가요?")
+        gate.complete(Unit)
+        compose.waitForIdle()
+        assertEquals(inputs, host.viewModel.form.value)
+        assertEquals(draft, host.viewModel.committedDraft.value)
+        assertArrayEquals(bytes, host.snapshotBytes())
+        assertEquals(draft, host.snapshot().creationDraft)
+        assertTrue(host.snapshot().plans.isEmpty())
+        assertEquals(0, host.planningCalls.get())
+        host.capture("generation-cancel-kept-inputs")
+    }
+
+    @Test
+    fun overnightAndOverrideGraphsFollowThePlanThroughALaterWeekMove() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        val first = LocalDate.of(2026, 11, 16)
+        val second = first.plusWeeks(1)
+        compose.runOnIdle {
+            host.viewModel.setDuration(Weekday.MONDAY, 90)
+            host.viewModel.setDayStart(Weekday.MONDAY, LocalTime.of(23, 30))
+            host.viewModel.setDuration(Weekday.WEDNESDAY, 240)
+            host.viewModel.setDuration(Weekday.FRIDAY, 240)
+            for (day in listOf(Weekday.THURSDAY, Weekday.SATURDAY, Weekday.SUNDAY)) host.viewModel.setDuration(day, 60)
+            host.viewModel.clearWeek(second)
+            host.viewModel.setDuration(Weekday.WEDNESDAY, 240, second)
+            host.viewModel.setDayStart(Weekday.WEDNESDAY, LocalTime.of(7, 0), second)
+            host.viewModel.showAvailabilityWeek(first)
+        }
+        show("23:30 – 다음 날 01:00")
+        click("계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        val before = host.snapshot().plans.single()
+        fun assertGraph(date: LocalDate, available: Long) {
+            val label = "${date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)} ${monthDay(date)}"
+            val planned = PlanGrouping.sessions(before.current.schedules).filter { !it.isExternal && it.start.toLocalDate() == date }
+                .sumOf { it.durationMinutes }
+            val value = "배정 ${PlanGrouping.formatDuration(planned)} / 가용 ${PlanGrouping.formatDuration(available)}"
+            val node = hasText(value) and hasParent(hasAnyChild(hasText(label)))
+            scrollTo(node)
+            compose.onNode(node).assertIsDisplayed()
+        }
+        assertGraph(first, 30)
+        assertGraph(first.plusDays(1), 60)
+        host.capture("plan-overnight-graph")
+        clickDescription("다음 주")
+        assertGraph(second.plusDays(2), 240)
+        compose.onAllNodesWithText("월 ${monthDay(second)}").assertCountEquals(0)
+        host.capture("plan-override-graph")
+        click("처음으로", lazy = true)
+        openSavedPlan()
+        assertGraph(first, 30)
+        assertGraph(first.plusDays(1), 60)
+        show("공부 가능 23:30–다음 날 01:00")
+        compose.onAllNodes(hasText("null", substring = true)).assertCountEquals(0)
+        host.capture("adjustment-overnight-graph-label")
+        clickDescription("다음 주")
+        assertGraph(second.plusDays(2), 240)
+        show("공부 가능 07:00–11:00")
+        compose.onAllNodes(hasText("null", substring = true)).assertCountEquals(0)
+        host.capture("adjustment-override-graph-label")
+        clickDescription("이전 주")
+        val target = PlanGrouping.sessions(before.current.schedules).first { !it.isExternal }
+        clickSession(target)
+        click("시간 직접 옮기기")
+        val destination = second.plusDays(2).atTime(14, 0)
+        compose.runOnIdle { host.viewModel.setManualStart(destination) }
+        click("이 시간으로 옮기기")
+        compose.waitUntil(10_000) { host.viewModel.adjustment.value.canConfirmOutsideAvailability }
+        click("이번 한 번만 옮기기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        val after = host.snapshot().plans.single()
+        assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
+        val moved = after.current.schedules.single { it.scheduleId == target.scheduleId }
+        assertEquals(WireDateTime.format(destination), moved.startDate)
+        assertMoveResult(before.current.schedules.single { it.scheduleId == target.scheduleId }, moved, "이 기기에 저장했어요")
+        host.capture("later-week-move-result")
+        val weeks = PlanGrouping.weeks(after.current.schedules)
+        showWeek(first, 0, weeks.size)
+        revealMovedSession()
+        showWeek(second, 1, weeks.size)
+        assertSession(PlanGrouping.sessions(after.current.schedules).single { it.scheduleId == target.scheduleId }, selectable = true, moved = true)
+        host.capture("later-week-destination-link")
+        assertEquals(2, host.adjustmentCalls.get())
+        assertEquals(0, host.calendarWrites.get())
+    }
+
     private fun startQuestions(host: DemoUiHost) {
         show("아직 만든 계획이 없어요.")
         click("계획 생성", substring = true)
