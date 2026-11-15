@@ -1,5 +1,7 @@
+import json
 import unittest
 from datetime import datetime
+from pathlib import Path
 
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions
@@ -45,6 +47,30 @@ def as_rows(schedule):
 
 
 class RemainingPlacementTests(unittest.TestCase):
+    def test_shared_remaining_study_cases(self):
+        fixture = Path(__file__).with_name("fixtures") / "remaining_study_parity.json"
+        cases = json.loads(fixture.read_text(encoding="utf-8"))["cases"]
+        self.assertEqual(len(cases), 8)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                schedule = parse_schedule_rows(case["rows"])
+                before = render_schedule_csv(schedule)
+                arguments = {
+                    "availability": parse_availability_context({
+                        key: case[key] for key in ("weekly_availability", "availability_overrides")
+                    }),
+                    **{key: datetime.strptime(case[key], "%Y/%m/%d/%H/%M")
+                       for key in ("preparation_start", "exam_date", "replan_from", "now")},
+                }
+                instructions = tuple(RemainingSession(**item) for item in case["remaining_sessions"])
+                if "expected_failure" in case:
+                    with self.assertRaisesRegex(ValueError, case["expected_failure"]):
+                        place_remaining_sessions(schedule, instructions, **arguments)
+                else:
+                    result = place_remaining_sessions(schedule, instructions, **arguments)
+                    self.assertEqual(as_rows(result), as_rows(parse_schedule_rows(case["expected_rows"])))
+                self.assertEqual(render_schedule_csv(schedule), before)
+
     def test_sources_are_replaced_and_unselected_rows_are_protected(self):
         result = as_rows(place(entries(), ("study-1", 60, "study-1"), ("study-4", 20, "study-5")))
         self.assertEqual(result, {
