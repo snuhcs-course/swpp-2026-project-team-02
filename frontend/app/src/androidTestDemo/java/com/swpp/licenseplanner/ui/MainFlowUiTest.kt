@@ -1353,6 +1353,78 @@ class MainFlowUiTest {
         host.capture("move-saved")
     }
 
+    private fun seedRemainingPlans(host: DemoUiHost, zero: Boolean = false, noFit: Boolean = false): com.swpp.licenseplanner.data.PlanSnapshot {
+        val original = com.swpp.licenseplanner.data.model.StudyPlanRequest(
+            com.swpp.licenseplanner.domain.CERTIFICATION_ID, "2026/11/09/00/00",
+            if (noFit) "2026/11/16/18/30" else "2026/11/30/00/00", "beginner",
+            com.swpp.licenseplanner.data.model.AssessmentResults(com.swpp.licenseplanner.domain.CERTIFICATION_ID, emptyList()),
+            7, Weekday.entries.associate { it.key to listOf(com.swpp.licenseplanner.data.model.TimeWindow("18:00", durationMinutes = 240)) })
+        val rows = (1..4).map { id -> ScheduleRow("study-$id", "2026/11/${11 + id}/18/00", "2026/11/${11 + id}/19/00", "공부 주제 $id") }
+        val reports = if (zero) rows.associate { it.scheduleId to StudyCheckIn(StudyCheckInStatus.Done, 20) } else mapOf(
+            "study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20), "study-2" to StudyCheckIn(StudyCheckInStatus.Partly, 20),
+            "study-3" to StudyCheckIn(StudyCheckInStatus.Missed, 0))
+        val a = com.swpp.licenseplanner.domain.SessionPlan.register(1, original,
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true).copy(checkIns = reports,
+            keptConflicts = mapOf("study-40" to setOf("a".repeat(64))))
+        val b = a.copy(ordinal = 2, checkIns = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 5)),
+            keptConflicts = mapOf("study-60" to setOf("b".repeat(64))))
+        val draft = CreationDraft(com.swpp.licenseplanner.domain.PlanFormState(preparationStart = LocalDate.of(2026, 11, 16)), CreationStep.CERTIFICATION)
+        val snapshot = com.swpp.licenseplanner.data.PlanSnapshot(listOf(a, b), creationDraft = draft)
+        host.seedSnapshot(snapshot); host.recreate()
+        click("계획 조정"); click("계획 1 · $CERTIFICATION_NAME")
+        return snapshot
+    }
+
+    @Test fun remainingReviewCancelAndRepeatedReplanPreserveEffortIdentityAndOtherPlans() = withApp { host ->
+        val original = seedRemainingPlans(host)
+        val reads = host.calendarReads.get()
+        click("남은 공부 다시 계획하기")
+        show("남은 시간 160분")
+        show("예정 60분 · 실제 20분 · 남은 시간 40분")
+        host.capture("remaining-review")
+        click("취소")
+        assertEquals(original, host.snapshot()); assertEquals(0, host.remainingCalls.get())
+        click("남은 공부 다시 계획하기"); click("남은 공부 다시 배치하기")
+        host.awaitSaved(); show("남은 공부 160분을 배치했어요")
+        host.capture("remaining-saved")
+        val accepted = host.snapshot()
+        assertEquals(original.plans[1], accepted.plans[1]); assertEquals(original.creationDraft, accepted.creationDraft)
+        assertEquals(original.plans[0].checkIns, accepted.plans[0].checkIns)
+        assertEquals(original.plans[0].keptConflicts, accepted.plans[0].keptConflicts)
+        assertEquals(original.plans[0].current.schedules.first(), accepted.plans[0].current.schedules.first { it.scheduleId == "study-1" })
+        assertEquals(setOf("study-1", "study-41", "study-42", "study-4"), accepted.plans[0].current.schedules.map { it.scheduleId }.toSet())
+        assertNull(accepted.plans[0].checkInFor("study-41"))
+        assertEquals(reads, host.calendarReads.get()); assertEquals(0, host.calendarWrites.get())
+        click("계획 보기"); click("남은 공부 다시 계획하기"); show("남은 시간 160분")
+        click("남은 공부 다시 배치하기"); host.awaitSaved()
+        assertEquals(accepted.plans[0].current.schedules.map { it.scheduleId }.toSet(), host.snapshot().plans[0].current.schedules.map { it.scheduleId }.toSet())
+        assertEquals(2, host.remainingCalls.get())
+        host.recreate(); click("계획 조정"); click("계획 1 · $CERTIFICATION_NAME")
+        assertEquals(accepted.plans[1], host.snapshot().plans[1]); assertEquals(original.creationDraft, host.snapshot().creationDraft)
+        assertNull(host.viewModel.adjustment.value.failedScheduleId); assertEquals(2, host.remainingCalls.get())
+    }
+
+    @Test fun remainingSaveFailureRetriesLocallyAndEmptyOrNoFitHasAReturnPath() = withApp { host ->
+        val original = seedRemainingPlans(host)
+        click("남은 공부 다시 계획하기")
+        host.failSaves.set(true)
+        click("남은 공부 다시 배치하기")
+        waitForText("3개 일정 · 아직 이 기기에 저장하지 못했어요.")
+        assertEquals(original, host.snapshot())
+        host.capture("remaining-unsaved")
+        host.failSaves.set(false); click("다시 저장하기"); host.awaitSaved()
+        assertEquals(1, host.remainingCalls.get()); show("3개 일정 · 이 기기에 저장했어요")
+        seedRemainingPlans(host, zero = true)
+        click("남은 공부 다시 계획하기"); show("다시 배치할 남은 공부가 없어요")
+        host.capture("remaining-empty"); click("계획으로 돌아가기")
+        assertEquals(1, host.remainingCalls.get())
+        val noFit = seedRemainingPlans(host, noFit = true)
+        click("남은 공부 다시 계획하기"); click("남은 공부 다시 배치하기")
+        show("현재 배치 규칙으로 남은 공부를 모두 배치하지 못했어요")
+        host.capture("remaining-no-fit"); click("계획으로 돌아가기")
+        assertEquals(noFit, host.snapshot()); assertEquals(2, host.remainingCalls.get())
+    }
+
     private fun withApp(block: (DemoUiHost) -> Unit) {
         val host = DemoUiHost(compose, testName.methodName)
         try {

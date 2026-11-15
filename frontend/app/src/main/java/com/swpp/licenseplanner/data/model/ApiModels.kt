@@ -134,6 +134,37 @@ data class ScheduleAdjustmentResponse(
     @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot? = null,
 )
 
+@Serializable
+data class RemainingSession(
+    @SerialName("schedule_id") val scheduleId: String,
+    @SerialName("remaining_minutes") val remainingMinutes: Int,
+    @SerialName("replacement_schedule_id") val replacementScheduleId: String,
+)
+
+/** Batch mode deliberately has no single-target or manual-consent fields. */
+@Serializable
+data class RemainingStudyRequest(
+    val mode: String = "remaining",
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    val schedules: List<ScheduleRow>,
+    @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>>,
+    @SerialName("preparation_start") val preparationStart: String,
+    @SerialName("exam_date") val examDate: String,
+    @SerialName("replan_from") val replanFrom: String,
+    @SerialName("remaining_sessions") val remainingSessions: List<RemainingSession>,
+)
+
+@Serializable
+data class RemainingStudyResponse(
+    val schedules: List<ScheduleRow>,
+    @SerialName("schedule_csv") val scheduleCsv: String,
+    val action: String,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot,
+    @SerialName("agent_summary") val agentSummary: String? = null,
+)
+
 /**
  * `GET /study-plans` response. Both lists are required, so a missing property is
  * invalid rather than an empty store; the download URL and future fields are ignored.

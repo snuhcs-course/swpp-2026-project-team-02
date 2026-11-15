@@ -6,6 +6,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.swpp.licenseplanner.BuildConfig
+import com.swpp.licenseplanner.data.RemainingStudyInput
+import com.swpp.licenseplanner.data.RemainingStudyRepository
+import com.swpp.licenseplanner.data.remainingResponseProblem
+import com.swpp.licenseplanner.domain.RemainingStudy
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
@@ -313,6 +317,7 @@ class PlanFormViewModel(
      * which is captured once for the creation form.
      */
     private val currentDate: () -> LocalDate = { LocalDate.now() },
+    private val remainingStudyRepository: RemainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
     private val currentMinute: () -> LocalDateTime = {
         LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).withSecond(0).withNano(0)
     },
@@ -334,6 +339,9 @@ class PlanFormViewModel(
     /** Ordinal of the plan shown by the generated-result screen; null after form edits. */
     private val _generatedPlan = MutableStateFlow<Int?>(null)
     val generatedPlan: StateFlow<Int?> = _generatedPlan.asStateFlow()
+
+    private val _remainingStudy = MutableStateFlow<RemainingStudyState?>(null)
+    val remainingStudy: StateFlow<RemainingStudyState?> = _remainingStudy.asStateFlow()
 
     private val _adjustment = MutableStateFlow(AdjustmentSelection())
     val adjustment: StateFlow<AdjustmentSelection> = _adjustment.asStateFlow()
@@ -409,6 +417,7 @@ class PlanFormViewModel(
         val replacementId: Int? = null,
         val replacementOrdinal: Int? = null,
         val keep: KeepFeedback? = null,
+        val remaining: RemainingStudyState.Success? = null,
     )
 
     private var pendingWrite: PendingLocalWrite? = null
@@ -442,7 +451,10 @@ class PlanFormViewModel(
     private var foregroundGrant = false
     private var foregroundEpoch = 0
     private var noticePending = false
-    private var noticeReading = false
+    private val _noticeReading = MutableStateFlow(false)
+    private var noticeReading: Boolean
+        get() = _noticeReading.value
+        set(value) { _noticeReading.value = value }
 
     private val generating get() = _generation.value == GenerationState.Loading
     private val adjusting get() = _adjustment.value.state == AdjustmentState.Loading
@@ -455,7 +467,7 @@ class PlanFormViewModel(
      * on the plan it started from.
      */
     private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
-        _manualReview.value != null
+        _manualReview.value != null || _remainingStudy.value.holdsSource
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -466,16 +478,19 @@ class PlanFormViewModel(
      * adjustment, reload, an export or a calendar read changes.
      */
     val exportBlocks: StateFlow<Map<Int, ExportBlock?>> = combine(
-        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, _calendarConflict) { export, read, conflict -> Triple(export, read, conflict) },
+        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, combine(_calendarConflict, _remainingStudy, _manualReview, _noticeReading, _noticePermission) { conflict, remaining, manual, notice, permission ->
+            conflict != null || remaining.holdsSource || manual != null || notice || permission != null
+        }) { export, read, conflict -> Triple(export, read, conflict) },
     ) { plans, storage, generation, adjustment, (export, read, conflict) ->
-        plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read, conflictBusy = conflict != null) }
+        plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read, conflictBusy = conflict) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, _plans.value.associate { it.ordinal to currentExportBlock(it) })
 
     init {
         viewModelScope.launch { restore() }
         viewModelScope.launch {
             combine(_plans, _storage, _generation, _adjustment,
-                combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision, _profile) { _, _, _, _, _ -> Unit },
+                combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision,
+                    combine(_profile, _remainingStudy) { _, _ -> Unit }) { _, _, _, _, _ -> Unit },
             ) { _, _, _, _, _ -> Unit }.collect { refreshNoticesWhenIdle() }
         }
     }
@@ -499,7 +514,7 @@ class PlanFormViewModel(
     }
 
     fun requestNoticeCheck(): Boolean {
-        if (!storageReady || busy || generating || _noticePermission.value != null) return false
+        if (!storageReady || busy || generating || noticeReading || _noticePermission.value != null) return false
         _noticePermission.value = ConflictPhase.RequestingPermission
         return true
     }
@@ -890,11 +905,13 @@ class PlanFormViewModel(
             _calendarConflict.value?.kind == ConflictKind.Export &&
             _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
         if (generating || adjusting || reloading || readingCalendar || profileBusy || _questionLoad.value == QuestionLoadState.Loading ||
+            _remainingStudy.value.holdsSource || noticeReading || _manualReview.value != null ||
             (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
     }
 
     private fun regenerationSaveReady(): Boolean = storageReady && pendingWrite == null &&
+        (_remainingStudy.value as? RemainingStudyState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _keepFeedback.value?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _checkIn.value?.save !in setOf(CheckInSave.Saving, CheckInSave.Unsaved) &&
         (_adjustment.value.state as? AdjustmentState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
@@ -1113,6 +1130,92 @@ class PlanFormViewModel(
         if (plan.recovery != PlanRecovery.Ready || !plan.isStudy(scheduleId)) return
         _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle, manual = null)
         pendingAdjustment = null
+    }
+
+    /** The same entry rule is used by rendered controls and direct calls. */
+    fun remainingStudyBlockReason(ordinal: Int): String? {
+        if (!regenerationSaveReady()) return "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
+        val source = plan(ordinal) ?: return "계획을 찾을 수 없어요."
+        if (!source.canAdjust) return "최신 계획을 확인하거나 새 계획을 만들어 주세요."
+        if (busy || generating || profileBusy || noticeReading || _noticePermission.value != null ||
+            _questionLoad.value == QuestionLoadState.Loading || _adjustment.value.manual != null ||
+            _checkIn.value?.save == CheckInSave.Editing) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
+        return null
+    }
+
+    fun startRemainingStudy(ordinal: Int): Boolean {
+        if (remainingStudyBlockReason(ordinal) != null) return false
+        val source = plan(ordinal) ?: return false
+        _remainingStudy.value = try {
+            RemainingStudyState.Review(RemainingStudyInput(source, RemainingStudy.calculate(source),
+                currentMinute().withSecond(0).withNano(0).plusMinutes(1)))
+        } catch (_: IllegalArgumentException) {
+            RemainingStudyState.Invalid("공부 시간이나 일정 번호를 처리할 수 없어요. 계획을 확인해 주세요.")
+        } catch (_: ArithmeticException) {
+            RemainingStudyState.Invalid("공부 시간이나 일정 번호가 처리 가능한 범위를 넘었어요.")
+        }
+        return true
+    }
+
+    /** Cancelling or leaving a result never writes or resumes a mutation. */
+    fun closeRemainingStudy(): Boolean {
+        if (_remainingStudy.value is RemainingStudyState.Loading ||
+            (_remainingStudy.value as? RemainingStudyState.Success)?.save == MoveSave.Saving) return false
+        _remainingStudy.value = null
+        refreshNoticesWhenIdle()
+        return true
+    }
+
+    fun confirmRemainingStudy(): Boolean {
+        val review = _remainingStudy.value as? RemainingStudyState.Review ?: return false
+        val input = review.input
+        if (input.work.totalMinutes == 0L) return false
+        if (!regenerationSaveReady() || plan(input.source.ordinal) != input.source ||
+            adjusting || reloading || exporting || readingCalendar || generating || profileBusy || noticeReading ||
+            _calendarConflict.value != null || _manualReview.value != null || _noticePermission.value != null ||
+            _adjustment.value.manual != null || _checkIn.value?.save == CheckInSave.Editing) {
+            _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었거나 저장할 변경이 있어요. 다시 검토해 주세요.")
+            return false
+        }
+        _remainingStudy.value = RemainingStudyState.Loading(input)
+        viewModelScope.launch {
+            val ordinal = input.source.ordinal
+            val live = !input.source.isDemo
+            if (live && !commit(unresolved(ordinal, null), inFlightAdjustment = ordinal)) {
+                pendingWrite = PendingLocalWrite(committedSnapshot)
+                _remainingStudy.value = RemainingStudyState.Invalid("이 기기에 저장하지 못해 요청을 보내지 않았어요. 다시 저장한 뒤 새로 검토해 주세요.")
+                return@launch
+            }
+            val received = remainingStudyRepository.replan(input)
+            val outcome = if (received is AdjustmentOutcome.Success) {
+                remainingResponseProblem(input, received.response)?.let { AdjustmentOutcome.Failure(ApiError.InvalidResponse(it)) } ?: received
+            } else received
+            when (outcome) {
+                is AdjustmentOutcome.Success -> {
+                    updatePlan(ordinal) { it.copy(current = outcome.response, recovery = PlanRecovery.Ready, recoveryScheduleId = null) }
+                    if (_adjustment.value.planOrdinal == ordinal) _adjustment.value = AdjustmentSelection(planOrdinal = ordinal)
+                    pendingAdjustment = null
+                    acceptedManualReview = null
+                    val result = RemainingStudyState.Success(input, outcome.response.schedules)
+                    _remainingStudy.value = result
+                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), remaining = result))
+                }
+                AdjustmentOutcome.DemoNoSlot -> _remainingStudy.value = RemainingStudyState.Failure(input, noFit = true)
+                is AdjustmentOutcome.Failure -> {
+                    val recovery = when {
+                        !live -> PlanRecovery.Ready
+                        outcome.error == ApiError.PlanNotFound -> PlanRecovery.Missing
+                        outcome.error.requiresReload() || outcome.error is ApiError.ServerFailure ||
+                            outcome.error is ApiError.ServerUnavailable -> PlanRecovery.ReloadRequired
+                        else -> PlanRecovery.Ready
+                    }
+                    updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = null) }
+                    _remainingStudy.value = RemainingStudyState.Failure(input, outcome.error)
+                    if (live) commit(_plans.value)
+                }
+            }
+        }
+        return true
     }
 
     /** Opens a chosen-time move for the selected study row. Nothing is sent until [submitManualMove]. */
@@ -1538,7 +1641,8 @@ class PlanFormViewModel(
 
     /** [plan]'s export block from the current state; [ownExport] is a confirming flow, which does not block itself. */
     private fun currentExportBlock(plan: SessionPlan, ownExport: Int? = null): ExportBlock? =
-        exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport, _calendarConflict.value != null)
+        exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport, _calendarConflict.value != null || _remainingStudy.value.holdsSource ||
+            _manualReview.value != null || noticeReading || _noticePermission.value != null)
 
     private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
 
@@ -1607,7 +1711,7 @@ class PlanFormViewModel(
     }
 
     /** The collection as it must be restored if [ordinal]'s request may have changed the server. */
-    private fun unresolved(ordinal: Int, scheduleId: String): List<SessionPlan> = _plans.value.map {
+    private fun unresolved(ordinal: Int, scheduleId: String?): List<SessionPlan> = _plans.value.map {
         if (it.ordinal == ordinal) it.copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = scheduleId) else it
     }
 
@@ -1795,6 +1899,13 @@ class PlanFormViewModel(
     }
 
     private fun settleParticipants(pending: PendingLocalWrite, saved: Boolean?) {
+        pending.remaining?.let { captured ->
+            _remainingStudy.update { current ->
+                if (current is RemainingStudyState.Success && current.copy(save = captured.save) == captured) {
+                    current.copy(save = when (saved) { null -> MoveSave.Saving; true -> MoveSave.Saved; false -> MoveSave.Unsaved })
+                } else current
+            }
+        }
         pending.keep?.let { captured ->
             _keepFeedback.update { current ->
                 if (current?.id == captured.id) current.copy(save = when (saved) {
@@ -1879,7 +1990,7 @@ class PlanFormViewModel(
      * A change made on [step] moves the resume position there ([question] for an answer).
      */
     private fun edit(step: CreationStep, question: Int = checkpointQuestion, transform: (PlanFormState) -> PlanFormState) {
-        if (generating || _calendarConflict.value?.kind == ConflictKind.Replacement) return
+        if (generating || _remainingStudy.value.holdsSource || _calendarConflict.value?.kind == ConflictKind.Replacement) return
         val before = _form.value
         _form.update(transform)
         if (_form.value != before) {
@@ -1890,7 +2001,7 @@ class PlanFormViewModel(
             if (_profile.value == ProfileState.Saved) _profile.value = ProfileState.Idle
             _generation.value = GenerationState.Idle
             _generatedPlan.value = null
-            }
+        }
     }
 
     private fun editDates(transform: (PlanFormState) -> PlanFormState) {
@@ -1930,6 +2041,7 @@ class PlanFormViewModel(
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
                     calendarReadRepository = AndroidCalendarReadRepository.create(application),
                     availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
+                    remainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
                 )
             }
         }

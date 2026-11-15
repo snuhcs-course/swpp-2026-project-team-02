@@ -116,6 +116,9 @@ fun PlanAdjustmentScreen(
     onManualCancel: () -> Unit,
     checkIns: CheckInRows,
     conflictNotices: @Composable () -> Unit = {},
+    onRemainingStudy: () -> Unit = {},
+    remainingStudyReason: String? = null,
+    initialScheduleId: String? = null,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
@@ -140,6 +143,9 @@ fun PlanAdjustmentScreen(
             AdjustmentState.Reloaded -> weekIndex = 0
             else -> Unit
         }
+    }
+    LaunchedEffect(initialScheduleId) {
+        if (initialScheduleId != null) weekIndexOf(weeks, initialScheduleId).takeIf { it >= 0 }?.let { weekIndex = it }
     }
     val manualSession = manualSession(plan, selection, mode)
     if (manualSession != null) {
@@ -226,6 +232,8 @@ fun PlanAdjustmentScreen(
             "계획 ${plan.ordinal} · $CERTIFICATION_NAME",
             "준비 ${wireDate(plan.original.preparationStart)} – 시험 ${wireDate(plan.original.examDate)}",
         )
+        PrimaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null)
+        remainingStudyReason?.let { Note(it) }
         if (plan.isDemo) {
             MutedBox {
                 Text("로컬 시연 계산", style = MaterialTheme.typography.titleSmall, color = Ink)

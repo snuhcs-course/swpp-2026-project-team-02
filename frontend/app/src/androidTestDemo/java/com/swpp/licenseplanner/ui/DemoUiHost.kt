@@ -70,6 +70,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     private val current = mutableStateOf<PlanFormViewModel?>(null)
     private var owner: ViewModelStoreOwner? = null
     val adjustmentCalls = AtomicInteger()
+    val remainingCalls = AtomicInteger()
     val planningCalls = AtomicInteger()
     val questionCalls = AtomicInteger()
     val reloadCalls = AtomicInteger()
@@ -185,6 +186,12 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                 availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                 currentDate = { deviceDate },
                 currentMinute = { deviceMinute },
+                remainingStudyRepository = object : com.swpp.licenseplanner.data.RemainingStudyRepository {
+                    private val delegate = com.swpp.licenseplanner.data.DemoRemainingStudyRepository { deviceMinute }
+                    override suspend fun replan(input: com.swpp.licenseplanner.data.RemainingStudyInput) = delegate.replan(input).also {
+                        remainingCalls.incrementAndGet()
+                    }
+                },
             ) as T
         }
         rule.runOnIdle {

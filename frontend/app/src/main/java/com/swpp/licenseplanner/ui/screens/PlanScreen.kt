@@ -84,6 +84,8 @@ fun PlanScreen(
     storage: PlanStorage,
     onRetrySave: () -> Unit,
     conflictNotices: @Composable () -> Unit = {},
+    onRemainingStudy: () -> Unit = {},
+    remainingStudyReason: String? = null,
 ) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -146,6 +148,8 @@ fun PlanScreen(
                     subtitle = exportBlock?.let(::exportBlockText) ?: EXPORT_SUBTITLE,
                 )
             }
+            item { PrimaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null) }
+            remainingStudyReason?.let { item { Note(it) } }
             regenerationReason?.let { item { Note(it) } }
             item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null) }
             item { SecondaryButton("계획 조정하기", onAdjust) }

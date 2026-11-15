@@ -49,6 +49,7 @@ import com.swpp.licenseplanner.ui.screens.HomeScreen
 import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
+import com.swpp.licenseplanner.ui.screens.RemainingStudyScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
 import com.swpp.licenseplanner.ui.screens.ProfileActions
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
@@ -72,6 +73,7 @@ private object Routes {
     const val SHORTFALL = "shortfall"
     const val EDIT_EXAM_DATE = "edit-exam-date"
     const val CHECK_IN = "check-in"
+    const val REMAINING_STUDY = "remaining-study"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -136,6 +138,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
+    val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
+    var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
@@ -402,6 +406,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
                     onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
                     regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
+                    initialScheduleId = remainingFocus,
                     onManual = { viewModel.startManualMove() },
                     onManualPick = viewModel::setManualStart,
                     onManualSubmit = { viewModel.submitManualMove() },
@@ -410,6 +415,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onManualCancel = viewModel::cancelManualMove,
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                     conflictNotices = { selectedNotices(plan.ordinal) },
+                    onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
+                    remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
                 )
             }
         }
@@ -532,7 +539,36 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     storage = storage,
                     onRetrySave = viewModel::retrySave,
                     conflictNotices = { selectedNotices(plan.ordinal) },
+                    onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
+                    remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
                 )
+            }
+        }
+        composable(Routes.REMAINING_STUDY) {
+            val current = remainingStudy
+            fun close() {
+                if (viewModel.closeRemainingStudy()) nav.popBackStack()
+            }
+            if (current == null) {
+                LaunchedEffect(Unit) { nav.popBackStack(Routes.REMAINING_STUDY, inclusive = true) }
+            } else {
+                RemainingStudyScreen(current, storage,
+                    onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
+                    onRetrySave = viewModel::retrySave,
+                    onShowPlan = {
+                        val input = when (current) {
+                            is RemainingStudyState.Success -> current.input
+                            is RemainingStudyState.Failure -> current.input
+                            else -> null
+                        }
+                        if (input != null && viewModel.closeRemainingStudy() && viewModel.selectPlan(input.source.ordinal)) {
+                            remainingFocus = (current as? RemainingStudyState.Success)?.let { result ->
+                                val ids = result.input.work.instructions.map { it.replacementScheduleId }.toSet()
+                                result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
+                            }
+                            nav.navigate(Routes.ADJUST) { popUpTo(Routes.REMAINING_STUDY) { inclusive = true }; launchSingleTop = true }
+                        }
+                    })
             }
         }
         // The report editor sits above the plan or saved-plan screen it was opened from, so closing
