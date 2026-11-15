@@ -387,6 +387,7 @@ class MainFlowUiTest {
     @Test
     fun replacementWaitsForAnotherPlansReportRetryAndPreservesIndependentDraftThroughFailureAndRestore() = withApp { host ->
         generatePlan(host)
+        addEmptyWindowInLastWeek(host)
         val initial = host.snapshot().plans.single()
         val id = initial.current.schedules.first { it.scheduleId.startsWith("study-") }.scheduleId
         val report = StudyCheckIn(StudyCheckInStatus.Done, 20)
@@ -909,8 +910,62 @@ class MainFlowUiTest {
     }
 
     @Test
+    fun filledDemoPlanShowsNoFitGuidanceAndStillMovesBySelectedTime() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        show("언제, 얼마나 공부할 건가요?")
+        show("요일마다 시작 시간과 공부할 분을 정해 주세요. 캘린더 일정과 겹치는 시간을 빼고, 입력한 시간을 모두 계획에 써요.")
+        host.capture("availability-heading")
+        for (day in Weekday.entries.filter { it.dayOfWeek.value <= 5 }) setWeekdayMinutes(day)
+        click("계획 만들기")
+        waitForText("내 계획")
+        host.awaitSaved()
+        val before = host.snapshot().plans.single()
+        val sessions = PlanGrouping.sessions(before.current.schedules).filter { !it.isExternal }
+        assertEquals("Every entered minute is planned", windowMinutes(before.original), sessions.sumOf { it.durationMinutes })
+        host.capture("filled-plan")
+
+        host.recreate()
+        openSavedPlan()
+        val target = sessions.first()
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        waitForText("옮길 수 있는 시간이 없어요")
+        show("옮길 수 있는 시간이 없어요")
+        show("이 계획은 입력한 공부 시간을 모두 쓰고 있어서 시험 전까지 비어 있는 시간이 없어요. 기존 계획은 그대로예요. " +
+            "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요.")
+        show("다른 일정을 선택해 주세요")
+        compose.onNodeWithText("다시 시도").assertDoesNotExist()
+        assertEquals(1, host.adjustmentCalls.get())
+        host.awaitSaved()
+        assertEquals(before.current.schedules, host.snapshot().plans.single().current.schedules)
+        host.capture("automatic-no-fit")
+
+        click("시간 직접 옮기기")
+        val destination = target.start.withHour(14)
+        compose.runOnIdle { host.viewModel.setManualStart(destination) }
+        click("이 시간으로 옮기기")
+        compose.waitUntil("The outside-window destination needs confirmation", 10_000) {
+            host.viewModel.adjustment.value.canConfirmOutsideAvailability
+        }
+        compose.waitForIdle()
+        show("이번 한 번만 옮기기")
+        host.capture("outside-window-confirm")
+        click("이번 한 번만 옮기기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        val after = host.snapshot().plans.single()
+        assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, target.scheduleId)
+        assertEquals(WireDateTime.format(destination), after.current.schedules.single { it.scheduleId == target.scheduleId }.startDate)
+        show("계획이 조정됐어요")
+        host.capture("manual-move-result")
+    }
+
+    @Test
     fun restoresAdjustsAndReopensSavedPlanWithoutReplayingAdjustment() = withApp { host ->
         generatePlan(host)
+        addEmptyWindowInLastWeek(host)
         val before = host.snapshot().plans.single()
         val target = PlanGrouping.sessions(before.current.schedules).first()
         host.recreate()
@@ -1060,6 +1115,7 @@ class MainFlowUiTest {
         click("취소")
         returnTo("내 계획", host)
         assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+        addEmptyWindowInLastWeek(host)
         host.recreate()
         openSavedPlan()
         openReport(target, edit = false)
@@ -1273,6 +1329,7 @@ class MainFlowUiTest {
     @Test
     fun failedReportSaveStaysUnsavedUntilLocalRetryAndFollowsTheMovedSession() = withApp { host ->
         generatePlan(host)
+        addEmptyWindowInLastWeek(host)
         host.recreate()
         openSavedPlan()
         val before = host.snapshot().plans.single()
@@ -1340,6 +1397,7 @@ class MainFlowUiTest {
     @Test
     fun moveResultStaysWhileItsSaveIsPendingFailsAndIsRetriedLocally() = withApp { host ->
         generatePlan(host)
+        addEmptyWindowInLastWeek(host)
         host.recreate()
         openSavedPlan()
         val before = host.snapshot().plans.single()
@@ -1524,6 +1582,37 @@ class MainFlowUiTest {
         waitForText("내 계획")
         host.awaitSaved()
         assertTrue(host.snapshot().plans.single().current.schedules.isNotEmpty())
+    }
+
+    /**
+     * Demo plans fill every entered window, so an automatic move needs a window the plan left
+     * empty: the saved plan's last week gains a Saturday window that no session uses, and the
+     * move therefore lands in a later week than the source session.
+     */
+    private fun addEmptyWindowInLastWeek(host: DemoUiHost) {
+        val snapshot = host.snapshot()
+        val plan = snapshot.plans.single()
+        val request = plan.original
+        val lastMonday = checkNotNull(WireDateTime.parseOrNull(request.examDate)).toLocalDate().minusDays(1)
+            .with(java.time.DayOfWeek.MONDAY)
+        val lastWeek = request.weeklyAvailability +
+            (Weekday.SATURDAY.key to listOf(com.swpp.licenseplanner.data.model.TimeWindow("10:00", durationMinutes = 120)))
+        val overrides = request.availabilityOverrides + (lastMonday.format(DateTimeFormatter.ofPattern("yyyy/MM/dd")) to lastWeek)
+        val studyDays = (listOf(request.weeklyAvailability) + overrides.values)
+            .flatMap { week -> week.filterValues { it.isNotEmpty() }.keys }.toSet().size
+        val original = request.copy(availabilityOverrides = overrides, studyDaysPerWeek = studyDays)
+        host.seedSnapshot(snapshot.copy(plans = listOf(plan.copy(original = original))))
+    }
+
+    /** Minutes of the request's windows between preparation start and the exam. */
+    private fun windowMinutes(original: com.swpp.licenseplanner.data.model.StudyPlanRequest): Long {
+        val availability = checkNotNull(com.swpp.licenseplanner.data.AvailabilityWire.context(original))
+        val start = checkNotNull(WireDateTime.parseOrNull(original.preparationStart))
+        val exam = checkNotNull(WireDateTime.parseOrNull(original.examDate))
+        return generateSequence(start.toLocalDate().minusDays(1)) { it.plusDays(1) }
+            .takeWhile { !it.isAfter(exam.toLocalDate()) }
+            .flatMap { origin -> availability.windowsStarting(origin).map { it.intervalOn(origin) } }
+            .sumOf { maxOf(0L, Duration.between(maxOf(it.start, start), minOf(it.end, exam)).toMinutes()) }
     }
 
     private fun setWeekdayMinutes(day: Weekday) {
