@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 
 /** Screen-specific guidance, shown only where the related action is available. */
@@ -17,7 +18,9 @@ internal enum class ContextHelpTopic(val label: String, val title: String, val b
         "시작 안내",
         "계획 시작하기",
         "계획 생성에서 자격증과 시험 날짜를 입력하고 진단 문항에 답한 뒤, 공부 시간과 시작 시간을 정해요. " +
-            "만든 계획은 이 기기의 앱에 저장돼요. 계획 생성과 조정은 서버에서 처리해요.",
+            "만든 계획은 이 기기의 앱에 저장돼요. " +
+            if (BuildConfig.DEMO_MODE) "데모 버전은 계획 생성과 조정을 이 기기에서 시연용으로 계산해요."
+            else "계획 생성과 조정은 서버에서 처리해요.",
     ),
     SAVED_PLANS(
         "저장 안내",
@@ -38,7 +41,9 @@ internal enum class ContextHelpTopic(val label: String, val title: String, val b
         "조정 안내",
         "놓친 일정 조정하기",
         "놓친 공부 일정 하나를 선택하면 시험일 전 가능한 시간으로 옮겨요. 공부 주제와 시간 길이는 유지됩니다. " +
-            "옮길 시간이 없으면 기존 계획은 그대로 남고 조정할 수 없다는 안내가 표시돼요.",
+            "옮길 시간이 없으면 기존 계획은 그대로 남고 조정할 수 없다는 안내가 표시돼요. " +
+            "'시간 직접 옮기기'로 선택한 일정을 원하는 시간에 직접 옮길 수도 있어요. " +
+            "'남은 공부 다시 계획하기'는 아직 끝내지 않은 공부 시간을 모아 시험일 전 가능한 시간에 다시 배치해요.",
     ),
     CALENDAR_EXPORT(
         "내보내기 안내",
