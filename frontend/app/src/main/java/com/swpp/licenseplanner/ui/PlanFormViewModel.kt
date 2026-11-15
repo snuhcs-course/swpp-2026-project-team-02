@@ -1559,6 +1559,7 @@ class PlanFormViewModel(
         viewModelScope.launch {
             val live = input.scheduleCsvFile != null
             if (live && !commit(unresolved(ordinal, input.scheduleId), inFlightAdjustment = ordinal)) {
+                pendingWrite = PendingLocalWrite(committedSnapshot)
                 pendingAdjustment = null
                 acceptedManualReview = null
                 // Nothing was sent; a chosen time keeps its draft but must be confirmed again if needed.
@@ -1629,7 +1630,7 @@ class PlanFormViewModel(
         pending.replacementId?.let { id ->
             _calendarConflict.update { if (it?.id == id) it.copy(phase = ConflictPhase.Saving) else it }
         }
-        viewModelScope.launch { performWrite(pending, retry = true) }
+        viewModelScope.launch { performWrite(pending) }
     }
 
     /**
@@ -1729,9 +1730,6 @@ class PlanFormViewModel(
         pendingWrite = pending
         _draftDecision.value = decision.copy(phase = DraftPhase.Writing)
         _storage.value = PlanStorage.Saving
-        pending.replacementId?.let { id ->
-            _calendarConflict.update { if (it?.id == id) it.copy(phase = ConflictPhase.Saving) else it }
-        }
         viewModelScope.launch { performWrite(pending) }
     }
 
@@ -1842,15 +1840,13 @@ class PlanFormViewModel(
         }
     }
 
-    private suspend fun performWrite(pending: PendingLocalWrite, retry: Boolean = false): Boolean {
+    private suspend fun performWrite(pending: PendingLocalWrite): Boolean {
         _storage.value = PlanStorage.Saving
         settleParticipants(pending, saved = null)
         val saved = planStore.save(pending.snapshot)
         if (saved) {
-            val restoredPreflight = retry && pending.snapshot.inFlightAdjustmentOrdinal != null
-            committedSnapshot = if (restoredPreflight) pending.snapshot.copy(inFlightAdjustmentOrdinal = null) else pending.snapshot
+            committedSnapshot = pending.snapshot
             _savedPlans.value = pending.snapshot.plans
-            if (restoredPreflight) _plans.value = pending.snapshot.plans
             _committedDraft.value = pending.snapshot.creationDraft
             if (pending.replacementId != null) {
                 _plans.value = pending.snapshot.plans
