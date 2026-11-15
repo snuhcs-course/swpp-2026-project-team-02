@@ -33,6 +33,11 @@ MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
                             "Create a new plan before adjusting study sessions.")
 
 
+def with_saturday_window(weekly: dict) -> dict:
+    """The same weeks plus a Saturday window that generated plans never filled, so adjustment has a free slot."""
+    return {**copy.deepcopy(weekly), "saturday": [{"start": "10:00", "end": "12:00"}]}
+
+
 def request_json(url: str, method: str = "GET", payload: dict | None = None) -> tuple[int, dict]:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = Request(url, data=body,
@@ -94,8 +99,9 @@ class FixedLiveE2EServerTests(unittest.TestCase):
             self.assertTrue(plan["schedules"])
             self.assertTrue(plan["schedule_csv"])
             self.assertTrue(plan["schedule_csv_file"])
+            # The recorded trace's first build is accepted; its later corrections are never requested.
             self.assertEqual([call["tool"] for call in plan["tool_calls"]],
-                             [call["name"] for call in self.case["model_tool_calls"]])
+                             [call["name"] for call in self.case["model_tool_calls"][:3]])
             analysis = next(call for call in plan["tool_calls"] if call["tool"] == "analyze_exam_results")
             self.assertEqual(len(analysis["arguments"]["problem_topics"]), 5)
 
@@ -140,21 +146,25 @@ class FixedLiveE2EServerTests(unittest.TestCase):
                         self.assertEqual(self.stored_files(server), before)
 
             # Omitted date: the stored deadline applies, and readback agrees at the same identity.
-            status, moved = self.adjust(server, self.adjust_payload(plan_a, "study-1"))
+            # Plan A fills its windows, so the request adds a Saturday window for the move.
+            saturday = with_saturday_window(self.case["request"]["weekly_availability"])
+            status, moved = self.adjust(server, self.adjust_payload(plan_a, "study-1", weekly_availability=saturday))
             self.assertEqual(status, 200, moved)
             self.assertEqual(moved["schedule_csv_file"], plan_a["schedule_csv_file"])
             self.assertEqual([call["tool"] for call in moved["tool_calls"]],
                              ["inspect_schedule", "inspect_topic_schedule", "reschedule_failed_study"])
             target = next(row for row in moved["schedules"] if row["schedule_id"] == "study-1")
             original = next(row for row in plan_a["schedules"] if row["schedule_id"] == "study-1")
-            self.assertEqual(target["start_date"], "2026/11/02/18/00")
+            start = datetime.strptime(target["start_date"], WIRE)
+            self.assertEqual((start.weekday(), start.hour, start.minute), (5, 10, 0))
             self.assertEqual(datetime.strptime(target["end_date"], WIRE) - datetime.strptime(target["start_date"], WIRE),
                              datetime.strptime(original["end_date"], WIRE) - datetime.strptime(original["start_date"], WIRE))
             self.assertLessEqual(datetime.strptime(target["end_date"], WIRE), datetime.strptime(ROOMY_EXAM, WIRE))
             self.assertEqual(self.readback(server, plan_a["schedule_csv_file"]), moved["schedules"])
 
             # Matching date from the latest rows is accepted.
-            status, second = self.adjust(server, {**self.adjust_payload(moved, "study-2"), "exam_date": ROOMY_EXAM})
+            status, second = self.adjust(server, {**self.adjust_payload(moved, "study-2", weekly_availability=saturday),
+                                                  "exam_date": ROOMY_EXAM})
             self.assertEqual(status, 200, second)
             self.assertEqual(self.readback(server, plan_a["schedule_csv_file"]), second["schedules"])
 
@@ -233,7 +243,7 @@ class SelectedOnboardingE2EServerTests(unittest.TestCase):
 
             payload = {"schedule_csv_file": plan["schedule_csv_file"], "schedule_id": "study-1",
                        "schedules": plan["schedules"],
-                       "weekly_availability": self.case["request"]["weekly_availability"]}
+                       "weekly_availability": with_saturday_window(self.case["request"]["weekly_availability"])}
             status, moved = request_json(f"{server.api_base_url}/schedules/adjust", "POST", payload)
             self.assertEqual(status, 200, moved)
             self.assertEqual(moved["schedule_csv_file"], plan["schedule_csv_file"])
@@ -331,9 +341,10 @@ class IsolatedScriptedServerTests(unittest.TestCase):
         return plan
 
     def manual_move(self, server, plan: dict, schedule_id: str, new_start: str) -> tuple[int, dict]:
+        # Generated plans fill every window, so destinations are outside them with the one-time confirmation.
         return request_json(f"{server.api_base_url}/schedules/adjust", "POST", {
             "mode": "manual", "schedule_csv_file": plan["schedule_csv_file"], "schedule_id": schedule_id,
-            "schedules": plan["schedules"], "new_start_date": new_start})
+            "schedules": plan["schedules"], "new_start_date": new_start, "confirm_outside_availability": True})
 
     def test_availability_profile_is_seeded_saved_and_read_back_only_in_storage(self):
         seed = self.storage / "seed.json"
@@ -374,21 +385,25 @@ class IsolatedScriptedServerTests(unittest.TestCase):
         self.assertEqual({row["topic"] for row in studies}, LEVEL_2_TOPICS)
         starts = [datetime.strptime(row["start_date"], WIRE) for row in studies]
         override_week = {self.monday + timedelta(days=7 + offset) for offset in range(7)}
-        self.assertEqual({start.date() for start in starts} & override_week, {self.monday + timedelta(days=8)})
-        # P10 can split a proposed day's 60 minutes among topics; preserve
-        # its exact workload and effective interval, not the old block count.
-        override_rows = [row for row in studies if datetime.strptime(row["start_date"], WIRE).date() in override_week]
-        self.assertEqual(min(row["start_date"][-5:] for row in override_rows), "20/00")
-        self.assertEqual(sum((datetime.strptime(row["end_date"], WIRE) - datetime.strptime(row["start_date"], WIRE)).total_seconds()
-                             for row in override_rows), 60 * 60)
-        self.assertTrue(all("20:00" <= start.strftime("%H:%M") < "21:00" for start in starts if start.date() in override_week))
+        spill_day, tuesday = self.monday + timedelta(days=7), self.monday + timedelta(days=8)
+        # Only the replacement Tuesday has windows; the previous Sunday's 23:00 window spills past midnight.
+        self.assertEqual({start.date() for start in starts} & override_week, {spill_day, tuesday})
+        intervals = [(datetime.strptime(row["start_date"], WIRE), datetime.strptime(row["end_date"], WIRE))
+                     for row in studies]
+        self.assertTrue(all((start.hour, start.minute) == (0, 0) and end <= start + timedelta(minutes=30)
+                            for start, end in intervals if start.date() == spill_day))
+        tuesday_rows = [(start, end) for start, end in intervals if start.date() == tuesday]
+        self.assertTrue(all("20:00" <= start.strftime("%H:%M") and end.strftime("%H:%M") <= "21:00"
+                            or "22:00" <= start.strftime("%H:%M") and end.strftime("%H:%M") <= "22:30"
+                            for start, end in tuesday_rows))
+        self.assertEqual(sum((end - start for start, end in tuesday_rows), timedelta()), timedelta(minutes=90))
         self.assertTrue(all("23:00" <= start.strftime("%H:%M") for start in starts if start.weekday() == 6))
         self.assertTrue(any(start.weekday() == 6 for start in starts))
         self.assertIn((self.monday + timedelta(days=7)).strftime("%Y/%m/%d"),
                       plan["availability_snapshot"]["availability_overrides"])
 
     def test_frozen_clock_decides_whether_a_manual_destination_is_past(self):
-        destination = self.wire(self.monday + timedelta(days=2), 19)
+        destination = self.wire(self.monday + timedelta(days=2), 10)
         frozen = datetime.combine(self.monday + timedelta(days=4), datetime.min.time()).replace(hour=12)
 
         with running_server(planning="scripted", storage_dir=self.storage / "frozen", now=frozen) as server:
@@ -425,7 +440,7 @@ class IsolatedScriptedServerTests(unittest.TestCase):
             before = self.readback_rows(server, plan)
             with self.assertRaises((URLError, ConnectionError, OSError)):
                 self.manual_move(server, plan, target["schedule_id"],
-                                 self.wire(self.monday + timedelta(days=2), 19))
+                                 self.wire(self.monday + timedelta(days=2), 10))
             self.assertNotEqual(self.readback_rows(server, plan), before)
             self.assertEqual(json.loads(control.read_text(encoding="utf-8")), {})
 
@@ -437,7 +452,7 @@ class IsolatedScriptedServerTests(unittest.TestCase):
         self.assertEqual(entries[1]["body"]["busy_schedules"], [])
         self.assertEqual(entries[1]["test_control"][0]["rows"], [busy])
         self.assertTrue(entries[3]["response_dropped"])
-        self.assertEqual(entries[3]["body"]["new_start_date"], self.wire(self.monday + timedelta(days=2), 19))
+        self.assertEqual(entries[3]["body"]["new_start_date"], self.wire(self.monday + timedelta(days=2), 10))
 
     def readback_rows(self, server, plan: dict) -> list[dict]:
         status, listing = request_json(f"{server.api_base_url}/study-plans?schedule_csv_file="

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any
-from datetime import datetime
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
@@ -182,40 +181,29 @@ class PlannerTools:
 
     def build_study_schedule(self, daily_topic_minutes: list[dict[str, Any]] | None = None,
                              daily_minutes: list[dict[str, Any]] | None = None) -> dict[str, Any] | str:
-        """입력 값: Agent가 정한 날짜별 학습 시간(분), 또는 레거시 날짜·주제별 입력
+        """입력 값: 레거시 날짜·주제별 입력 (진단 요청에서는 두 인자 모두 무시)
         출력 값: 공부 일정 목록 또는 일정 생성 오류 메시지
-        기능: 제안 학습 시간을 검증하고 가용 시간 안에 배치합니다.
+        기능: 진단 요청은 날짜별 가용 시간을 모두 쓰고, 레거시 제안은 검증 후 가용 시간 안에 배치합니다.
         """
         if not self.results_analyzed:
             return "PREREQUISITE: call analyze_exam_results before build_study_schedule."
         self._check_required_capacity()
         try:
             cert = get_certification(self.request.certification_id)
-            if daily_minutes is not None:
-                if daily_topic_minutes is not None:
-                    raise ValueError("provide daily_minutes or legacy daily_topic_minutes, not both")
-                if not self.topic_statistics:
-                    raise ValueError("daily_minutes requires diagnosed topic statistics; analyze results first")
-                if not isinstance(daily_minutes, list) or not daily_minutes:
-                    raise ValueError("daily_minutes must be a non-empty array")
-                workload = []
-                for item in daily_minutes:
-                    if not isinstance(item, dict) or set(item) != {"date", "minutes"}:
-                        raise ValueError("each daily_minutes item must contain only date and minutes")
-                    raw_date, minutes = item["date"], item["minutes"]
-                    if not isinstance(raw_date, str):
-                        raise ValueError("daily_minutes date must use YYYY/MM/DD")
-                    parsed = datetime.strptime(raw_date, "%Y/%m/%d")
-                    if parsed.strftime("%Y/%m/%d") != raw_date:
-                        raise ValueError("daily_minutes date must use YYYY/MM/DD")
-                    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
-                        raise ValueError("daily_minutes minutes must be a positive integer")
-                    workload.append({"date": raw_date, "minutes": minutes})
+            if self.topic_statistics:
+                # 진단 요청의 날짜별 학습량은 모델이 아니라 입력한 가용 시간 전체입니다.
+                workload = [{"date": day, "minutes": minutes}
+                            for day, minutes in sorted((usable_date_minutes(self.request) or {}).items())]
+                if not workload:
+                    # 날짜·가능 시간 누락은 일정 배치기의 기존 오류 문구로 보고합니다.
+                    generate_schedule(self.request, cert, self.topic_statistics, [])
                 normalized_plan, topic_budget = rebalance_topic_minutes(self.topic_statistics, workload)
                 schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan,
                                              preserve_topic_order=True)
                 total = sum(row["minutes"] for row in workload)
                 return self._accept_schedule(schedule, normalized_plan, topic_budget, total)
+            if daily_minutes is not None:
+                raise ValueError("daily_minutes requires diagnosed topic statistics; analyze results first")
             if not isinstance(daily_topic_minutes, list) or not daily_topic_minutes:
                 raise ValueError("daily_topic_minutes must be a non-empty array")
             normalized_plan: list[dict[str, Any]] = []
@@ -338,19 +326,11 @@ def tool_schemas(certification_id: str | None = None, build_topics: list[str] | 
         schemas[-1] = {
             "name": "build_study_schedule",
             "description": (
-                "After analyze_exam_results, choose total study workload and daily totals using diagnosis, "
-                "self-assessment, preparation period and actual available minutes. Return only dates and "
-                "positive integer minutes in daily_minutes. Do not return, translate or calculate topic names "
-                "or per-topic allocations; the backend computes and places every diagnosed topic. "
-                "Use only listed dates and keep each date at or below usable_minutes_by_date, which already "
-                "accounts for busy events, overrides and midnight clipping. Cover at least the minimum total "
-                "minutes stated in build_requirements. Balance equivalent dates where practical; do not "
-                "invent readiness levels or impose a fixed session length. Do not request more time than "
-                "needed merely to fill capacity."),
-            "parameters": {"type": "object", "properties": {
-                "daily_minutes": {"type": "array", "minItems": 1, "items": {
-                    "type": "object", "properties": {"date": build_date, "minutes": {"type": "integer", "minimum": 1}},
-                    "required": ["date", "minutes"], "additionalProperties": False}}},
-                "required": ["daily_minutes"], "additionalProperties": False}}
+                "Call after analyze_exam_results, with no arguments. The backend uses all of the user's "
+                "usable study time (entered windows in the preparation period minus busy events) and splits "
+                "it across every diagnosed topic by score, giving weaker topics more time. Do not choose "
+                "dates, minutes, topic names or per-topic allocations. The returned topic_budget and "
+                "daily_topic_minutes describe actual allocations; summarize those returned values."),
+            "parameters": {"type": "object", "properties": {}}}
     return schemas
 

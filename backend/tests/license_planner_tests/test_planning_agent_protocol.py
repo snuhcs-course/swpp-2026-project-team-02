@@ -83,18 +83,20 @@ class PlanningProtocolTests(unittest.TestCase):
     def setUp(self):
         isolate_model_configuration(self)
 
-    def test_date_only_build_uses_real_tools_and_local_topics(self):
+    def test_argument_free_build_fills_usable_time_and_ignores_a_stale_workload(self):
         provider, agent, (tools, summary) = self.run_agent([
             reply(call("analysis", *ANALYSIS)),
             reply(call("build", "build_study_schedule", {"daily_minutes": [{"date": "2026/10/05", "minutes": 60}]}))])
         self.assertEqual(len(provider.bodies), 2)
         for body in provider.bodies:
             builder = next(tool for tool in body["tools"] if tool["name"] == "build_study_schedule")
-            self.assertEqual(set(builder["parameters"]["properties"]), {"daily_minutes"})
-            self.assertEqual(set(builder["parameters"]["properties"]["daily_minutes"]["items"]["properties"]), {"date", "minutes"})
+            self.assertEqual(builder["parameters"]["properties"], {})
+            self.assertNotIn("required", builder["parameters"])
         self.assertEqual({row.topic for row in tools.schedule}, {CHARTS})
-        self.assertEqual(sum(int((row.end_datetime-row.start_datetime).total_seconds()/60) for row in tools.schedule), 60)
-        self.assertIn("60", summary)
+        # Three Monday 18:00-21:00 windows fall inside the preparation period.
+        self.assertEqual(sum(int((row.end_datetime-row.start_datetime).total_seconds()/60) for row in tools.schedule), 540)
+        self.assertIn("총 540분", summary)
+        self.assertIsNone(tools.last_tool_error)
 
     def run_agent(self, replies, payload=PAYLOAD, api_key="synthetic-openrouter-key"):
         provider = ScriptedProvider(replies)
@@ -133,10 +135,11 @@ class PlanningProtocolTests(unittest.TestCase):
                              ("openai/gpt-6-luna", {"effort": "low"}, 16384))
             build, = [tool for tool in body["tools"] if tool["name"] == "build_study_schedule"]
             self.assertEqual(build["type"], "function")
-        build_dates = provider.bodies[2]["tools"][2]["parameters"]["properties"]["daily_minutes"]["items"]["properties"]
-        self.assertEqual(set(build_dates), {"date", "minutes"})
-        self.assertEqual(len(tools.schedule), 1)
-        self.assertIn("60분", summary)
+        self.assertEqual(provider.bodies[2]["tools"][2]["parameters"]["properties"], {})
+        self.assertEqual(guidance["build_requirements"]["topic_allocation_owner"], "backend")
+        self.assertEqual(set(guidance["build_requirements"]), {"required_topics", "topic_allocation_owner"})
+        self.assertEqual(len(tools.schedule), 3)
+        self.assertIn("540분", summary)
 
     def test_multiple_calls_in_one_response_run_in_order(self):
         provider, _, (tools, _) = self.run_agent([
@@ -157,15 +160,14 @@ class PlanningProtocolTests(unittest.TestCase):
         self.assertEqual(len(provider.bodies), 1)
         self.assertEqual([item["tool"] for item in tools.trace.calls], ["analyze_exam_results", "build_study_schedule"])
 
-    def test_rejected_proposal_is_returned_to_the_model_for_correction(self):
+    def test_invalid_diagnosed_proposal_needs_no_correction_round(self):
         wrong = ("build_study_schedule", {"daily_topic_minutes": [{"date": "2026/10/05", "topic": "함수", "minutes": 60}]})
         provider, _, (tools, _) = self.run_agent([
             reply(call("call_1", *ANALYSIS)), reply(call("call_2", *wrong)), reply(call("call_3", *BUILD)),
         ])
-        rejected = provider.bodies[2]["input"][-1]
-        self.assertEqual(rejected["call_id"], "call_2")
-        self.assertTrue(json.loads(rejected["output"])["result"].startswith("SCHEDULE_ERROR"))
-        self.assertEqual(len(tools.schedule), 1)
+        self.assertEqual((len(provider.bodies), len(provider.replies)), (2, 1))
+        self.assertIsNone(tools.last_tool_error)
+        self.assertEqual(len(tools.schedule), 3)
 
     def test_mixed_request_rejects_a_reviewed_remap_and_accepts_the_corrected_mapping(self):
         from assessment_service import get_public_questions
@@ -189,7 +191,7 @@ class PlanningProtocolTests(unittest.TestCase):
         self.assertEqual((metadata["submitted_question_count"], metadata["reviewed_question_count"]), (2, 1))
         statistics, = tools.topic_statistics
         self.assertEqual((statistics.topic, statistics.possible_score, statistics.earned_score), (CHARTS, 2, 1))
-        self.assertEqual((agent.api_request_count, len(tools.schedule)), (3, 1))
+        self.assertEqual((agent.api_request_count, len(tools.schedule)), (3, 3))
 
     def test_invalid_replies_fail_as_upstream_errors_without_running_the_call(self):
         cases = {
@@ -282,10 +284,9 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
     setUp = PlanningProtocolTests.setUp
     run_agent = PlanningProtocolTests.run_agent
 
-    def test_summary_sentences_are_separated_and_need_no_model_request(self):
+    def test_summary_states_filled_totals_without_a_spare_time_claim(self):
         expected = {
-            "20:00": "3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다. "
-                     "공부 가능 시간의 일부는 여유 시간으로 남겼습니다.",
+            "20:00": "3개 학습 주제에 학습 일정 4개, 총 240분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 240분입니다.",
             "19:00": "3개 학습 주제에 학습 일정 3개, 총 180분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 180분입니다.",
         }
         for wednesday_end, text in expected.items():
@@ -295,8 +296,8 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
                     RuntimeError("provider failure after success"),
                 ], payload=three_topic_payload(wednesday_end))
                 self.assertEqual(summary, text)
+                self.assertNotIn("여유 시간", summary)
                 self.assertEqual((len(provider.bodies), agent.api_request_count, len(provider.replies)), (2, 2, 1))
-                self.assertEqual(len(tools.schedule), 3)
 
     def run_dense(self, busy):
         build = ("build_study_schedule", {"daily_topic_minutes": [
@@ -317,7 +318,7 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
                     for value in (row["schedule_id"], row["start_date"], row["end_date"]):
                         self.assertNotIn(value, sent)
 
-    def test_model_receives_date_capacities_instead_of_calendar_occurrences(self):
+    def test_diagnosed_model_input_omits_calendar_occurrences_and_date_capacities(self):
         sparse = busy_calendar([(0, 30)])
         dense = busy_calendar([(0, 20), (10, 30), (15, 25)])
         self.assertGreaterEqual(len(sparse), 90)
@@ -329,20 +330,21 @@ class PlanningSummaryAndModelInputTests(unittest.TestCase):
         self.assert_no_busy_occurrences(sparse_provider.bodies, sparse)
         self.assert_no_busy_occurrences(dense_provider.bodies, dense)
         metadata = json.loads(sparse_provider.bodies[0]["input"][0]["content"].split("Input metadata: ", 1)[1])
-        self.assertEqual(metadata["usable_minutes_by_date"]["2026/10/05"], 150)
-        self.assertEqual(metadata["usable_minutes_by_date"]["2026/10/07"], 150)
-        self.assertEqual(len(metadata["usable_minutes_by_date"]), 27)
+        self.assertNotIn("usable_minutes_by_date", metadata)
         guidance = json.loads(sparse_provider.bodies[2]["input"][-1]["output"])
-        self.assertEqual(guidance["build_requirements"]["usable_minutes_by_date"], metadata["usable_minutes_by_date"])
+        self.assertNotIn("usable_minutes_by_date", guidance["build_requirements"])
 
         for busy, tools in ((sparse, sparse_tools), (dense, dense_tools)):
             intervals = [(datetime.strptime(r["start_date"], "%Y/%m/%d/%H/%M"),
                           datetime.strptime(r["end_date"], "%Y/%m/%d/%H/%M")) for r in busy]
-            [block] = tools.schedule
-            self.assertEqual((block.start_datetime, block.end_datetime),
-                             (datetime(2026, 10, 5, 18, 30), datetime(2026, 10, 5, 19, 30)))
-            self.assertFalse(any(block.start_datetime < end and start < block.end_datetime
-                                 for start, end in intervals))
+            days = {}
+            for block in tools.schedule:
+                day = block.start_datetime.date()
+                days[day] = days.get(day, 0) + int((block.end_datetime - block.start_datetime).total_seconds() // 60)
+                self.assertFalse(any(block.start_datetime < end and start < block.end_datetime
+                                     for start, end in intervals))
+            # 27 Monday/Wednesday windows of 180 minutes each lose their 30 busy minutes.
+            self.assertEqual((len(days), set(days.values())), (27, {150}))
 
     def test_request_without_date_capacities_still_omits_calendar_occurrences(self):
         busy = busy_calendar([(0, 30)])
@@ -385,7 +387,7 @@ class PlanningModelLifecycleTests(unittest.TestCase):
         self.assertEqual([body["model"] for body in provider.bodies], ["vendor/model-a"] * 3)
         self.assertEqual((loads, agent.model, agent.api_request_count), (["vendor/model-a"], "vendor/model-a", 3))
         self.assertEqual(len(agent.usage_records), 3)
-        self.assertEqual(len(tools.schedule), 1)
+        self.assertEqual(len(tools.schedule), 3)
         for body in provider.bodies:
             self.assertEqual((body["reasoning"], body["max_output_tokens"]), ({"effort": "low"}, 16384))
 

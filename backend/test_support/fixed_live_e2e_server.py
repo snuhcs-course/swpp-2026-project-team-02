@@ -117,10 +117,10 @@ def recorded_agent(case: dict) -> type[PlanningAgent]:
 class ScriptedPlanningAgent(PlanningAgent):
     """Run the real planning loop; the model's tool calls come from the request itself.
 
-    It asks for ``analyze_exam_results`` without classifications, then builds
-    one 60-minute session per date that has at least 60 usable minutes, cycling
-    through the required topics.  Requests whose questions need classification
-    (custom questions) are outside what it can answer.
+    It asks for ``analyze_exam_results`` without classifications, then calls
+    ``build_study_schedule`` without arguments so the backend fills every usable
+    minute.  Requests whose questions need classification (custom questions) are
+    outside what it can answer.
     """
 
     def __init__(self, *args, **kwargs):
@@ -138,15 +138,9 @@ class ScriptedPlanningAgent(PlanningAgent):
         last = json.loads(outputs[-1]["output"])
         requirements = last.get("build_requirements") if isinstance(last, dict) else None
         if not isinstance(last.get("result"), dict) or not requirements \
-                or "usable_minutes_by_date" not in requirements:
+                or requirements.get("topic_allocation_owner") != "backend":
             raise RuntimeError(f"scripted planning fixture cannot continue after: {last}")
-        topics = requirements["required_topics"]
-        dates = sorted(day for day, minutes in requirements["usable_minutes_by_date"].items() if minutes >= 60)
-        if not topics or len(dates) < len(topics):
-            raise RuntimeError("scripted planning fixture needs one date with 60 usable minutes per topic")
-        sessions = [{"date": day, "topic": topics[index % len(topics)], "minutes": 60}
-                    for index, day in enumerate(dates)]
-        return _function_call(call_id, "build_study_schedule", {"daily_topic_minutes": sessions})
+        return _function_call(call_id, "build_study_schedule", {})
 
 
 def _function_call(call_id: str, name: str, arguments: dict) -> dict:

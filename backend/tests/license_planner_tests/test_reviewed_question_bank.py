@@ -189,7 +189,7 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
         self.assertEqual([row["topic"] for row in result["topic_statistics"][:3]],
                          sorted(COMPUTER_GENERAL, key=str.casefold))
 
-    def test_schedule_omitting_a_required_topic_is_rejected_and_corrected(self):
+    def test_proposal_omitting_a_required_topic_is_ignored_and_every_topic_is_planned(self):
         request = build_plan_request(payload(results_for(bank_questions(), computer_general_missed)),
                                      require_assessment=True)
         topics = get_certification(CERT_ID).topics
@@ -202,11 +202,10 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
         (tools, _), sent = run_recording_agent(request, replies)
 
         self.assertIn("Topic classification is already supplied", sent[0][0]["content"])
-        rejection = json.loads(sent[2][-1]["output"])["result"]
-        self.assertRegex(rejection, r"^SCHEDULE_ERROR: .*missing=\['컴퓨터 시스템 보호'\]")
+        self.assertEqual(len(sent), 2)
         self.assertEqual({block.topic for block in tools.schedule}, set(topics))
         self.assertEqual([call["tool"] for call in tools.trace.calls],
-                         ["analyze_exam_results", "build_study_schedule", "build_study_schedule"])
+                         ["analyze_exam_results", "build_study_schedule"])
 
     def test_capacity_for_fewer_minutes_than_reviewed_topics_stops_before_the_model(self):
         request = build_plan_request(payload(results_for(bank_questions(), computer_general_missed),

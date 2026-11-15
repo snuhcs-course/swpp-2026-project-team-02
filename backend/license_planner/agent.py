@@ -22,17 +22,14 @@ AGENT_SYSTEM_PROMPT = (
     "topics, or certification details. For each unresolved question supplied in assessment_results, map the "
     "knowledge it requires to one or more topics from the certification profile; assign contribution weights "
     "summing to 1 per question. Reviewed questions already have fixed topics and must not be classified. "
-    "Use the user's validated local correctness as supplied. Use the user's free-form self-assessment and topic scores "
-    "to choose the total study workload and daily totals. When diagnostics are supplied, submit only "
-    "daily_minutes (date and positive integer minutes). Do not output or translate topic names for schedule "
-    "creation and do not calculate topic budgets yourself. The backend computes topic budgets and coherent "
-    "blocks while preserving your total minutes and each date's workload. For requests without diagnostics, "
-    "use the legacy daily_topic_minutes proposal as described by the tool. "
+    "Use the user's validated local correctness as supplied. When diagnostics are supplied, call "
+    "build_study_schedule without arguments after the analysis: the backend uses all of the user's usable "
+    "study time and splits it across the diagnosed topics by score. Do not choose workload, dates or minutes, "
+    "and do not output, translate or calculate topic names or topic budgets for schedule creation. "
+    "For requests without diagnostics, use the legacy daily_topic_minutes proposal as described by the tool. "
     "Do not classify users into fixed readiness "
     "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
-    "limit. Spread workload as evenly as practical across available dates, giving weaker topics "
-    "more time. For example, distribute 120 planned minutes across two equivalent available dates "
-    "as about 60 minutes per date, not all 120 on one date. If a tool reports an error, explain it. "
+    "limit. If a tool reports an error, explain it. "
     "When tools succeed, briefly summarize that the application will return the CSV."
 )  # Agent role and tool-use constraints.
 
@@ -44,11 +41,8 @@ def _build_summary(result: dict) -> str:
     topic_count = len({item["topic"] for item in result["daily_topic_minutes"]})
     planned = result['total_planned_minutes']
     usable = result['usable_minutes']
-    summary = (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
-               f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
-    if planned < usable:
-        summary += " 공부 가능 시간의 일부는 여유 시간으로 남겼습니다."
-    return summary
+    return (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
+            f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
 
 
 class PlanningAgent:
@@ -111,7 +105,9 @@ class PlanningAgent:
                 "weekly_availability": availability["weekly_availability"] if availability else None}
         if availability and availability["availability_overrides"]:
             user["availability_overrides"] = availability["availability_overrides"]
-        date_minutes = usable_date_minutes(request)  # 날짜별 실제 가용 시간(분)이며 모델이 날짜별 용량을 넘지 않도록 돕습니다.
+        diagnosed = bool(request.assessment_items or request.problem_results)  # 진단 요청은 백엔드가 학습량을 정합니다.
+        # 레거시 제안만 날짜별 실제 가용 시간(분)을 받아 날짜별 용량을 넘지 않도록 돕습니다.
+        date_minutes = None if diagnosed else usable_date_minutes(request)
         if date_minutes is not None:
             user["usable_minutes_by_date"] = date_minutes
         failed_calls: set[tuple[str, str, str]] = set()  # 마지막 성공 이후 실패한 (도구, 인자, 오류)입니다.
@@ -127,7 +123,7 @@ class PlanningAgent:
         history: list[dict] = [{"role": "user", "content": "Prepare this user's plan using tools. " + classification + "Do not alter or recalculate correctness. Input metadata: " + json.dumps(user, ensure_ascii=False)}]  # 요청 안에서만 쓰는 모델 대화 기록입니다.
         for _ in range(self.max_steps):
             schemas = tool_schemas(request.certification_id, tools.build_topics(), list(date_minutes or ()),
-                                   workload_only=bool(request.assessment_items or request.problem_results))
+                                   workload_only=diagnosed)
             output, calls, answer = parse_reply(self._ask_model(history, schemas))
             history.extend(output)
             if not calls:
@@ -149,13 +145,11 @@ class PlanningAgent:
                     failed_calls.clear()
                 response = {"result": outcome}
                 if name == "analyze_exam_results" and isinstance(outcome, dict):
-                    # 다음 일정 제안이 분석된 필수 토픽과 날짜별 용량을 그대로 쓰도록 알려줍니다.
+                    # 다음 일정 요청이 분석된 필수 토픽과 (레거시 제안이면) 날짜별 용량을 그대로 쓰도록 알려줍니다.
                     response["build_requirements"] = {"required_topics": tools.build_topics()}
                     if tools.topic_statistics:
-                        response["build_requirements"].update(
-                            workload_field="daily_minutes", topic_allocation_owner="backend",
-                            minimum_total_minutes=len(tools.build_topics()))
-                    if date_minutes is not None:
+                        response["build_requirements"]["topic_allocation_owner"] = "backend"
+                    elif date_minutes is not None:
                         response["build_requirements"]["usable_minutes_by_date"] = date_minutes
                 history.append(function_output(call_id, response))
         raise RuntimeError(f"Agent exceeded max_steps={self.max_steps}; tool trace: {tools.trace.calls}")

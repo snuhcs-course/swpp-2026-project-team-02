@@ -8,7 +8,7 @@ import random
 import unittest
 from unittest.mock import patch
 
-from license_planner.models import PlanRequest, ProblemResult, TopicStatistics
+from license_planner.models import BusyPeriod, PlanRequest, ProblemResult, TopicStatistics
 from license_planner.tools import PlannerTools
 from license_planner.topic_budget import calculate_topic_budget, rebalance_topic_minutes, validate_topic_budget
 from license_planner.user_availability import parse_weekly_availability
@@ -184,76 +184,109 @@ class TopicBudgetPlacementTests(unittest.TestCase):
                 for date in ("2026/11/09", "2026/11/10")
                 for topic, minutes in (("weak", 1), ("middle", 1), ("strong", 88))]
 
-    def test_adversarial_model_allocation_is_corrected_before_return(self):
-        tools = self.make_tools()
-        result = tools.build_study_schedule(self.proposal())
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result["topic_budget"], {"weak": 80, "middle": 60, "strong": 40})
-        self.assertEqual(result["total_planned_minutes"], 180)
-        totals, days = defaultdict(int), defaultdict(int)
+    def daily_totals(self, tools):
+        days = defaultdict(int)
         for block in tools.schedule:
-            minutes = int((block.end_datetime - block.start_datetime).total_seconds() / 60)
-            totals[block.topic] += minutes
-            days[block.start_datetime.strftime("%Y/%m/%d")] += minutes
-        self.assertEqual(totals, result["topic_budget"])
-        self.assertEqual(days, {"2026/11/09": 90, "2026/11/10": 90})
+            days[block.start_datetime.strftime("%Y/%m/%d")] += int(
+                (block.end_datetime - block.start_datetime).total_seconds() // 60)
+        return dict(days)
 
-    def test_rebalancing_does_not_hide_invalid_capacity_dates_or_missing_topics(self):
-        for change in ("capacity", "date", "missing"):
+    def test_diagnosed_build_fills_every_usable_minute_with_the_score_budget(self):
+        tools = self.make_tools()
+        result = tools.build_study_schedule()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["topic_budget"], calculate_topic_budget(tools.topic_statistics, 240))
+        self.assertEqual(result["topic_budget"], {"weak": 106, "middle": 80, "strong": 54})
+        self.assertEqual(result["total_planned_minutes"], 240)
+        self.assertEqual(result["usable_minutes"], 240)
+        self.assertEqual(result["topic_placement_policy"], "contiguous-topic-blocks-v2")
+        totals = defaultdict(int)
+        for block in tools.schedule:
+            totals[block.topic] += int((block.end_datetime - block.start_datetime).total_seconds() // 60)
+        self.assertEqual(totals, result["topic_budget"])
+        self.assertEqual(self.daily_totals(tools), {"2026/11/09": 120, "2026/11/10": 120})
+
+    def test_model_workload_arguments_are_ignored_for_diagnosed_requests(self):
+        expected = self.make_tools().build_study_schedule()
+        capacity, wrong_date = self.proposal(), self.proposal()
+        capacity[2]["minutes"] = 500
+        wrong_date[0]["date"] = "2026/11/08"
+        ignored = [
+            {"daily_topic_minutes": self.proposal()},
+            {"daily_topic_minutes": capacity},
+            {"daily_topic_minutes": wrong_date},
+            {"daily_topic_minutes": [row for row in self.proposal() if row["topic"] != "weak"]},
+            {"daily_minutes": []}, {"daily_minutes": [None]},
+            {"daily_minutes": [{"date": "2026/11/09", "minutes": True}]},
+            {"daily_minutes": [{"date": "2026/11/9", "minutes": 90}]},
+            {"daily_minutes": [{"date": "2026/11/08", "minutes": 90}]},
+            {"daily_minutes": [{"date": "2026/11/09", "minutes": 2}]},
+            {"daily_minutes": [{"date": "2026/11/09", "minutes": 70}, {"date": "2026/11/09", "minutes": 70}]},
+            {"daily_minutes": [{"date": "2026/11/09", "minutes": 90, "topic": "translated name"}]},
+            {"daily_topic_minutes": self.proposal(), "daily_minutes": [{"date": "2026/11/09", "minutes": 90}]},
+        ]
+        for arguments in ignored:
             tools = self.make_tools()
-            proposal = self.proposal()
-            if change == "capacity":
-                proposal[2]["minutes"] = 500
-            elif change == "date":
-                proposal[0]["date"] = "2026/11/08"
-            else:
-                proposal = [row for row in proposal if row["topic"] != "weak"]
-            with self.subTest(change=change):
-                self.assertIsInstance(tools.build_study_schedule(proposal), str)
-                self.assertIsNone(tools.schedule)
+            with self.subTest(arguments=arguments):
+                result = tools.call("build_study_schedule", arguments)
+                self.assertIsInstance(result, dict)
+                self.assertIsNone(tools.last_tool_error)
+                self.assertEqual(result["schedule"], expected["schedule"])
+                self.assertEqual(self.daily_totals(tools), {"2026/11/09": 120, "2026/11/10": 120})
 
     def test_overnight_and_empty_week_override_are_respected(self):
         tools = self.make_tools({"weekly_availability": {"monday": [{"start": "23:00", "duration_minutes": 120}]},
                                  "availability_overrides": {"2026/11/16": {}}})
-        proposal = [{"date": day, "topic": topic, "minutes": 20}
-                    for day in ("2026/11/09", "2026/11/10") for topic in ("weak", "middle", "strong")]
-        result = tools.build_study_schedule(proposal)
+        result = tools.build_study_schedule()
         self.assertIsInstance(result, dict)
         self.assertEqual(result["total_planned_minutes"], 120)
         self.assertTrue(all(datetime(2026, 11, 9, 23) <= row.start_datetime < row.end_datetime <= datetime(2026, 11, 10, 1)
                             for row in tools.schedule))
 
-    def test_date_only_workloads_match_legacy_totals_without_topic_names(self):
-        old = self.make_tools().build_study_schedule(self.proposal())
-        tools = self.make_tools()
-        new = tools.build_study_schedule(daily_minutes=[
-            {"date": "2026/11/09", "minutes": 90}, {"date": "2026/11/10", "minutes": 90}])
-        self.assertEqual(new["topic_budget"], old["topic_budget"])
-        self.assertEqual(new["schedule"], old["schedule"])
-        self.assertEqual(new["topic_placement_policy"], "contiguous-topic-blocks-v2")
-        self.assertEqual(len(tools.schedule), 4)
+    def test_two_weekly_windows_over_two_weeks_are_planned_in_full(self):
+        request = replace(self.make_tools().request, exam_date=datetime(2026, 11, 23),
+                          weekly_availability=parse_weekly_availability({
+                              "monday": [{"start": "19:00", "duration_minutes": 90}],
+                              "wednesday": [{"start": "19:00", "duration_minutes": 90}]}))
+        tools = PlannerTools(request)
+        tools.analyze_exam_results()
+        result = tools.build_study_schedule()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(self.daily_totals(tools), {"2026/11/09": 90, "2026/11/11": 90,
+                                                    "2026/11/16": 90, "2026/11/18": 90})
+        self.assertEqual(result["total_planned_minutes"], 360)
+        self.assertEqual(result["usable_minutes"], 360)
 
-    def test_date_only_workloads_validate_capacity_dates_types_and_extra_fields(self):
-        invalid = [[], [None], [{"date": "2026/11/09", "minutes": True}],
-                   [{"date": "2026/11/09", "minutes": 1.5}],
-                   [{"date": "2026/11/9", "minutes": 90}],
-                   [{"date": "2026/11/08", "minutes": 90}],
-                   [{"date": "2026/11/09", "minutes": 121}],
-                   [{"date": "2026/11/09", "minutes": 2}],
-                   [{"date": "2026/11/09", "minutes": 90, "topic": "translated name"}]]
-        for rows in invalid:
-            tools = self.make_tools()
-            with self.subTest(rows=rows):
-                self.assertIsInstance(tools.build_study_schedule(daily_minutes=rows), str)
-                self.assertIsNone(tools.schedule)
+    def test_calendar_event_inside_a_window_is_excluded_from_the_filled_minutes(self):
+        busy = BusyPeriod("99", datetime(2026, 11, 9, 20), datetime(2026, 11, 9, 20, 30), "work")
+        request = replace(self.make_tools().request, exam_date=datetime(2026, 11, 10), busy_periods=(busy,),
+                          weekly_availability=parse_weekly_availability({
+                              "monday": [{"start": "19:00", "duration_minutes": 120}]}))
+        tools = PlannerTools(request)
+        tools.analyze_exam_results()
+        result = tools.build_study_schedule()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(self.daily_totals(tools), {"2026/11/09": 90})
+        self.assertFalse(any(row.start_datetime < busy.end_datetime and busy.start_datetime < row.end_datetime
+                             for row in tools.schedule))
 
-    def test_duplicate_dates_cannot_bypass_capacity_and_modes_are_exclusive(self):
-        tools = self.make_tools()
-        self.assertIsInstance(tools.build_study_schedule(daily_minutes=[
-            {"date": "2026/11/09", "minutes": 70}, {"date": "2026/11/09", "minutes": 70}]), str)
-        self.assertIsInstance(tools.build_study_schedule(self.proposal(), daily_minutes=[
-            {"date": "2026/11/09", "minutes": 90}]), str)
-        self.assertIsNone(tools.schedule)
+    def test_long_preparation_period_fills_every_date_for_nine_topics(self):
+        request = PlanRequest(
+            self_assessment=None,
+            problem_results=tuple(ProblemResult(i + 1, f"topic-{i}", 10, i) for i in range(9)),
+            preparation_start=datetime(2026, 11, 9), exam_date=datetime(2026, 11, 9) + timedelta(days=90),
+            weekly_availability=parse_weekly_availability({
+                day: [{"start": "19:00", "duration_minutes": 120}]
+                for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")}))
+        tools = PlannerTools(request)
+        tools.analyze_exam_results()
+        result = tools.build_study_schedule()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(len(result["topic_budget"]), 9)
+        days = self.daily_totals(tools)
+        self.assertEqual(len(days), 90)
+        self.assertEqual(set(days.values()), {120})
+        self.assertEqual(result["total_planned_minutes"], 90 * 120)
 
     def test_date_only_does_not_invent_diagnostic_scores(self):
         request = replace(self.make_tools().request, problem_results=())
@@ -285,15 +318,13 @@ class TopicBudgetPlacementTests(unittest.TestCase):
         misplaced = list(accepted.schedule)
         misplaced[0] = replace(misplaced[0], end_datetime=misplaced[0].end_datetime - timedelta(minutes=1))
         misplaced[-1] = replace(misplaced[-1], end_datetime=misplaced[-1].end_datetime + timedelta(minutes=1))
-        for mode in ("legacy", "date-only"):
+        for mode in ("ignored proposal", "no arguments"):
             tools = self.make_tools()
             with self.subTest(mode=mode), patch("license_planner.tools.generate_schedule", return_value=misplaced):
-                if mode == "legacy":
+                if mode == "ignored proposal":
                     result = tools.build_study_schedule(self.proposal())
                 else:
-                    result = tools.build_study_schedule(daily_minutes=[
-                        {"date": "2026/11/09", "minutes": 90},
-                        {"date": "2026/11/10", "minutes": 90}])
+                    result = tools.build_study_schedule()
                 self.assertEqual(result, "SCHEDULE_ERROR: placed study minutes differ from the calculated topic budget")
                 self.assertIsNone(tools.schedule)
 

@@ -294,7 +294,7 @@ class PlanningApiContractTests(unittest.TestCase):
         self.assertAlmostEqual(result["total_possible_score"], 4)
         self.assertAlmostEqual(sum(row["problem_count"] for row in result["topic_statistics"]), 3)
 
-    def test_planner_tool_builds_schedule_after_question_topic_analysis(self):
+    def test_planner_tool_fills_usable_time_after_question_topic_analysis(self):
         request = build_plan_request(make_api_payload(), require_assessment=True)
         tools = PlannerTools(request)
         tools.call("analyze_exam_results", {"problem_topics": [{
@@ -307,10 +307,10 @@ class PlanningApiContractTests(unittest.TestCase):
         }]})
 
         self.assertIsInstance(result, dict, result)
-        self.assertEqual(result["total_planned_minutes"], 90)
-        self.assertEqual(len(tools.schedule), 1)
-        self.assertEqual(tools.schedule[0].end_datetime - tools.schedule[0].start_datetime,
-                         timedelta(minutes=90))
+        self.assertEqual(result["total_planned_minutes"], available_minutes(request))
+        self.assertEqual(sum((block.end_datetime - block.start_datetime for block in tools.schedule), timedelta()),
+                         timedelta(minutes=available_minutes(request)))
+        self.assertEqual({block.topic for block in tools.schedule}, {"차트와 분석"})
 
     def test_api_requires_preparation_exam_and_weekly_availability(self):
         valid = make_api_payload()
@@ -362,7 +362,9 @@ class PlannerAgentLoopTests(unittest.TestCase):
         with patch.object(PlanningAgent, "_ask_model", side_effect=replies):
             tools, _ = PlanningAgent(api_key="test-key", max_steps=2).run(request)
 
-        self.assertEqual(len(tools.schedule), 2)
+        self.assertEqual({block.topic for block in tools.schedule}, {"차트와 분석", "스프레드시트 기본"})
+        self.assertEqual(sum((block.end_datetime - block.start_datetime for block in tools.schedule), timedelta()),
+                         timedelta(minutes=available_minutes(request)))
 
     def test_too_little_time_for_assessed_topics_stops_without_retrying(self):
         payload = make_api_payload()
