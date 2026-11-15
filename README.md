@@ -114,8 +114,9 @@ revision or configuration the server is running.
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
-- **How much available time a plan uses:** the week-one branch uses the model's
-  proposed workload and date totals, leaving spare time available for adjustments.
+- **How much available time a plan uses:** plans now use every usable entered
+  minute (the entered windows minus calendar conflicts), and the backend, not the
+  model, sets each date's total; a missed session usually needs a manual move.
   An earlier evaluation observed about 60% median use. Review
   rounds from the HE branch were not merged. User testing still needs to establish whether
   learners mean the entered time as a limit or a target and how they prefer to
