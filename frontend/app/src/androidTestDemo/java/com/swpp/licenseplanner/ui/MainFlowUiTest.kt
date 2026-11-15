@@ -909,6 +909,7 @@ class MainFlowUiTest {
         )
         val weeks = PlanGrouping.weeks(after.current.schedules)
         val destinationIndex = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == target.scheduleId } } }
+        revealMovedSession()
         showWeek(weeks[destinationIndex].monday, destinationIndex, weeks.size)
         assertSession(moved, selectable = true, moved = true)
         compose.onAllNodes(movedMarker()).assertCountEquals(1)
@@ -1291,6 +1292,7 @@ class MainFlowUiTest {
         assertNotEquals(target.start, moved.start)
         assertEquals(mapOf(target.scheduleId to partly), after.checkIns)
         assertEquals(1, host.adjustmentCalls.get())
+        revealMovedSession()
         show("일부 했어요 · 실제 45분")
 
         host.recreate()
@@ -1334,6 +1336,7 @@ class MainFlowUiTest {
         show("기기에 계획을 저장하지 못했어요")
         compose.onAllNodesWithText("다시 저장하기").assertCountEquals(1)
         compose.onNodeWithText("이 기기에 저장했어요").assertDoesNotExist()
+        revealMovedSession()
         compose.onAllNodes(movedMarker()).assertCountEquals(1)
         assertEquals(before.current.schedules, host.snapshot().plans.single().current.schedules)
         host.capture("move-unsaved")
@@ -1614,6 +1617,15 @@ class MainFlowUiTest {
         val sunday = monday.plusDays(6)
         val end = if (sunday.month == monday.month) "${sunday.dayOfMonth}일" else monthDay(sunday)
         show("${monthDay(monday)} – $end")
+    }
+
+    private fun revealMovedSession() {
+        // HE navigation retains the source week until its destination link is selected.
+        show("조정 전 위치 · 임시")
+        click("이동 위치:", substring = true)
+        compose.waitUntil("The destination week shows the moved study session", 10_000) {
+            compose.onAllNodes(movedMarker()).fetchSemanticsNodes().size == 1
+        }
     }
 
     private fun time(session: PlanSession) = "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"

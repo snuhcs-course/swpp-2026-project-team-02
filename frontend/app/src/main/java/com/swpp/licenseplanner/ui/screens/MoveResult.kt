@@ -49,6 +49,6 @@ internal fun MoveResult(move: SessionMove, save: MoveSave) {
         Text("원래 시간: ${moveIntervalText(move.before)}", style = MaterialTheme.typography.bodyMedium, color = Ink)
         Text("바뀐 시간: ${moveIntervalText(move.after)}", style = MaterialTheme.typography.bodyMedium, color = Ink)
         Text(moveSaveText(save), style = MaterialTheme.typography.bodyMedium, color = Ink)
-        Note("옮긴 일정이 있는 주를 보여 드려요. 다른 일정도 이어서 조정할 수 있어요.")
+        Note("조정 전 위치의 이동 위치를 누르면 옮긴 일정으로 갈 수 있어요. 다른 일정도 이어서 조정할 수 있어요.")
     }
 }
