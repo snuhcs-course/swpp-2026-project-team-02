@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonArray
 import com.swpp.licenseplanner.data.RequestMapper
 import com.swpp.licenseplanner.data.PlanSnapshotCodec
 import com.swpp.licenseplanner.data.MappingResult
+import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -68,6 +69,11 @@ import java.time.LocalDateTime
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanPersistenceViewModelTest {
+    private fun removed(move: SessionMove) = listOf(RemovedStudySchedule(
+        PlanGrouping.sessions(listOf(move.before)).single(),
+        PlanGrouping.sessions(listOf(move.after)).single(),
+    ))
+
     private val dispatcher = StandardTestDispatcher()
     private val liveScope = PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1")
 
@@ -514,7 +520,10 @@ class PlanPersistenceViewModelTest {
             markerGate.complete(Unit)
             advanceUntilIdle()
             assertEquals(1, server.requestCount)
-            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Saved), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Saved, removed(SessionMove(rowsA[0], movedA[0]))), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("2026-10-19T18:00", success.removedSessions.single().destination?.start.toString())
             assertEquals(PlanStorage.Ready, vm.storage.value)
             assertEquals(listOf("save", "save", "save unresolved 1", "save"), events)
             assertEquals(vm.plans.value, restoredNow())
@@ -633,7 +642,10 @@ class PlanPersistenceViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Unsaved), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], movedA[0]), MoveSave.Unsaved, removed(SessionMove(rowsA[0], movedA[0]))), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("2026-10-19T18:00", success.removedSessions.single().destination?.start.toString())
             assertEquals(movedA, vm.plan(1).current.schedules)
             assertEquals(PlanStorage.SaveFailure, vm.storage.value)
             val ifRestartedNow = restoredNow()
@@ -829,7 +841,7 @@ class PlanPersistenceViewModelTest {
             assertTrue(vm.submitManualAfterCalendarCheck())
             assertFalse(vm.submitManualAfterCalendarCheck())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], manualA[0]), MoveSave.Unsaved), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", SessionMove(rowsA[0], manualA[0]), MoveSave.Unsaved, removed(SessionMove(rowsA[0], manualA[0]))), vm.adjustment.value.state)
             assertEquals(manualA, vm.plan(1).current.schedules)
             assertEquals(PlanStorage.SaveFailure, vm.storage.value)
 
@@ -1009,7 +1021,7 @@ class PlanPersistenceViewModelTest {
         vm.select(1, "study-1")
         assertTrue(vm.submitAdjustment())
         advanceUntilIdle()
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saving), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saving, removed(moveA)), vm.adjustment.value.state)
         assertEquals(PlanStorage.Saving, vm.storage.value)
         assertEquals(movedA, vm.plan(1).current.schedules)
         assertFalse(vm.plans.value == vm.savedPlans.value)
@@ -1021,7 +1033,7 @@ class PlanPersistenceViewModelTest {
 
         outcomeSave.complete(Unit)
         advanceUntilIdle()
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved, removed(moveA)), vm.adjustment.value.state)
         assertEquals(PlanStorage.Ready, vm.storage.value)
         assertEquals(vm.plans.value, restoredNow())
         assertEquals(listOf("save", "save", "save unresolved 1", "adjust study-1", "save"), events)
@@ -1042,7 +1054,7 @@ class PlanPersistenceViewModelTest {
         vm.select(1, "study-1")
         assertTrue(vm.submitAdjustment())
         advanceUntilIdle()
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved, removed(moveA)), vm.adjustment.value.state)
         assertEquals(movedA, vm.plan(1).current.schedules)
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
         val ifRestartedNow = restoredNow()
@@ -1059,7 +1071,7 @@ class PlanPersistenceViewModelTest {
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
         vm.retrySave()
         advanceUntilIdle()
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved, removed(moveA)), vm.adjustment.value.state)
         assertEquals(PlanStorage.Ready, vm.storage.value)
         val resolved = restoredNow()
         assertEquals(vm.plans.value, resolved)
@@ -1074,11 +1086,11 @@ class PlanPersistenceViewModelTest {
         store.failingSaves += store.saves + 1
         assertFalse(report(vm, 1, "study-2", StudyCheckInStatus.Missed))
         assertEquals(PlanStorage.SaveFailure, vm.storage.value)
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved, removed(moveA)), vm.adjustment.value.state)
         vm.retrySave()
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
-        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved), vm.adjustment.value.state)
+        assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Saved, removed(moveA)), vm.adjustment.value.state)
         assertEquals(1, adjustment.inputs.size)
     }
 
@@ -1109,7 +1121,7 @@ class PlanPersistenceViewModelTest {
             store.failingSaves += store.saves + 2
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved), vm.adjustment.value.state)
+            assertEquals(AdjustmentState.Success("study-1", moveA, MoveSave.Unsaved, removed(moveA)), vm.adjustment.value.state)
 
             // A fresh start restores that marker with the pre-request rows and no move or replay.
             val (restarted, _) = open(adjustment = live)

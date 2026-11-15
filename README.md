@@ -116,8 +116,8 @@ revision or configuration the server is running.
   Korean. A richer structured shortfall schema remains an open decision.
 - **How much available time a plan uses:** the week-one branch uses the model's
   proposed workload and date totals, leaving spare time available for adjustments.
-  An earlier evaluation observed about 60% median use. The HE branch adds complete
-  review rounds when they fit. User testing still needs to establish whether
+  An earlier evaluation observed about 60% median use. Review
+  rounds from the HE branch were not merged. User testing still needs to establish whether
   learners mean the entered time as a limit or a target and how they prefer to
   distribute work across weekdays.
 - **Summary labeling:** generation summaries are composed by server code from

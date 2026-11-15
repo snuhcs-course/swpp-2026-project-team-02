@@ -57,6 +57,7 @@ import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
 import com.swpp.licenseplanner.domain.CreationDraft
 import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanGrouping
@@ -78,6 +79,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -119,6 +123,8 @@ sealed interface CalendarReadState {
 }
 
 /** Failed-session adjustment lifecycle. */
+data class RemovedStudySchedule(val original: PlanSession, val destination: PlanSession?)
+
 sealed interface AdjustmentState {
     data object Idle : AdjustmentState
     data object Loading : AdjustmentState
@@ -131,6 +137,7 @@ sealed interface AdjustmentState {
         val targetScheduleId: String,
         val move: SessionMove? = null,
         val save: MoveSave = MoveSave.Saving,
+        val removedSessions: List<RemovedStudySchedule> = emptyList(),
     ) : AdjustmentState {
         init {
             require(move == null || move.after.scheduleId == targetScheduleId)
@@ -330,6 +337,8 @@ class PlanFormViewModel(
 
     private val _generation = MutableStateFlow<GenerationState>(GenerationState.Idle)
     val generation: StateFlow<GenerationState> = _generation.asStateFlow()
+
+    private var generationJob: Job? = null
 
     /** Every successful generation saved on this device, oldest first; never removed. */
     private val _plans = MutableStateFlow<List<SessionPlan>>(emptyList())
@@ -896,6 +905,17 @@ class PlanFormViewModel(
         openGenerationReview(previous.request, previous.form, previous.source, previous.envelope)
     }
 
+    /** Cancels an in-flight generation while keeping the user's form values available to edit. */
+    fun cancelGeneration(): Boolean {
+        if (_generation.value != GenerationState.Loading) return false
+        generationJob?.cancel()
+        generationJob = null
+        lastGenerationReview = null
+        _generatedPlan.value = null
+        _generation.value = GenerationState.Idle
+        return true
+    }
+
     /** Null only when every accepted local edit is committed and this source can be regenerated. */
     fun regenerationBlockReason(ordinal: Int): String? {
         if (!regenerationSaveReady()) return "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
@@ -1055,8 +1075,10 @@ class PlanFormViewModel(
             _calendarConflict.value = null
         } else _calendarConflict.value = review.copy(phase = ConflictPhase.Generating)
         _generation.value = GenerationState.Loading
-        viewModelScope.launch {
-            when (val outcome = planningRepository.generate(request)) {
+        generationJob = viewModelScope.launch {
+            val outcome = planningRepository.generate(request)
+            currentCoroutineContext().ensureActive()
+            when (outcome) {
                 is PlanOutcome.Success -> {
                     if (review.kind == ConflictKind.Replacement) {
                         if (!reviewSourceCurrent(review) || outcome.isDemo != review.source!!.isDemo ||
@@ -1685,7 +1707,19 @@ class PlanFormViewModel(
                     }
                     acceptedManualReview = null
                     pendingAdjustment = null
-                    val success = AdjustmentState.Success(input.scheduleId, sessionMove(input, outcome.response.schedules))
+                    val updatedSessions = PlanGrouping.sessions(outcome.response.schedules)
+                    val removedSessions = PlanGrouping.sessions(input.schedules).filterNot { it.isExternal }.mapNotNull { old ->
+                        val oldRow = input.schedules.firstOrNull { it.scheduleId == old.scheduleId } ?: return@mapNotNull null
+                        val wasRemoved = outcome.response.schedules.none { row ->
+                            row.scheduleId == old.scheduleId &&
+                                row.startDate == oldRow.startDate &&
+                                row.endDate == oldRow.endDate
+                        }
+                        if (!wasRemoved) return@mapNotNull null
+                        val destination = updatedSessions.singleOrNull { it.scheduleId == old.scheduleId && it != old }
+                        RemovedStudySchedule(old, destination)
+                    }
+                    val success = AdjustmentState.Success(input.scheduleId, sessionMove(input, outcome.response.schedules), removedSessions = removedSessions)
                     _adjustment.update { it.copy(failedScheduleId = null, state = success, manual = null) }
                     commit(_plans.value, move = _adjustment.value, keep = keep)
                 }

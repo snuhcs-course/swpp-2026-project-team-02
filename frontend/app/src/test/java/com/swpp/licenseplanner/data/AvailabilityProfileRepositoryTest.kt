@@ -65,7 +65,7 @@ class AvailabilityProfileRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"overlap"}}"""))
         assertEquals(ProfileOutcome.Failure(ApiError.InvalidInput("overlap")), runBlocking { repository().save(context) })
         server.enqueue(MockResponse().setResponseCode(500))
-        assertEquals(ProfileOutcome.Failure(ApiError.ServerFailure(500)), runBlocking { repository().load() })
+        assertEquals(ProfileOutcome.Failure(ApiError.ServerFailure(500, "No response body")), runBlocking { repository().load() })
     }
 
     @Test fun splitAndOvernightWindowsRoundTripWithChangedAndEmptyWeeks() {

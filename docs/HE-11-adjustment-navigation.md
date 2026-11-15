@@ -1,0 +1,37 @@
+# HE-11 — Adjustment schedule navigation
+
+## Issue context
+
+The evaluator could interpret the change of week after schedule adjustment as a missing or lost schedule. The adjustment screen now makes the original position and the new destination explicit, and lets the user follow the moved schedule.
+
+## Changes
+
+- After a successful adjustment, keep the currently displayed week. Do not automatically switch to the adjusted schedule's week.
+- Temporarily retain each removed study session at its original date and time. Render it with a strikethrough and the `조정 전 위치 · 임시` label.
+- When a matching adjusted session exists, show its destination date and time on the temporary row. The temporary row is tappable.
+- On tap, smoothly scroll to the destination. When the destination is in another week, scroll to the current week's edge, show the destination week, then scroll to the destination row.
+- Animate a background highlight on the destination row so the user can identify where the session moved. The highlight remains briefly, then fades.
+- Match the source to its destination by schedule ID. If no matching destination exists, do not show a fabricated link.
+- Keep the original plan's availability and preparation/exam date context visible in the adjustment view.
+
+## Evidence
+
+The first image is a frame extracted at 16 seconds from the user's 2026-11-14 pre-change recording. It shows a successful adjustment summary and the screen already displaying week 2, while the moved session was originally in week 1. This records the automatic week jump that prompted the issue. The remaining images are cropped frames extracted from the post-change recording. Those recordings show the DEMO build (including the `DEMO` badge and `로컬 시연 계산` label), so they document the UI flow and are not evidence of Live backend behavior.
+
+### Before
+
+Screenshots were captured during review and are not stored in the repository.
+
+### After
+
+Screenshots were captured during review and are not stored in the repository.
+
+Pre-change source recording: `Screen_Recording_20261114_153014_License Planner.mp4` (local recording, not in the repository).
+
+Post-change source recording: `LicensePlanner 2026-11-14 16-01-53.mp4` (local recording, not in the repository).
+
+## Verification status
+
+- Manually reviewed the supplied screen recording and extracted the evidence frames above.
+- `git diff --check` passed after the UI changes.
+- Android build and automated tests were not run for this documentation update.

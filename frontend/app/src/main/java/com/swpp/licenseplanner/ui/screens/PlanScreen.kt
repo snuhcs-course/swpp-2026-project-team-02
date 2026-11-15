@@ -1,19 +1,25 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -22,19 +28,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
+import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.DayPlan
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.WeekPlan
+import com.swpp.licenseplanner.domain.WeeklyTimeUsage
+import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.PlanStorage
+import com.swpp.licenseplanner.ui.RemovedStudySchedule
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
 import com.swpp.licenseplanner.ui.components.EXPORT_SUBTITLE
@@ -53,6 +67,8 @@ import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkBody
 import com.swpp.licenseplanner.ui.theme.InkSecondary
+import com.swpp.licenseplanner.ui.theme.Outline
+import com.swpp.licenseplanner.ui.theme.MutedSurface
 import com.swpp.licenseplanner.ui.theme.MonoStyles
 import com.swpp.licenseplanner.ui.theme.Paper
 import java.time.LocalDate
@@ -70,6 +86,7 @@ import java.util.Locale
  */
 @Composable
 fun PlanScreen(
+    originalRequest: StudyPlanRequest,
     response: StudyPlanResponse,
     isDemo: Boolean,
     exportCount: Int,
@@ -88,6 +105,9 @@ fun PlanScreen(
     remainingStudyReason: String? = null,
 ) {
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
+    val weeklyTimeUsage = remember(originalRequest, response) {
+        WeeklyTimeUsageCalculator.calculate(originalRequest, response.schedules)
+    }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
     val summary = response.agentSummary?.takeIf { it.isNotBlank() }
@@ -138,7 +158,12 @@ fun PlanScreen(
                         onNext = { weekIndex++ },
                     )
                 }
+                val selectedWeekUsage = weeklyTimeUsage.firstOrNull { it.monday == week.monday }
+                if (selectedWeekUsage != null) item { WeeklyTimeUsageChart(selectedWeekUsage) }
                 items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it], checkIns = checkIns) }
+            }
+            item {
+                ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
             }
             item {
                 PrimaryButton(
@@ -156,6 +181,58 @@ fun PlanScreen(
             item { SecondaryButton("입력 수정하기", onEdit) }
             item { SecondaryButton("처음으로", onHome) }
         }
+    }
+}
+
+@Composable
+internal fun WeeklyTimeUsageChart(week: WeeklyTimeUsage) {
+    val availableDays = week.days.filter { it.availableMinutes > 0 }
+    if (availableDays.isEmpty()) return
+    val scale = availableDays.maxOfOrNull { maxOf(it.availableMinutes, it.plannedMinutes) }
+        ?.coerceAtLeast(1L)?.toFloat() ?: 1f
+    MutedBox {
+        Text("일별 공부 시간", style = MaterialTheme.typography.titleSmall, color = Ink)
+        Note("이 주의 요일별 가용 시간 중 계획에 배정된 시간을 비교해요.")
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            availableDays.forEach { day ->
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${day.date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)} ${monthDay(day.date)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "배정 ${PlanGrouping.formatDuration(day.plannedMinutes)} / 가용 ${PlanGrouping.formatDuration(day.availableMinutes)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkBody,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(12.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MutedSurface),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((day.availableMinutes / scale).coerceIn(0f, 1f))
+                                .height(12.dp)
+                                .background(Outline),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((day.plannedMinutes / scale).coerceIn(0f, 1f))
+                                .height(12.dp)
+                                .background(Ink),
+                        )
+                    }
+                }
+            }
+        }
+        Note("회색은 가용 시간, 검정은 배정 시간이에요. 가용 시간을 모두 사용하지 않고 일부를 여유 시간으로 남길 수 있어요. 화살표를 눌러 주차별로 확인할 수 있어요.")
     }
 }
 
@@ -206,28 +283,59 @@ internal fun DaySection(
     selectionEnabled: Boolean = true,
     movedId: String? = null,
     checkIns: CheckInRows? = null,
+    availabilityLabel: String? = null,
+    dateMarkers: List<String> = emptyList(),
+    removedSchedules: List<RemovedStudySchedule> = emptyList(),
+    highlightedDestination: PlanSession? = null,
+    onNavigateToDestination: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     if (day.sessions.isEmpty()) {
-        MutedBox {
+        MutedBox(modifier = modifier) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 DayStamp(day.date)
                 Text("일정 없음", style = MaterialTheme.typography.bodyMedium, color = InkSecondary, modifier = Modifier.weight(1f))
             }
+            DayConstraintMarkers(availabilityLabel, dateMarkers)
         }
         return
     }
-    OutlinedCard {
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            DayStamp(day.date)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                for (session in day.sessions) {
-                    val moved = !session.isExternal && session.scheduleId == movedId
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (onSelect == null || session.isExternal) SessionRow(session, moved)
-                        else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved) { onSelect(session.scheduleId) }
-                        if (checkIns != null && !session.isExternal) CheckInRowAction(session, sessionLabel(session, day.date), checkIns)
+    OutlinedCard(modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                DayStamp(day.date)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (session in day.sessions) {
+                        val removedSchedule = removedSchedules.firstOrNull { it.original == session }
+                        val highlighted = session == highlightedDestination
+                        val moved = !session.isExternal && session.scheduleId == movedId
+                        if (removedSchedule != null) SessionRow(
+                            session,
+                            removed = true,
+                            removedDestination = removedSchedule.destination,
+                            onNavigate = removedSchedule.destination?.let { { onNavigateToDestination(it.scheduleId) } },
+                        )
+                        else if (onSelect == null || session.isExternal) SessionRow(session, moved, highlighted = highlighted)
+                        else SelectableSession(session, day.date, session.scheduleId == selectedId, selectionEnabled, moved, highlighted) { onSelect(session.scheduleId) }
+                        if (checkIns != null && !session.isExternal && removedSchedule == null) {
+                            CheckInRowAction(session, sessionLabel(session, day.date), checkIns)
+                        }
                     }
                 }
+            }
+            DayConstraintMarkers(availabilityLabel, dateMarkers)
+        }
+    }
+}
+
+@Composable
+private fun DayConstraintMarkers(availabilityLabel: String?, dateMarkers: List<String>) {
+    if (availabilityLabel == null && dateMarkers.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (availabilityLabel != null) Tag(availabilityLabel)
+        if (dateMarkers.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                dateMarkers.forEach { Tag(it) }
             }
         }
     }
@@ -248,13 +356,14 @@ private fun SelectableSession(
     selected: Boolean,
     enabled: Boolean,
     moved: Boolean,
+    highlighted: Boolean = false,
     onClick: () -> Unit,
 ) {
     val label = sessionLabel(session, date) +
         (if (moved) " $MOVED_TAG" else "") + (if (enabled) "" else " $SELECTION_LOCKED")
     ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SessionRow(session, moved)
+            SessionRow(session, moved, highlighted = highlighted)
             if (!enabled) Text(SELECTION_LOCKED, style = MaterialTheme.typography.labelSmall, color = InkSecondary)
         }
     }
@@ -268,21 +377,59 @@ internal fun sessionTime(session: PlanSession) =
     "${WireDateTime.formatTime(session.start.toLocalTime())}–${WireDateTime.formatTime(session.end.toLocalTime())}"
 
 @Composable
-private fun SessionRow(session: PlanSession, moved: Boolean = false) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun SessionRow(
+    session: PlanSession,
+    moved: Boolean = false,
+    removed: Boolean = false,
+    removedDestination: PlanSession? = null,
+    highlighted: Boolean = false,
+    onNavigate: (() -> Unit)? = null,
+) {
+    val highlightColor by animateColorAsState(
+        targetValue = if (highlighted) MutedSurface else Color.Transparent,
+        animationSpec = tween(durationMillis = 450),
+        label = "schedule-destination-highlight",
+    )
+    Column(
+        modifier = Modifier
+            .background(highlightColor, MaterialTheme.shapes.small)
+            .padding(if (highlighted) 6.dp else 0.dp)
+            .then(
+                if (removed && removedDestination != null && onNavigate != null) {
+                    Modifier.clickable(role = Role.Button, onClickLabel = "조정된 일정으로 이동", onClick = onNavigate)
+                } else Modifier,
+            ),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Topic exactly as returned; long topics wrap.
-            Text(session.topic, style = MaterialTheme.typography.titleSmall, color = Ink, modifier = Modifier.weight(1f))
-            Text(PlanGrouping.formatDuration(session.durationMinutes), style = MaterialTheme.typography.bodySmall, color = Ink)
+            Text(
+                session.topic,
+                style = MaterialTheme.typography.titleSmall.copy(textDecoration = if (removed) TextDecoration.LineThrough else TextDecoration.None),
+                color = if (removed) InkSecondary else Ink,
+                modifier = Modifier.weight(1f),
+            )
+            Text(PlanGrouping.formatDuration(session.durationMinutes), style = MaterialTheme.typography.bodySmall, color = if (removed) InkSecondary else Ink)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 sessionTime(session),
-                style = MonoStyles.number,
-                color = InkBody,
+                style = MonoStyles.number.copy(textDecoration = if (removed) TextDecoration.LineThrough else TextDecoration.None),
+                color = if (removed) InkSecondary else InkBody,
             )
             if (session.isExternal) Tag("기존 일정")
             if (moved) Tag(MOVED_TAG)
+            if (removed) Tag("조정 전 위치 · 임시")
+        }
+        if (removed) {
+            if (removedDestination != null && onNavigate != null) {
+                Text(
+                    "이동 위치: ${dayLabel(removedDestination.start.toLocalDate())} ${monthDay(removedDestination.start.toLocalDate())} ${sessionTime(removedDestination)} · 눌러서 이동",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Ink,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            } else Note("새 일정 위치를 찾지 못했어요.")
         }
     }
 }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -83,6 +84,7 @@ fun AppScreen(
     onNav: () -> Unit = {},
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     scrollable: Boolean = true,
+    scrollState: ScrollState = rememberScrollState(),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Scaffold(
@@ -93,7 +95,7 @@ fun AppScreen(
     ) { padding ->
         val base = Modifier.padding(padding).fillMaxSize()
         Column(
-            modifier = (if (scrollable) base.verticalScroll(rememberScrollState()) else base)
+            modifier = (if (scrollable) base.verticalScroll(scrollState) else base)
                 .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             content = content,

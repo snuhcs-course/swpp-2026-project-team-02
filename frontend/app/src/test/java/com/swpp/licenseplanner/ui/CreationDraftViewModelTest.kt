@@ -184,6 +184,30 @@ class CreationDraftViewModelTest {
         assertNull(vm.draftDecision.value)
     }
 
+    @Test fun cancelGenerationKeepsSavedDraftBytesAndCheckpoint() = runTest(dispatcher) {
+        val planning = FakePlanning().apply { gate = CompletableDeferred() }
+        val vm = open(planning)
+        fillToAvailability(vm)
+        saveAndLeave(vm)
+        vm.resumeDraft()
+        val bytes = disk.committed!!.clone()
+        val draft = vm.committedDraft.value
+        val form = vm.form.value
+        val step = vm.creationStep.value
+        val decision = vm.draftDecision.value
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.cancelGeneration())
+        advanceUntilIdle()
+        assertArrayEquals(bytes, disk.committed)
+        assertEquals(draft, vm.committedDraft.value)
+        assertEquals(form, vm.form.value)
+        assertEquals(step, vm.creationStep.value)
+        assertEquals(decision, vm.draftDecision.value)
+        assertTrue(vm.plans.value.isEmpty())
+        assertTrue(vm.savedPlans.value.isEmpty())
+    }
+
     // --- Resume position ---
 
     @Test fun untouchedDefaultsLeaveWithoutADecision() = runTest(dispatcher) {

@@ -16,6 +16,8 @@ replacement of the selected plan. See [Calendar conflict review](#calendar-confl
 Both the new plan and a reopened saved plan let you record how each study session
 went (공부 기록하기); see [Study reports](#study-reports).
 
+Cancelling generation stops the app from waiting; the live server may still finish and store that plan in shared storage, where it is not shown in the app.
+
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
 warning, “시험 일정 바꾸기” opens an editor with only the exam date. Confirming a
 changed date recalculates straight away and shows a fresh warning or the plan; the

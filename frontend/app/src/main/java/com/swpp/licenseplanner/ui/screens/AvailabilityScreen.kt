@@ -158,6 +158,17 @@ fun AvailabilityScreen(
             else -> Heading("보통 언제 공부할 수 있나요?", "요일마다 시작 시간과 공부할 분을 정해 주세요.")
         }
 
+        ContextHelpButton(ContextHelpTopic.AVAILABILITY)
+        MutedBox {
+            Text("시간 입력 방법", style = MaterialTheme.typography.titleSmall, color = Ink)
+            Text(
+                "요일마다 시간대를 추가하고 시작 시간과 공부할 분을 입력해 주세요. 밤을 넘기는 시간도 입력할 수 있어요. " +
+                    "주마다 시간이 다르면 해당 주의 시간을 바꾸고, 아래 합계를 확인하세요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkSecondary,
+            )
+        }
+
         if (week != null) {
             val index = weeks.indexOf(week)
             WeekNavigator(
@@ -480,6 +491,29 @@ internal fun windowEditDescription(day: Weekday, index: Int, window: WindowSpec)
 /** “– 20:00”, or “– 다음 날 00:30” for an end on the following date. */
 internal fun endLabel(window: WindowSpec): String =
     "– " + (if (window.endsNextDay) "다음 날 " else "") + WireDateTime.formatTime(window.end)
+
+internal fun windowRangeLabel(window: WindowSpec): String =
+    WireDateTime.formatTime(window.start) + "–" +
+        (if (window.endsNextDay) "다음 날 " else "") + WireDateTime.formatTime(window.end)
+
+internal fun dateAvailabilityLabel(context: StudyAvailability?, date: LocalDate): String {
+    if (context == null) return "공부 가능 시간 정보가 없어요."
+    val windows = context.windowsStarting(date)
+    return if (windows.isEmpty()) "공부 가능 시간 없음"
+    else "공부 가능 ${windows.joinToString(" · ", transform = ::windowRangeLabel)}"
+}
+
+internal fun originalAvailabilityLabels(context: StudyAvailability?): List<String> {
+    if (context == null) return listOf("공부 가능 시간 정보가 없어요.")
+    fun labels(week: WeekWindows): String = Weekday.entries.mapNotNull { day ->
+        week[day]?.takeIf { it.isNotEmpty() }?.let { windows ->
+            "${day.label} ${windows.joinToString(" · ", transform = ::windowRangeLabel)}"
+        }
+    }.joinToString(" / ").ifEmpty { "공부 가능 시간 없음" }
+    return listOf("공부 가능 시간: ${labels(context.base)}") + context.overrides.toSortedMap().map { (monday, week) ->
+        "${overridesLabel(mapOf(monday to week))}: ${labels(week)}"
+    }
+}
 
 internal data class WeekTotals(val days: Int, val minutes: Int)
 

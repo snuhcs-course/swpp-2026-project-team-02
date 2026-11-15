@@ -13,6 +13,29 @@ import java.time.LocalTime
 class AvailabilityTextTest {
     private fun window(hour: Int, minute: Int, duration: Int) = WindowSpec(LocalTime.of(hour, minute), duration)
 
+    @Test fun adjustmentLabelsResolveDurationAndOvernightWindows() {
+        val friday = LocalDate.of(2026, 11, 20)
+        val context = StudyAvailability(mapOf(
+            Weekday.MONDAY to listOf(window(18, 0, 120)),
+            Weekday.FRIDAY to listOf(window(23, 30, 60)),
+        ))
+        assertEquals("공부 가능 18:00–20:00", dateAvailabilityLabel(context, friday.minusDays(4)))
+        assertEquals("공부 가능 23:30–다음 날 00:30", dateAvailabilityLabel(context, friday))
+        assertEquals("공부 가능 시간 없음", dateAvailabilityLabel(context, friday.plusDays(1)))
+    }
+
+    @Test fun adjustmentLabelsFollowOverridesAndShowOriginalWeeks() {
+        val monday = LocalDate.of(2026, 11, 16)
+        val context = StudyAvailability(
+            mapOf(Weekday.WEDNESDAY to listOf(window(19, 0, 60))),
+            mapOf(monday to mapOf(Weekday.WEDNESDAY to listOf(window(7, 0, 30)))),
+        )
+        assertEquals("공부 가능 07:00–07:30", dateAvailabilityLabel(context, monday.plusDays(2)))
+        assertEquals(listOf("공부 가능 시간: 수 19:00–20:00", "11월 16일 주 · 시간 바꿈: 수 07:00–07:30"), originalAvailabilityLabels(context))
+        assertEquals("공부 가능 시간 정보가 없어요.", dateAvailabilityLabel(null, monday))
+        assertEquals(listOf("공부 가능 시간 정보가 없어요."), originalAvailabilityLabels(null))
+    }
+
     @Test fun endLabelMarksTheNextDay() {
         assertEquals("– 20:00", endLabel(window(19, 0, 60)))
         assertEquals("– 다음 날 00:30", endLabel(window(23, 0, 90)))
