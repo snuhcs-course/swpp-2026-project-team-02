@@ -934,7 +934,7 @@ class MainFlowUiTest {
         waitForText("옮길 수 있는 시간이 없어요")
         show("옮길 수 있는 시간이 없어요")
         show("이 계획은 입력한 공부 시간을 모두 쓰고 있어서 시험 전까지 비어 있는 시간이 없어요. 기존 계획은 그대로예요. " +
-            "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요.")
+            "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요. 캘린더에서 비어 있는 시간을 찾아 이번 한 번만 옮길 수도 있어요.")
         show("다른 일정을 선택해 주세요")
         compose.onNodeWithText("다시 시도").assertDoesNotExist()
         assertEquals(1, host.adjustmentCalls.get())
@@ -1514,6 +1514,88 @@ class MainFlowUiTest {
         show("남은 공부를 모두 배치할 시간이 없어요")
         host.capture("remaining-no-fit"); click("계획으로 돌아가기")
         assertEquals(noFit, host.snapshot()); assertEquals(2, host.remainingCalls.get())
+    }
+
+    private fun seedFullPlanForFreeTime(host: DemoUiHost): com.swpp.licenseplanner.domain.SessionPlan {
+        val request = com.swpp.licenseplanner.data.model.StudyPlanRequest(
+            com.swpp.licenseplanner.domain.CERTIFICATION_ID, "2026/11/09/00/00", "2026/11/23/00/00", "beginner",
+            com.swpp.licenseplanner.data.model.AssessmentResults(com.swpp.licenseplanner.domain.CERTIFICATION_ID, emptyList()), 2,
+            mapOf("monday" to listOf(com.swpp.licenseplanner.data.model.TimeWindow("19:00", durationMinutes = 90)),
+                "saturday" to listOf(com.swpp.licenseplanner.data.model.TimeWindow("10:00", durationMinutes = 120))))
+        val rows = listOf(
+            ScheduleRow("study-1", "2026/11/09/19/00", "2026/11/09/20/30", "놓친 공부"),
+            ScheduleRow("study-2", "2026/11/14/10/00", "2026/11/14/12/00", "다른 공부 2"),
+            ScheduleRow("study-3", "2026/11/16/19/00", "2026/11/16/20/30", "다른 공부 3"),
+            ScheduleRow("study-4", "2026/11/21/10/00", "2026/11/21/12/00", "다른 공부 4"))
+        val plan = com.swpp.licenseplanner.domain.SessionPlan.register(1, request,
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true)
+        host.deviceMinute = LocalDate.of(2026, 11, 17).atTime(9, 5)
+        host.seedSnapshot(com.swpp.licenseplanner.data.PlanSnapshot(listOf(plan))); host.recreate()
+        click("계획 조정"); click("계획 1 · $CERTIFICATION_NAME")
+        return plan
+    }
+
+    private fun openSingleFreeTime(host: DemoUiHost): com.swpp.licenseplanner.domain.SessionPlan {
+        val plan = seedFullPlanForFreeTime(host)
+        clickSession(PlanGrouping.sessions(plan.current.schedules).first())
+        click("선택한 일정 조정하기"); show("옮길 수 있는 시간이 없어요")
+        host.capture("calendar-no-fit")
+        click("캘린더에서 빈 시간 찾기")
+        return plan
+    }
+
+    @Test fun calendarFreeTimeMovesOneSessionAndKeepsEnteredWindows() = withApp { host ->
+        val before = openSingleFreeTime(host)
+        waitForText("캘린더에서 빈 시간")
+        compose.waitUntil("Calendar results finish laying out", 10_000) {
+            host.viewModel.freeTimeSearch.value?.phase == FreeTimePhase.Results &&
+                compose.onAllNodesWithText("90분 · 입력한 공부 시간 밖 · 이번 한 번만", substring = true).onFirst().isDisplayed()
+        }
+        compose.onNodeWithText("이번 한 번만 옮기기").assertIsNotEnabled()
+        click("11월 17일 (화) 10:00–11:30", substring = true)
+        host.capture("calendar-suggestions")
+        click("이번 한 번만 옮기기"); host.awaitSaved(); waitForText("이 기기에 저장했어요")
+        val after = host.snapshot().plans.single()
+        assertEquals(before.original, after.original)
+        assertOnlyTargetTimesChanged(before.current.schedules, after.current.schedules, "study-1")
+        assertEquals("2026/11/17/10/00", after.current.schedules.single { it.scheduleId == "study-1" }.startDate)
+        assertEquals(2, host.adjustmentCalls.get()); assertEquals(0, host.calendarWrites.get())
+        host.capture("calendar-moved")
+        host.recreate(); click("계획 조정"); click("계획 1 · $CERTIFICATION_NAME")
+        assertEquals(after.current.schedules, host.snapshot().plans.single().current.schedules)
+    }
+
+    @Test fun calendarFreeTimeDeniedPermissionKeepsManualChoiceAvailable() = withApp { host ->
+        host.calendarOutcome = com.swpp.licenseplanner.data.CalendarReadOutcome.PermissionMissing
+        val before = openSingleFreeTime(host)
+        waitForText("캘린더를 확인하지 못했어요"); host.capture("calendar-denied")
+        click("시간 직접 옮기기"); show("시작 시간")
+        assertEquals(before, host.snapshot().plans.single()); assertEquals(1, host.adjustmentCalls.get())
+    }
+
+    @Test fun calendarFreeTimeWithNoSlotKeepsThePlanAndManualChoice() = withApp { host ->
+        val start = LocalDate.of(2026, 11, 9).atStartOfDay()
+        host.calendarOutcome = com.swpp.licenseplanner.data.CalendarReadOutcome.Loaded(com.swpp.licenseplanner.data.CalendarBusySnapshot(
+            emptyList(), 0, 1, listOf(com.swpp.licenseplanner.data.CalendarOccurrence("busy-all-days", null, start, start.plusDays(15), true))))
+        val before = openSingleFreeTime(host)
+        waitForText("시험 전까지 빈 시간이 없어요"); host.capture("calendar-no-time")
+        click("시간 직접 옮기기"); show("시작 시간")
+        assertEquals(before, host.snapshot().plans.single()); assertEquals(1, host.adjustmentCalls.get())
+    }
+
+    @Test fun remainingCalendarFreeTimePreviewConfirmsOneCompleteLocalBatch() = withApp { host ->
+        val before = seedFullPlanForFreeTime(host)
+        click("남은 공부 다시 계획하기"); click("남은 공부 다시 배치하기")
+        show("남은 공부를 모두 배치할 시간이 없어요"); host.capture("remaining-calendar-no-fit")
+        click("캘린더에서 빈 시간 찾기"); waitForText("캘린더 빈 시간으로 다시 계획")
+        show("남은 시간 420분 · 일정 4개"); host.capture("remaining-calendar-preview")
+        click("이번 한 번만 이 시간으로 다시 계획하기"); host.awaitSaved()
+        waitForText("4개 일정 · 이 기기에 저장했어요")
+        assertEquals(2, host.remainingCalls.get()); assertEquals(0, host.calendarWrites.get())
+        val after = host.snapshot().plans.single()
+        assertEquals(before.original, after.original); assertEquals(4, after.current.schedules.size)
+        assertEquals(before.current.schedules.map { it.topic }.toSet(), after.current.schedules.map { it.topic }.toSet())
+        host.capture("remaining-calendar-result")
     }
 
     private fun withApp(block: (DemoUiHost) -> Unit) {
