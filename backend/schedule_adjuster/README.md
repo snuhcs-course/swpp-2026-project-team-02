@@ -55,6 +55,23 @@ null/비boolean 또는 manual 밖에서 전달한 외부 겹침 flag는 모델 �
 - 가능 구간은 공용 해석기를 써서 전날 시작해 자정을 넘는 구간과 주별 교체 시간을 반영하고, 시험 시각에 정확히 끝나는 배치는 허용합니다. 주제는 원본 주제를 그대로 쓰며 같은 주제 순서 규칙은 적용하지 않습니다.
 - 한 지시라도 들어갈 곳이 없으면 `NOT_ENOUGH_TIME`으로 전체를 거절하고 아무것도 바꾸지 않습니다. 이 결과는 정해진 순서·통째 배치 규칙에서 실패했다는 뜻이며, 나누거나 순서를 바꿔도 불가능하다는 증명은 아닙니다.
 
+### 확인한 시작 시각으로 일괄 이동
+
+`mode: "remaining"`의 모든 지시에 `new_start_date`를 넣으면
+`validate_remaining_destinations`가 지정한 시각만 검증하며 다른 시간을 찾지 않습니다.
+일부 지시에만 넣거나 시각 형식이 잘못되면 `INVALID_INPUT`입니다.
+이때만 최상위 boolean `confirm_outside_availability`(기본 false)를 받습니다.
+기존 지시만 보낼 때는 이 필드를 생략해야 합니다.
+
+원본 순서대로 현재 한국 시각의 다음 분, 준비 시작, `replan_from`, 시험 종료,
+보호된 공부 일정과 앞서 배치한 일정, 외부 일정, 공부 시간 창을 검사합니다.
+거절 코드는 차례로 `MANUAL_MOVE_IN_PAST`, `BEFORE_PREPARATION_START`,
+`INVALID_INPUT`, `EXAM_BOUND_EXCEEDED`, `STUDY_SESSION_OVERLAP`,
+`EXTERNAL_EVENT_OVERLAP`, `OUTSIDE_STUDY_WINDOWS`이며 HTTP 422입니다.
+맞닿는 구간과 시험 시각에 끝나는 구간은 허용합니다. 시간 밖 확인은 마지막
+검사만 면제하며 외부 겹침은 면제할 수 없습니다. 전체 검증 후 한 번만 저장하고,
+경합은 409로 거절합니다. 모델 호출과 프로필 변경은 없습니다.
+
 ## Agent 도구
 
 Agent는 원본 일정을 프롬프트에 통째로 받지 않습니다. `inspect_schedule` 도구가 정확한 ID, 종류, 주제를 조회합니다. 주제가 있는 공부 일정이면 `inspect_topic_schedule`이 같은 주제의 세션을 찾아 주제 학습 순서를 반영하고, 그 다음 재배치 도구를 호출합니다.

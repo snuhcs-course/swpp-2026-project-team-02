@@ -497,10 +497,11 @@ required and must not be null:
 | `weekly_availability`, `availability_overrides` | The plan's original context; must equal the retained context after normalization (window order and `end`/`duration_minutes` forms do not matter) |
 | `preparation_start`, `exam_date` | The plan's original bounds; must equal the retained values |
 | `replan_from` | `YYYY/MM/DD/HH/MM`; no session is placed before it |
-| `remaining_sessions` | Non-empty array of `{"schedule_id", "remaining_minutes", "replacement_schedule_id"}` objects with exactly those keys |
+| `remaining_sessions` | Non-empty array of `{"schedule_id", "remaining_minutes", "replacement_schedule_id"}` objects; optionally add `new_start_date` to every item |
 
-`schedule_id`, `new_start_date` and `confirm_outside_availability` must be
-absent, along with the manual-only `confirm_external_overlap` field. Each instruction names a distinct `study-N` source row.
+`schedule_id`, top-level `new_start_date` and the manual-only
+`confirm_external_overlap` must be absent. Without item destinations,
+`confirm_outside_availability` must also be absent. Each instruction names a distinct `study-N` source row.
 `remaining_minutes` is a JSON integer from 1 to the source row's scheduled
 minutes (booleans and decimals such as `60.0` are rejected). A
 `replacement_schedule_id` equal to its source keeps the ID and needs the full
@@ -527,6 +528,35 @@ study row, not used by any row, and unique within the request.
   ]
 }
 ```
+
+Optionally, supply `new_start_date` (`YYYY/MM/DD/HH/MM`) on **every** instruction
+and a top-level boolean `confirm_outside_availability` (default false). Partial,
+null or malformed destinations and nonboolean confirmation return 422 `INVALID_INPUT`.
+For example, the instructions above may instead be:
+
+```json
+{
+  "remaining_sessions": [
+    {"schedule_id": "study-1", "remaining_minutes": 60, "replacement_schedule_id": "study-1", "new_start_date": "2026/11/17/10/00"},
+    {"schedule_id": "study-4", "remaining_minutes": 10, "replacement_schedule_id": "study-5", "new_start_date": "2026/11/17/11/00"}
+  ],
+  "confirm_outside_availability": true
+}
+```
+
+With destinations, the server validates exactly those starts and never searches
+for alternatives. In source order it checks: start before the next Korea-local
+minute (`MANUAL_MOVE_IN_PAST`), before preparation (`BEFORE_PREPARATION_START`),
+before `replan_from` (`INVALID_INPUT`), end beyond the exam (`EXAM_BOUND_EXCEEDED`),
+overlap with a kept study row or an earlier destination (`STUDY_SESSION_OVERLAP`),
+retained external overlap (`EXTERNAL_EVENT_OVERLAP`), and outside one effective
+window without consent (`OUTSIDE_STUDY_WINDOWS`). Each is HTTP 422. Touching is
+allowed, including ending exactly at the exam. Outside-window consent waives
+only the window check; external overlaps cannot be waived. No calendar content
+or fresh busy intervals are needed or sent. The batch is saved once, atomically,
+with the same optimistic conflict checks, identity and success envelope.
+
+Without destinations, behavior is unchanged:
 
 The server removes every listed source row, keeps all other rows unchanged as
 busy time, and places the instructions in the sources' original order (start,

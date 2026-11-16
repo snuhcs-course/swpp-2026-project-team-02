@@ -20,7 +20,7 @@ from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as render_adjusted_csv
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
-from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions
+from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions, validate_remaining_destinations
 from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
 from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
@@ -294,16 +294,19 @@ def _remaining_sessions(value: Any) -> tuple[RemainingSession, ...]:
         raise ValueError("remaining_sessions must be a non-empty array")
     sessions = []
     for item in value:
-        if not isinstance(item, dict) or set(item) != REMAINING_SESSION_KEYS:
+        if not isinstance(item, dict) or set(item) not in (REMAINING_SESSION_KEYS, REMAINING_SESSION_KEYS | {"new_start_date"}):
             raise ValueError("each remaining_sessions item must contain only schedule_id, "
-                             "remaining_minutes and replacement_schedule_id")
+                             "remaining_minutes, replacement_schedule_id and optional new_start_date")
         schedule_id, minutes, replacement = (item["schedule_id"], item["remaining_minutes"],
                                              item["replacement_schedule_id"])
         if not isinstance(schedule_id, str) or not isinstance(replacement, str):
             raise ValueError("remaining_sessions schedule IDs must be strings")
         if type(minutes) is not int:
             raise ValueError("remaining_sessions remaining_minutes must be a whole number")
-        sessions.append(RemainingSession(schedule_id, minutes, replacement))
+        start = _datetime(item["new_start_date"], "new_start_date") if "new_start_date" in item else None
+        sessions.append(RemainingSession(schedule_id, minutes, replacement, start))
+    if any(s.new_start is not None for s in sessions) and any(s.new_start is None for s in sessions):
+        raise ValueError("every remaining_sessions item must have new_start_date, or none may have it")
     return tuple(sessions)
 
 
@@ -314,7 +317,7 @@ def _remaining_summary(placed: list[ScheduleEntry]) -> str:
 
 def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
     """Place every listed remainder in one selected stored plan without any model request."""
-    for field in SINGLE_TARGET_FIELDS:
+    for field in ("schedule_id", "new_start_date"):
         if field in payload:
             raise ValueError(f"{field} is not used when mode is remaining")
     for field in REMAINING_FIELDS:
@@ -322,6 +325,12 @@ def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{field} is required when mode is remaining")
     entries = parse_schedule_rows(payload["schedules"])
     instructions = _remaining_sessions(payload["remaining_sessions"])
+    destinations = instructions[0].new_start is not None
+    if "confirm_outside_availability" in payload:
+        if not destinations:
+            raise ValueError("confirm_outside_availability is not used without remaining destinations")
+        if not isinstance(payload["confirm_outside_availability"], bool):
+            raise ValueError("confirm_outside_availability must be true or false")
     if not isinstance(payload["weekly_availability"], dict):
         raise ValueError("weekly_availability must be a JSON object keyed by weekday")
     supplied = select_availability_context(payload, lambda: None)
@@ -341,9 +350,11 @@ def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
     if supplied != snapshot.availability:
         raise ValueError("weekly_availability and availability_overrides must match the selected plan's "
                          "stored study times")
-    result_entries = place_remaining_sessions(
+    placement = validate_remaining_destinations if destinations else place_remaining_sessions
+    options = {"confirm_outside_availability": payload.get("confirm_outside_availability", False)} if destinations else {}
+    result_entries = placement(
         entries, instructions, availability=snapshot.availability, preparation_start=snapshot.preparation_start,
-        exam_date=snapshot.exam_date, replan_from=replan_from, now=current_korea_minute())
+        exam_date=snapshot.exam_date, replan_from=replan_from, now=current_korea_minute(), **options)
     csv_text = render_adjusted_csv(result_entries)
     store.update(snapshot, csv_text)
     replacements = {instruction.replacement_schedule_id for instruction in instructions}

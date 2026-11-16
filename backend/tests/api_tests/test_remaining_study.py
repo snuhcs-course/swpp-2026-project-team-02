@@ -286,5 +286,101 @@ class RemainingStudyApiTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob("*.tmp")), [])
 
 
+    def confirmed_payload(self, starts=("2026/11/17/10/00", "2026/11/17/11/00"), **fields):
+        payload = self.payload(confirm_outside_availability=True, **fields)
+        for item, start in zip(payload["remaining_sessions"], starts):
+            item["new_start_date"] = start
+        return payload
+
+    def test_confirmed_destinations_are_exact_and_touching_is_allowed(self):
+        payload = self.confirmed_payload()
+        with patch.object(api_service, "place_remaining_sessions", side_effect=AssertionError("must not search")), \
+                patch.object(StudyPlanStore, "update", autospec=True, side_effect=StudyPlanStore.update) as update:
+            status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(update.call_count, 1)
+        rows = {row["schedule_id"]: row for row in result["schedules"]}
+        self.assertEqual(rows["study-1"]["start_date"], "2026/11/17/10/00")
+        self.assertEqual(rows["study-7"]["start_date"], "2026/11/17/11/00")
+        self.assertEqual(rows["study-7"]["end_date"], "2026/11/17/11/10")
+        self.assertEqual(rows["study-7"]["topic"], TOPIC)
+        for row in (ROWS[1], ROWS[2], ROWS[4]):
+            self.assertEqual(rows[row["schedule_id"]], row)
+        self.assertEqual(result["tool_calls"], [])
+        self.assert_only_selected_csv_changed(self.plan)
+
+    def test_partial_malformed_and_nonboolean_destinations_preserve_bytes(self):
+        partial = self.confirmed_payload()
+        del partial["remaining_sessions"][1]["new_start_date"]
+        cases = [partial]
+        for value in (None, 7, True, "2026-11-17T10:00", "2026/11/31/10/00"):
+            malformed = self.confirmed_payload()
+            malformed["remaining_sessions"][0]["new_start_date"] = value
+            cases.append(malformed)
+        for value in (None, 0, "true"):
+            nonboolean = self.confirmed_payload()
+            nonboolean["confirm_outside_availability"] = value
+            cases.append(nonboolean)
+        for payload in cases:
+            with self.subTest(payload=payload):
+                self.assert_rejected(payload, 422, "INVALID_INPUT")
+
+    def test_confirmed_movement_rejections_are_ordered_and_atomic(self):
+        cases = [
+            (("2026/11/16/20/30", "2026/11/17/11/00"), "MANUAL_MOVE_IN_PAST", {}),
+            (("2026/11/15/10/00", "2026/11/17/11/00"), "BEFORE_PREPARATION_START", {"clock": datetime(2026, 11, 14)}),
+            (("2026/11/17/10/00", "2026/11/17/11/00"), "INVALID_INPUT", {"replan_from": "2026/11/17/12/00"}),
+            (("2026/12/06/23/01", "2026/11/17/11/00"), "EXAM_BOUND_EXCEEDED", {}),
+            (("2026/11/17/10/00", "2026/11/18/18/10"), "STUDY_SESSION_OVERLAP", {}),
+            (("2026/11/17/10/00", "2026/11/17/10/59"), "STUDY_SESSION_OVERLAP", {}),
+            (("2026/11/17/10/00", "2026/11/17/18/00"), "EXTERNAL_EVENT_OVERLAP", {}),
+            (("2026/11/17/10/00", "2026/11/17/11/00"), "OUTSIDE_STUDY_WINDOWS", {"consent": False}),
+        ]
+        for starts, code, options in cases:
+            with self.subTest(code=code, starts=starts):
+                payload = self.confirmed_payload(starts)
+                payload["confirm_outside_availability"] = options.get("consent", True)
+                if "replan_from" in options:
+                    payload["replan_from"] = options["replan_from"]
+                with patch.object(api_service, "current_korea_minute", lambda: options.get("clock", FROZEN_NOW)):
+                    self.assert_rejected(payload, 422, code)
+        for consent in (None, False):
+            payload = self.confirmed_payload()
+            if consent is None:
+                del payload["confirm_outside_availability"]
+            else:
+                payload["confirm_outside_availability"] = consent
+            self.assert_rejected(payload, 422, "OUTSIDE_STUDY_WINDOWS")
+        self.assert_rejected(self.confirmed_payload(confirm_external_overlap=True), 422, "INVALID_INPUT")
+
+    def test_confirmed_exam_edge_and_inside_window_need_no_exception(self):
+        payload = self.confirmed_payload(("2026/11/30/18/00", "2026/11/30/19/00"))
+        del payload["confirm_outside_availability"]
+        status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        # A separate plan accepts ending exactly at the deadline with consent.
+        payload = self.confirmed_payload(("2026/12/06/23/00", "2026/11/17/11/00"), schedule_csv_file=self.other)
+        status, result = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(next(row for row in result["schedules"] if row["schedule_id"] == "study-1")["end_date"], "2026/12/07/00/00")
+
+    def test_competing_confirmed_update_preserves_newer_csv_or_metadata(self):
+        original = api_service.validate_remaining_destinations
+        csv_path = self.root / self.csv_name(self.plan)
+        metadata = self.root / (Path(self.csv_name(self.plan)).stem + ".meta.json")
+        for changed in (csv_path, metadata):
+            with self.subTest(changed=changed.name):
+                newer = changed.read_bytes() + b"\n"
+                def change_then_validate(*args, **kwargs):
+                    changed.write_bytes(newer)
+                    return original(*args, **kwargs)
+                with patch.object(api_service, "validate_remaining_destinations", change_then_validate):
+                    status, result = self.call("/schedules/adjust", self.confirmed_payload())
+                self.assertEqual((status, result["error"]["code"]), (409, "PLAN_CONFLICT"))
+                self.assertEqual(changed.read_bytes(), newer)
+                changed.write_bytes(self.before[changed.name])
+        self.assertEqual(self.files(), self.before)
+
+
 if __name__ == "__main__":
     unittest.main()

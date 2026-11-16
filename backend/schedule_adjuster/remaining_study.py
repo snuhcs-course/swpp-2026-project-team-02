@@ -13,7 +13,7 @@ from datetime import datetime, time, timedelta
 from study_availability import AvailabilityContext
 
 from .models import ScheduleEntry
-from .schedule_logic import classify_schedule_id, intervals_overlap
+from .schedule_logic import ManualMoveError, classify_schedule_id, fits_one_window, intervals_overlap
 from .settings import STUDY_ID_PREFIX
 
 NEXT_MINUTE = timedelta(minutes=1)
@@ -25,6 +25,7 @@ class RemainingSession:
     schedule_id: str
     remaining_minutes: int
     replacement_schedule_id: str
+    new_start: datetime | None = None
 
 
 def _suffix(schedule_id: str) -> int:
@@ -113,4 +114,37 @@ def place_remaining_sessions(schedule: tuple[ScheduleEntry, ...], instructions: 
                 "exam date when sessions are placed in their original order. Nothing was changed.")
         candidate.append(ScheduleEntry(instruction.replacement_schedule_id, start, start + duration,
                                        source.topic))
+    return tuple(candidate)
+
+
+def validate_remaining_destinations(schedule: tuple[ScheduleEntry, ...], instructions: tuple[RemainingSession, ...], *,
+                                    availability: AvailabilityContext, preparation_start: datetime,
+                                    exam_date: datetime, replan_from: datetime, now: datetime,
+                                    confirm_outside_availability: bool = False) -> tuple[ScheduleEntry, ...]:
+    """Validate a complete confirmed batch without searching or changing protected rows."""
+    pairs = _validated_sources(schedule, instructions)
+    selected = {source.schedule_id for source, _ in pairs}
+    candidate = [entry for entry in schedule if entry.schedule_id not in selected]
+    for source, instruction in pairs:
+        start = instruction.new_start
+        if start is None:
+            raise ValueError("every remaining_sessions item must have new_start_date")
+        end = start + timedelta(minutes=instruction.remaining_minutes)
+        if start < now + NEXT_MINUTE:
+            raise ManualMoveError("MANUAL_MOVE_IN_PAST", "The chosen start time has already passed.")
+        if start < preparation_start:
+            raise ManualMoveError("BEFORE_PREPARATION_START", "The chosen start time is before the preparation period.")
+        if start < replan_from:
+            raise ValueError("new_start_date must not be before replan_from")
+        if end > exam_date:
+            raise ManualMoveError("EXAM_BOUND_EXCEEDED", "The moved session would end after the exam date.")
+        overlaps = [entry for entry in candidate if intervals_overlap(start, end, entry.start_datetime, entry.end_datetime)]
+        if any(entry.schedule_type == "study" for entry in overlaps):
+            raise ManualMoveError("STUDY_SESSION_OVERLAP", "The chosen time overlaps another study session.")
+        if overlaps:
+            raise ManualMoveError("EXTERNAL_EVENT_OVERLAP", "The chosen time overlaps an external calendar event.")
+        if not confirm_outside_availability and not fits_one_window(start, end, availability):
+            raise ManualMoveError("OUTSIDE_STUDY_WINDOWS",
+                                  "The chosen time is outside the study windows. Confirm this one-time exception.")
+        candidate.append(ScheduleEntry(instruction.replacement_schedule_id, start, end, source.topic))
     return tuple(candidate)

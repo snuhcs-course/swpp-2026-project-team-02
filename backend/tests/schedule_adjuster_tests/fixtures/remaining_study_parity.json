@@ -520,5 +520,787 @@
       ],
       "expected_failure": "NOT_ENOUGH_TIME"
     }
+  ],
+  "destination_cases": [
+    {
+      "name": "confirmed touching destinations",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/11/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_rows": [
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        },
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/17/11/00",
+          "end_date": "2026/11/17/12/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/17/10/00",
+          "end_date": "2026/11/17/11/00",
+          "topic": "이른 번호"
+        }
+      ]
+    },
+    {
+      "name": "outside without consent",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/11/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": false,
+      "expected_code": "OUTSIDE_STUDY_WINDOWS"
+    },
+    {
+      "name": "protected study overlap",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/14/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "STUDY_SESSION_OVERLAP"
+    },
+    {
+      "name": "protected external overlap",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/16/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "EXTERNAL_EVENT_OVERLAP"
+    },
+    {
+      "name": "destination overlap",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/10/59"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "STUDY_SESSION_OVERLAP"
+    },
+    {
+      "name": "exam exact end",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/30/23/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_rows": [
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        },
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/30/23/00",
+          "end_date": "2026/12/01/00/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/17/10/00",
+          "end_date": "2026/11/17/11/00",
+          "topic": "이른 번호"
+        }
+      ]
+    },
+    {
+      "name": "exam one minute too late",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/30/23/01"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "EXAM_BOUND_EXCEEDED"
+    },
+    {
+      "name": "destination in past",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/11/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/16/19/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "MANUAL_MOVE_IN_PAST"
+    },
+    {
+      "name": "before replan from",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/18/00/00",
+      "now": "2026/11/16/19/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/11/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/17/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "INVALID_INPUT"
+    },
+    {
+      "name": "before preparation precedes replan bound",
+      "rows": [
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "늦은 번호"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/11/16/18/00",
+          "end_date": "2026/11/16/19/00",
+          "topic": "이른 번호"
+        },
+        {
+          "schedule_id": "study-20",
+          "start_date": "2026/11/17/14/00",
+          "end_date": "2026/11/17/15/00",
+          "topic": "kept"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/11/17/16/00",
+          "end_date": "2026/11/17/17/00",
+          "topic": ""
+        }
+      ],
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 60
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "23:00",
+            "duration_minutes": 120
+          }
+        ]
+      },
+      "availability_overrides": {
+        "2026/11/23": {}
+      },
+      "preparation_start": "2026/11/16/00/00",
+      "exam_date": "2026/12/01/00/00",
+      "replan_from": "2026/11/16/19/00",
+      "now": "2026/11/14/00/00",
+      "check_ins": {},
+      "remaining_sessions": [
+        {
+          "schedule_id": "study-10",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-10",
+          "new_start_date": "2026/11/17/11/00"
+        },
+        {
+          "schedule_id": "study-9",
+          "remaining_minutes": 60,
+          "replacement_schedule_id": "study-9",
+          "new_start_date": "2026/11/15/10/00"
+        }
+      ],
+      "confirm_outside_availability": true,
+      "expected_code": "BEFORE_PREPARATION_START"
+    }
   ]
 }

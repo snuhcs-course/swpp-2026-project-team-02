@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
-from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions
+from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions, validate_remaining_destinations
 from study_availability import parse_availability_context
 
 # Monday 2026/11/16 starts the plan; the week of 2026/11/23 is replaced by an empty week.
@@ -68,6 +68,31 @@ class RemainingPlacementTests(unittest.TestCase):
                         place_remaining_sessions(schedule, instructions, **arguments)
                 else:
                     result = place_remaining_sessions(schedule, instructions, **arguments)
+                    self.assertEqual(as_rows(result), as_rows(parse_schedule_rows(case["expected_rows"])))
+                self.assertEqual(render_schedule_csv(schedule), before)
+
+    def test_shared_confirmed_destination_cases(self):
+        fixture = Path(__file__).with_name("fixtures") / "remaining_study_parity.json"
+        cases = json.loads(fixture.read_text(encoding="utf-8"))["destination_cases"]
+        self.assertEqual(len(cases), 10)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                schedule = parse_schedule_rows(case["rows"])
+                before = render_schedule_csv(schedule)
+                arguments = {"availability": parse_availability_context({
+                    key: case[key] for key in ("weekly_availability", "availability_overrides")}),
+                    **{key: datetime.strptime(case[key], "%Y/%m/%d/%H/%M")
+                       for key in ("preparation_start", "exam_date", "replan_from", "now")},
+                    "confirm_outside_availability": case["confirm_outside_availability"]}
+                instructions = tuple(RemainingSession(item["schedule_id"], item["remaining_minutes"],
+                    item["replacement_schedule_id"], datetime.strptime(item["new_start_date"], "%Y/%m/%d/%H/%M"))
+                    for item in case["remaining_sessions"])
+                if "expected_code" in case:
+                    with self.assertRaises(ValueError) as caught:
+                        validate_remaining_destinations(schedule, instructions, **arguments)
+                    self.assertEqual(getattr(caught.exception, "code", "INVALID_INPUT"), case["expected_code"])
+                else:
+                    result = validate_remaining_destinations(schedule, instructions, **arguments)
                     self.assertEqual(as_rows(result), as_rows(parse_schedule_rows(case["expected_rows"])))
                 self.assertEqual(render_schedule_csv(schedule), before)
 
