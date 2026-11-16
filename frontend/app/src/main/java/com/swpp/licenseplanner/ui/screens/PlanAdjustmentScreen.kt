@@ -160,7 +160,19 @@ fun PlanAdjustmentScreen(
     onRemainingStudy: () -> Unit = {},
     remainingStudyReason: String? = null,
     initialScheduleId: String? = null,
+    freeTimeSearch: com.swpp.licenseplanner.ui.FreeTimeSearch? = null,
+    canSearchFreeTime: Boolean = false,
+    onSearchFreeTime: () -> Unit = {},
+    onFreeTimeSelect: (Int) -> Unit = {},
+    onFreeTimeConfirm: () -> Unit = {},
+    onFreeTimeManual: () -> Unit = {},
+    onFreeTimeRetry: () -> Unit = {},
+    onFreeTimeBack: () -> Unit = {},
 ) {
+    if (freeTimeSearch != null) {
+        CalendarFreeTimeScreen(freeTimeSearch, onFreeTimeSelect, onFreeTimeConfirm, onFreeTimeManual, onFreeTimeRetry, onFreeTimeBack)
+        return
+    }
     val state = selection.state
     val noFit = state.isNoFit()
     val loading = state == AdjustmentState.Loading
@@ -284,8 +296,9 @@ fun PlanAdjustmentScreen(
                     SecondaryButton("목록으로", onBack)
                 } else if (noFit) {
                     // The same selection would give the same result; another session or a new plan can.
-                    PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
+                    if (canSearchFreeTime) PrimaryButton("캘린더에서 빈 시간 찾기", onSearchFreeTime, enabled = canSend)
                     manualAction()
+                    PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
                     exportAction()
                     SecondaryButton("목록으로", onBack)
                     SecondaryButton("새 계획 만들기", onCreate, enabled = canSend)
@@ -373,7 +386,8 @@ fun PlanAdjustmentScreen(
                 noFit -> AlertCard(
                     "옮길 수 있는 시간이 없어요",
                     "이 계획은 입력한 공부 시간을 모두 쓰고 있어서 시험 전까지 비어 있는 시간이 없어요. 기존 계획은 그대로예요. " +
-                        "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요.",
+                        "'시간 직접 옮기기'에서 다른 시간을 골라 옮길 수 있어요." +
+                        if (canSearchFreeTime) " 캘린더에서 비어 있는 시간을 찾아 이번 한 번만 옮길 수도 있어요." else "",
                 )
                 state == AdjustmentState.Reloaded -> Unit
                 else -> {

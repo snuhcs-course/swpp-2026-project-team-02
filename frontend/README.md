@@ -443,9 +443,23 @@ messages claims that an unchanged retry fixes the input.
 
 When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
 「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
-The no-fit footer offers manual movement and choosing another session. A move
-outside the entered windows still needs the existing confirmation. Remaining-study
-no-fit guidance points to moving sessions one at a time from 「계획 조정하기」.
+With entered windows, the no-fit footer also offers 「캘린더에서 빈 시간 찾기」.
+This explicit action requests read permission if needed and lists up to three free
+times on different dates, at whole 10-minute starts. The usual band runs from the
+earliest entered start to the latest entered end across the base and override
+weeks, on any date. Times avoid other study rows, retained external rows and
+eligible device-calendar occurrences, stay after preparation/current time and end
+by the exam. With no entered windows, the search is hidden.
+
+Each result says whether it lies outside the entered windows. Selecting a result
+and tapping 「이번 한 번만 옮기기」 confirms that one-time exception when needed;
+the entered windows and saved availability stay unchanged. The existing manual
+move path re-reads the calendar and reviews new overlaps before sending one move.
+「직접 시간 고르기」 opens ordinary manual selection, whose outside-window
+confirmation still applies. Back returns to the no-fit card. Permission denial,
+unreadable calendars and no free time have distinct messages and keep manual
+movement available; no unchecked time is suggested. Search results are transient.
+Remaining-study no-fit also offers calendar-free placement as described below.
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
 and 계획 조정 (a list of the plans generated and saved on this device). The first
@@ -888,7 +902,8 @@ numeric ID, Korean wire times and the generic topic 외부 일정; titles and ot
 event details never leave the device. Changing either date clears the imported
 rows. Generation also checks fresh occurrences after its explicit action, as described below.
 
-**Permission.** Import asks only for `READ_CALENDAR`, and only after that tap;
+**Permission.** Import and the explicit single-session/remaining-study free-time
+search ask only for `READ_CALENDAR`, and only after their tap;
 export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
 [Calendar export](#calendar-export)). With only read access granted, import
 works without a further prompt while export still asks for write access. The
@@ -1372,9 +1387,12 @@ The live request uses `POST /schedules/adjust` with `mode: remaining`,
 `schedule_csv_file`, the complete `schedules`, original `weekly_availability`,
 `availability_overrides`, `preparation_start`, `exam_date`, captured `replan_from`,
 and derived `remaining_sessions` only. Instructions contain `schedule_id`,
-`remaining_minutes` and `replacement_schedule_id`. Single-target/manual fields
-(`schedule_id`, `new_start_date`, `confirm_outside_availability`,
-`confirm_external_overlap`) are absent at the top level. Reports, keep digests,
+`remaining_minutes` and `replacement_schedule_id`. Ordinary window-search requests
+omit all manual fields. After a confirmed calendar-free preview, every item also
+carries its `new_start_date` and the top level carries boolean
+`confirm_outside_availability`, true when any destination is outside the entered
+windows. Top-level `schedule_id`, `new_start_date` and `confirm_external_overlap`
+remain absent. Reports, keep digests,
 calendar occurrence keys and local ordinals remain local. The batch is deterministic
 and makes zero provider requests. An unsupported server shows update guidance
 without falling back to generation or another adjustment mode.
@@ -1383,9 +1401,26 @@ Review, dispatch and saving hold the selected source against competing mutations
 calendar/manual reviews, exports, report/draft edits and plan switching. Existing
 unsaved work anywhere in the collection must be resolved first, including a closed
 report or keep card. Foreground calendar notice reads wait until review/request
-releases its source. The remaining-work operation itself reads no calendar and
+releases its source. The ordinary remaining-work operation reads no calendar and
 writes no phone events; it uses retained external rows. Existing foreground notice
 checks and a later explicit calendar export remain separate operations.
+
+After a no-fit, 「캘린더에서 빈 시간 찾기」 requests read permission on that
+explicit tap and previews a complete batch in the same usual band as single-session
+search. It excludes kept rows, calendar occurrences and earlier placements, and
+starts no earlier than preparation, `replan_from` and the next current minute,
+rounded up to 10 minutes. A missing fit proposes no partial batch. The preview
+shows every topic/date/time/minutes and one-time outside-window labels.
+
+「이번 한 번만 이 시간으로 다시 계획하기」 re-reads the calendar and recomputes
+the batch. Changed times require a new confirmation; identical times enter the
+same durable lifecycle below. Live validates exact returned starts; demo applies
+the same destination rules locally. The server validates the supplied times and
+does not search. A server that rejects the optional item fields shows
+「서버 업데이트가 필요해요」 without retry. Movement-code rejections offer
+「다시 찾기」; uncertain outcomes still require reload. Denied/unavailable/no-time
+states preserve the plan and reports and offer returning to move rows individually.
+Calendar timing and identities stay on the device; only confirmed starts are sent.
 
 Before a live POST the complete v5 collection, all reports/keeps and the independent
 saved creation draft are saved with a generic reload-required marker. A failed

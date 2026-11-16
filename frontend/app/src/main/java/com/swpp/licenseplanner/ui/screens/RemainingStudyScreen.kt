@@ -29,13 +29,22 @@ fun RemainingStudyScreen(
     onClose: () -> Unit,
     onRetrySave: () -> Unit,
     onShowPlan: () -> Unit,
+    canSearchFreeTime: Boolean = false,
+    onSearchFreeTime: () -> Unit = {},
+    onFreeTimeConfirm: () -> Unit = {},
+    onFreeTimeRetry: () -> Unit = {},
 ) {
+    if (state is RemainingStudyState.CalendarSearch) {
+        RemainingCalendarFreeTimeScreen(state, onFreeTimeConfirm, onFreeTimeRetry, onClose)
+        return
+    }
     val input = when (state) {
         is RemainingStudyState.Review -> state.input
         is RemainingStudyState.Loading -> state.input
         is RemainingStudyState.Success -> state.input
         is RemainingStudyState.Failure -> state.input
         is RemainingStudyState.Invalid -> null
+        is RemainingStudyState.CalendarSearch -> state.input
     }
     val busy = state is RemainingStudyState.Loading || storage == PlanStorage.Saving
     BackHandler(enabled = busy) {}
@@ -98,9 +107,14 @@ fun RemainingStudyScreen(
             }
             is RemainingStudyState.Failure -> {
                 AlertCard(if (state.noFit) "남은 공부를 모두 배치할 시간이 없어요" else "남은 공부를 다시 계획하지 못했어요",
-                    if (state.noFit) "기존 계획과 공부 기록을 유지했어요. 입력한 공부 시간이 이미 계획으로 차 있어요. '계획 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요." else remainingFailureMessage(state.error))
-                PrimaryButton("계획으로 돌아가기", onShowPlan, enabled = !busy)
+                    if (state.noFit) "기존 계획과 공부 기록을 유지했어요. 입력한 공부 시간이 이미 계획으로 차 있어요. '계획 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요." +
+                        (if (canSearchFreeTime) " 캘린더에서 비어 있는 시간에 남은 공부를 모두 배치할 수도 있어요." else "") else remainingFailureMessage(state.error))
+                if (canSearchFreeTime) {
+                    PrimaryButton(if (state.noFit) "캘린더에서 빈 시간 찾기" else "다시 찾기", onSearchFreeTime)
+                    SecondaryButton("계획으로 돌아가기", onShowPlan, enabled = !busy)
+                } else PrimaryButton("계획으로 돌아가기", onShowPlan, enabled = !busy)
             }
+            is RemainingStudyState.CalendarSearch -> Unit
             is RemainingStudyState.Invalid -> {
                 AlertCard("다시 검토해 주세요", state.message)
                 if (storage == PlanStorage.SaveFailure) PrimaryButton("다시 저장하기", onRetrySave)

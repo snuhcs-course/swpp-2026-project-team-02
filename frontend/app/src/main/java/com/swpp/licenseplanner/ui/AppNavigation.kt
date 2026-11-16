@@ -139,6 +139,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
+    val freeTimeSearch by viewModel.freeTimeSearch.collectAsStateWithLifecycle()
     var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
@@ -273,6 +274,33 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             manualPermissionOwner = manualReview?.id
             viewModel.manualPermissionPrompted()
             manualPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    var freeTimePermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val freeTimePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onFreeTimePermission(CalendarAccess.READ.isGranted(context), freeTimePermissionOwner)
+    }
+    LaunchedEffect(freeTimeSearch?.id, freeTimeSearch?.phase) {
+        if (freeTimeSearch?.phase != FreeTimePhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onFreeTimePermission(true, freeTimeSearch?.id)
+        else {
+            freeTimePermissionOwner = freeTimeSearch?.id
+            viewModel.freeTimePermissionPrompted()
+            freeTimePermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    val remainingSearch = remainingStudy as? RemainingStudyState.CalendarSearch
+    var remainingPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val remainingPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onRemainingFreeTimePermission(CalendarAccess.READ.isGranted(context), remainingPermissionOwner)
+    }
+    LaunchedEffect(remainingSearch?.id, remainingSearch?.phase) {
+        if (remainingSearch?.phase != FreeTimePhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onRemainingFreeTimePermission(true, remainingSearch?.id)
+        else {
+            remainingPermissionOwner = remainingSearch?.id
+            viewModel.remainingFreeTimePermissionPrompted()
+            remainingPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
         }
     }
     manualReview?.let { state -> ManualConflictDialog(state,
@@ -410,6 +438,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
                     regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
                     initialScheduleId = remainingFocus,
+                    freeTimeSearch = freeTimeSearch,
+                    canSearchFreeTime = viewModel.canSearchFreeTime(),
+                    onSearchFreeTime = { viewModel.startFreeTimeSearch() },
+                    onFreeTimeSelect = viewModel::selectFreeTime,
+                    onFreeTimeConfirm = { viewModel.confirmFreeTime() },
+                    onFreeTimeManual = { viewModel.chooseTimeManually() },
+                    onFreeTimeRetry = viewModel::retryFreeTimeSearch,
+                    onFreeTimeBack = viewModel::cancelFreeTimeSearch,
                     onManual = { viewModel.startManualMove() },
                     onManualPick = viewModel::setManualStart,
                     onManualSubmit = { viewModel.submitManualMove() },
@@ -562,6 +598,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             } else {
                 RemainingStudyScreen(current, storage,
                     onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
+                    canSearchFreeTime = viewModel.canSearchRemainingFreeTime(),
+                    onSearchFreeTime = { viewModel.startRemainingFreeTimeSearch() },
+                    onFreeTimeConfirm = { viewModel.confirmRemainingFreeTime() },
+                    onFreeTimeRetry = viewModel::retryRemainingFreeTimeSearch,
                     onRetrySave = viewModel::retrySave,
                     onShowPlan = {
                         val input = when (current) {

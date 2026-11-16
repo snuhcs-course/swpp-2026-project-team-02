@@ -9,6 +9,8 @@ import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.data.RemainingStudyInput
 import com.swpp.licenseplanner.data.RemainingStudyRepository
 import com.swpp.licenseplanner.data.remainingResponseProblem
+import com.swpp.licenseplanner.domain.FreeTime
+import com.swpp.licenseplanner.ui.screens.isNoFit
 import com.swpp.licenseplanner.domain.RemainingStudy
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -452,6 +454,8 @@ class PlanFormViewModel(
     val keepFeedback: StateFlow<KeepFeedback?> = _keepFeedback.asStateFlow()
     private val _noticePermission = MutableStateFlow<ConflictPhase?>(null)
     val noticePermission: StateFlow<ConflictPhase?> = _noticePermission.asStateFlow()
+    private val _freeTimeSearch = MutableStateFlow<FreeTimeSearch?>(null)
+    val freeTimeSearch: StateFlow<FreeTimeSearch?> = _freeTimeSearch.asStateFlow()
     private val _manualReview = MutableStateFlow<ManualConflictReview?>(null)
     val manualReview: StateFlow<ManualConflictReview?> = _manualReview.asStateFlow()
     private var acceptedManualReview: ManualConflictReview? = null
@@ -476,7 +480,7 @@ class PlanFormViewModel(
      * on the plan it started from.
      */
     private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
-        _manualReview.value != null || _remainingStudy.value.holdsSource
+        _manualReview.value != null || _freeTimeSearch.value != null || _remainingStudy.value.holdsSource
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -487,8 +491,8 @@ class PlanFormViewModel(
      * adjustment, reload, an export or a calendar read changes.
      */
     val exportBlocks: StateFlow<Map<Int, ExportBlock?>> = combine(
-        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, combine(_calendarConflict, _remainingStudy, _manualReview, _noticeReading, _noticePermission) { conflict, remaining, manual, notice, permission ->
-            conflict != null || remaining.holdsSource || manual != null || notice || permission != null
+        _plans, _storage, _generation, _adjustment, combine(_calendarExport, _calendarRead, combine(_calendarConflict, _remainingStudy, _manualReview, _noticeReading, combine(_noticePermission, _freeTimeSearch) { permission, search -> permission != null || search != null }) { conflict, remaining, manual, notice, permission ->
+            conflict != null || remaining.holdsSource || manual != null || notice || permission
         }) { export, read, conflict -> Triple(export, read, conflict) },
     ) { plans, storage, generation, adjustment, (export, read, conflict) ->
         plans.associate { it.ordinal to exportBlockOf(it, storage, generation, adjustment, export, read, conflictBusy = conflict) }
@@ -496,6 +500,11 @@ class PlanFormViewModel(
 
     init {
         viewModelScope.launch { restore() }
+        viewModelScope.launch {
+            combine(_plans, _adjustment) { _, _ -> Unit }.collect {
+                _freeTimeSearch.value?.let { if (!freeTimeSourceCurrent(it)) cancelFreeTimeSearch() }
+            }
+        }
         viewModelScope.launch {
             combine(_plans, _storage, _generation, _adjustment,
                 combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision,
@@ -925,7 +934,7 @@ class PlanFormViewModel(
             _calendarConflict.value?.kind == ConflictKind.Export &&
             _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
         if (generating || adjusting || reloading || readingCalendar || profileBusy || _questionLoad.value == QuestionLoadState.Loading ||
-            _remainingStudy.value.holdsSource || noticeReading || _manualReview.value != null ||
+            _remainingStudy.value.holdsSource || _freeTimeSearch.value != null || noticeReading || _manualReview.value != null ||
             (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
     }
@@ -1140,6 +1149,7 @@ class PlanFormViewModel(
      * Refused while an adjustment or reload is in flight.
      */
     fun selectPlan(ordinal: Int): Boolean {
+        if (_adjustment.value.planOrdinal != ordinal) _freeTimeSearch.value = null
         if (busy) return false
         val plan = plan(ordinal) ?: return false
         if (_adjustment.value.planOrdinal != ordinal) {
@@ -1160,11 +1170,159 @@ class PlanFormViewModel(
      */
     fun selectFailedSession(scheduleId: String) {
         val selection = _adjustment.value
+        if (selection.failedScheduleId != scheduleId) _freeTimeSearch.value = null
         if (busy || selection.failedScheduleId == scheduleId) return
         val plan = selectedPlan() ?: return
         if (plan.recovery != PlanRecovery.Ready || !plan.isStudy(scheduleId)) return
         _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle, manual = null)
         pendingAdjustment = null
+    }
+
+    fun canSearchFreeTime(): Boolean {
+        val source = selectedPlan()?.takeIf { it.canAdjust } ?: return false
+        return _adjustment.value.state.isNoFit() && source.isStudy(_adjustment.value.failedScheduleId ?: "") &&
+            AvailabilityWire.context(source.original)?.let(FreeTime::band) != null
+    }
+
+    fun startFreeTimeSearch(): Boolean {
+        if (busy || generating || !regenerationSaveReady() || !canSearchFreeTime()) return false
+        _freeTimeSearch.value = FreeTimeSearch(nextConflictId++, selectedPlan()!!, _adjustment.value.failedScheduleId!!)
+        return true
+    }
+
+    private fun freeTimeSourceCurrent(search: FreeTimeSearch): Boolean = selectedPlan() == search.source &&
+        _adjustment.value.failedScheduleId == search.targetId && _adjustment.value.state.isNoFit() && regenerationSaveReady()
+
+    fun freeTimePermissionPrompted() {
+        _freeTimeSearch.update { if (it?.phase == FreeTimePhase.RequestingPermission) it.copy(phase = FreeTimePhase.AwaitingPermission) else it }
+    }
+
+    fun onFreeTimePermission(granted: Boolean, id: Int? = _freeTimeSearch.value?.id) {
+        val search = _freeTimeSearch.value?.takeIf { it.id == id && it.phase in
+            setOf(FreeTimePhase.RequestingPermission, FreeTimePhase.AwaitingPermission) } ?: return
+        if (!freeTimeSourceCurrent(search)) return cancelFreeTimeSearch()
+        if (!granted) {
+            _freeTimeSearch.value = search.copy(phase = FreeTimePhase.PermissionDenied)
+            return
+        }
+        _freeTimeSearch.value = search.copy(phase = FreeTimePhase.Reading)
+        viewModelScope.launch {
+            val original = search.source.original
+            val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
+            val outcome = readCalendar(CalendarReadWindow(currentMinute().toLocalDate(), exam.toLocalDate().plusDays(1)))
+            if (_freeTimeSearch.value?.id != search.id) return@launch
+            if (!freeTimeSourceCurrent(search)) { cancelFreeTimeSearch(); return@launch }
+            _freeTimeSearch.value = when (outcome) {
+                CalendarReadOutcome.PermissionMissing -> search.copy(phase = FreeTimePhase.PermissionDenied)
+                CalendarReadOutcome.Unavailable -> search.copy(phase = FreeTimePhase.Unavailable)
+                is CalendarReadOutcome.Loaded -> {
+                    val suggestions = FreeTime.suggest(requireNotNull(AvailabilityWire.context(original)),
+                        search.source.current.schedules, search.targetId, outcome.snapshot.occurrences,
+                        requireNotNull(WireDateTime.parseOrNull(original.preparationStart)), exam, currentMinute())
+                    search.copy(phase = if (suggestions.isEmpty()) FreeTimePhase.NoTime else FreeTimePhase.Results,
+                        suggestions = suggestions)
+                }
+            }
+        }
+    }
+
+    fun selectFreeTime(index: Int) {
+        _freeTimeSearch.update { if (it?.phase == FreeTimePhase.Results && index in it.suggestions.indices) it.copy(selected = index) else it }
+    }
+
+    fun cancelFreeTimeSearch() { _freeTimeSearch.value = null; refreshNoticesWhenIdle() }
+
+    fun retryFreeTimeSearch() {
+        _freeTimeSearch.update { if (it?.phase in setOf(FreeTimePhase.Unavailable, FreeTimePhase.NoTime))
+            it?.copy(id = nextConflictId++, phase = FreeTimePhase.RequestingPermission) else it }
+    }
+
+    fun chooseTimeManually(): Boolean {
+        val search = _freeTimeSearch.value ?: return false
+        val current = freeTimeSourceCurrent(search)
+        _freeTimeSearch.value = null
+        return current && startManualMove()
+    }
+
+    fun confirmFreeTime(): Boolean {
+        val search = _freeTimeSearch.value?.takeIf { it.phase == FreeTimePhase.Results } ?: return false
+        val suggestion = search.selected?.let(search.suggestions::getOrNull) ?: return false
+        if (!freeTimeSourceCurrent(search)) { cancelFreeTimeSearch(); return false }
+        _freeTimeSearch.value = null
+        if (!startManualMove()) return false
+        setManualStart(suggestion.start)
+        return sendManual(confirmOutsideAvailability = suggestion.outsideWindows)
+    }
+
+    fun canSearchRemainingFreeTime(): Boolean {
+        val failure = _remainingStudy.value as? RemainingStudyState.Failure ?: return false
+        return (failure.noFit || failure.error is ApiError.ManualMoveRejected) &&
+            plan(failure.input.source.ordinal) == failure.input.source && failure.input.source.canAdjust &&
+            AvailabilityWire.context(failure.input.source.original)?.let(FreeTime::band) != null
+    }
+
+    fun startRemainingFreeTimeSearch(): Boolean {
+        val failure = _remainingStudy.value as? RemainingStudyState.Failure ?: return false
+        if (!canSearchRemainingFreeTime() || busy || generating || !regenerationSaveReady()) return false
+        _remainingStudy.value = RemainingStudyState.CalendarSearch(nextConflictId++, failure.input.copy(destinations = null, confirmOutside = false))
+        return true
+    }
+
+    fun remainingFreeTimePermissionPrompted() {
+        val search = _remainingStudy.value as? RemainingStudyState.CalendarSearch ?: return
+        if (search.phase == FreeTimePhase.RequestingPermission) _remainingStudy.value = search.copy(phase = FreeTimePhase.AwaitingPermission)
+    }
+
+    fun onRemainingFreeTimePermission(granted: Boolean, id: Int?) {
+        val search = (_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.takeIf { it.id == id &&
+            it.phase in setOf(FreeTimePhase.RequestingPermission, FreeTimePhase.AwaitingPermission) } ?: return
+        if (granted) readRemainingFreeTime(search, final = false)
+        else _remainingStudy.value = search.copy(phase = FreeTimePhase.PermissionDenied)
+    }
+
+    fun retryRemainingFreeTimeSearch() {
+        val search = _remainingStudy.value as? RemainingStudyState.CalendarSearch ?: return
+        if (search.phase !in setOf(FreeTimePhase.Unavailable, FreeTimePhase.NoTime)) return
+        _remainingStudy.value = search.copy(id = nextConflictId++, phase = FreeTimePhase.RequestingPermission)
+    }
+
+    fun confirmRemainingFreeTime(): Boolean {
+        val search = (_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.takeIf { it.phase == FreeTimePhase.Results } ?: return false
+        readRemainingFreeTime(search, final = true)
+        return true
+    }
+
+    private fun readRemainingFreeTime(search: RemainingStudyState.CalendarSearch, final: Boolean) {
+        if (plan(search.input.source.ordinal) != search.input.source || !regenerationSaveReady()) {
+            _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
+            return
+        }
+        _remainingStudy.value = search.copy(phase = FreeTimePhase.Reading)
+        viewModelScope.launch {
+            val source = search.input.source
+            val original = source.original
+            val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
+            val outcome = readCalendar(CalendarReadWindow(currentMinute().toLocalDate(), exam.toLocalDate().plusDays(1)))
+            if ((_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.id != search.id) return@launch
+            if (plan(source.ordinal) != source || !regenerationSaveReady()) {
+                _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
+                return@launch
+            }
+            when (outcome) {
+                CalendarReadOutcome.PermissionMissing -> _remainingStudy.value = search.copy(phase = FreeTimePhase.PermissionDenied)
+                CalendarReadOutcome.Unavailable -> _remainingStudy.value = search.copy(phase = FreeTimePhase.Unavailable)
+                is CalendarReadOutcome.Loaded -> {
+                    val placed = FreeTime.placeBatch(requireNotNull(AvailabilityWire.context(original)), source.current.schedules,
+                        search.input.work.instructions, outcome.snapshot.occurrences,
+                        requireNotNull(WireDateTime.parseOrNull(original.preparationStart)), exam, search.input.replanFrom, currentMinute())
+                    if (placed == null) _remainingStudy.value = search.copy(phase = FreeTimePhase.NoTime, placements = emptyList())
+                    else if (final && placed == search.placements) {
+                        sendRemainingStudy(search.input.copy(destinations = placed.associate { it.sourceId to
+                            requireNotNull(WireDateTime.parseOrNull(it.row.startDate)) }, confirmOutside = placed.any { it.outsideWindows }))
+                    } else _remainingStudy.value = search.copy(phase = FreeTimePhase.Results, placements = placed, changed = final)
+                }
+            }
+        }
     }
 
     /** The same entry rule is used by rendered controls and direct calls. */
@@ -1203,7 +1361,10 @@ class PlanFormViewModel(
 
     fun confirmRemainingStudy(): Boolean {
         val review = _remainingStudy.value as? RemainingStudyState.Review ?: return false
-        val input = review.input
+        return sendRemainingStudy(review.input)
+    }
+
+    private fun sendRemainingStudy(input: RemainingStudyInput): Boolean {
         if (input.work.totalMinutes == 0L) return false
         if (!regenerationSaveReady() || plan(input.source.ordinal) != input.source ||
             adjusting || reloading || exporting || readingCalendar || generating || profileBusy || noticeReading ||
@@ -1245,7 +1406,8 @@ class PlanFormViewModel(
                         else -> PlanRecovery.Ready
                     }
                     updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = null) }
-                    _remainingStudy.value = RemainingStudyState.Failure(input, outcome.error)
+                    _remainingStudy.value = RemainingStudyState.Failure(input, outcome.error,
+                        noFit = outcome.error is ApiError.InvalidInput && outcome.error.message?.startsWith("NOT_ENOUGH_TIME") == true)
                     if (live) commit(_plans.value)
                 }
             }
@@ -1432,6 +1594,7 @@ class PlanFormViewModel(
      * reading does nothing. Never resends the adjustment. Returns whether a request was sent.
      */
     fun reloadPlan(): Boolean {
+        _freeTimeSearch.value = null
         if (generating || busy || !storageReady) return false
         val plan = selectedPlan()?.takeIf { it.recovery == PlanRecovery.ReloadRequired } ?: return false
         val ordinal = plan.ordinal
@@ -1677,7 +1840,7 @@ class PlanFormViewModel(
     /** [plan]'s export block from the current state; [ownExport] is a confirming flow, which does not block itself. */
     private fun currentExportBlock(plan: SessionPlan, ownExport: Int? = null): ExportBlock? =
         exportBlockOf(plan, _storage.value, _generation.value, _adjustment.value, _calendarExport.value, _calendarRead.value, ownExport, _calendarConflict.value != null || _remainingStudy.value.holdsSource ||
-            _manualReview.value != null || noticeReading || _noticePermission.value != null)
+            _manualReview.value != null || _freeTimeSearch.value != null || noticeReading || _noticePermission.value != null)
 
     private fun selectedPlan(): SessionPlan? = _adjustment.value.planOrdinal?.let(::plan)
 
