@@ -139,9 +139,10 @@ data class RemainingSession(
     @SerialName("schedule_id") val scheduleId: String,
     @SerialName("remaining_minutes") val remainingMinutes: Int,
     @SerialName("replacement_schedule_id") val replacementScheduleId: String,
+    @SerialName("new_start_date") val newStartDate: String? = null,
 )
 
-/** Batch mode deliberately has no single-target or manual-consent fields. */
+/** Destinations and one-time consent are omitted for the ordinary window search. */
 @Serializable
 data class RemainingStudyRequest(
     val mode: String = "remaining",
@@ -153,6 +154,7 @@ data class RemainingStudyRequest(
     @SerialName("exam_date") val examDate: String,
     @SerialName("replan_from") val replanFrom: String,
     @SerialName("remaining_sessions") val remainingSessions: List<RemainingSession>,
+    @SerialName("confirm_outside_availability") val confirmOutsideAvailability: Boolean? = null,
 )
 
 @Serializable

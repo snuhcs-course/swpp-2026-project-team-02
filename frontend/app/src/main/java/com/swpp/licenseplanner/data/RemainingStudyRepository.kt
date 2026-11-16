@@ -10,7 +10,8 @@ import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.LocalDateTime
 
 /** Full selected-plan capture; reports and acknowledgments never enter the HTTP model. */
-data class RemainingStudyInput(val source: SessionPlan, val work: RemainingWork, val replanFrom: LocalDateTime)
+data class RemainingStudyInput(val source: SessionPlan, val work: RemainingWork, val replanFrom: LocalDateTime,
+                              val destinations: Map<String, LocalDateTime>? = null, val confirmOutside: Boolean = false)
 
 interface RemainingStudyRepository {
     suspend fun replan(input: RemainingStudyInput): AdjustmentOutcome
@@ -27,6 +28,7 @@ internal fun remainingResponseProblem(input: RemainingStudyInput, response: Stud
     val original = source.current.schedules.associateBy { it.scheduleId }
     val returned = response.schedules.associateBy { it.scheduleId }
     val instructions = input.work.instructions
+    if (input.destinations != null && input.destinations.keys != instructions.map { it.scheduleId }.toSet()) return "incomplete destinations"
     val sources = instructions.map { it.scheduleId }.toSet()
     val protected = original.filterKeys { it !in sources }
     if (returned.keys != protected.keys + instructions.map { it.replacementScheduleId }) return "row partition changed"
@@ -41,7 +43,9 @@ internal fun remainingResponseProblem(input: RemainingStudyInput, response: Stud
         if (row.topic != original.getValue(instruction.scheduleId).topic || session.durationMinutes != instruction.remainingMinutes.toLong()) {
             return "remaining topic or minutes changed"
         }
-        if (session.start < lower || session.end > exam || !context.fitsOneWindow(session.start, session.end)) return "invalid placement window"
+        if (session.start < lower || session.end > exam ||
+            (!context.fitsOneWindow(session.start, session.end) && !(input.destinations != null && input.confirmOutside))) return "invalid placement window"
+        if (input.destinations != null && session.start != input.destinations[instruction.scheduleId]) return "confirmed start changed"
         if (sessions.any { it.scheduleId != session.scheduleId && it.start < session.end && session.start < it.end }) return "placed row overlaps"
     }
     if (parseRemainingCsv(response.scheduleCsv)?.associateBy { it.scheduleId } != returned) return "CSV does not match rows"

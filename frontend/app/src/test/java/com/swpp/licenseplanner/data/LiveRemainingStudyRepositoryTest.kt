@@ -92,4 +92,36 @@ class LiveRemainingStudyRepositoryTest {
         assertTrue(outcome is AdjustmentOutcome.Success)
         assertEquals(1, server.requestCount)
     }
+    @Test fun confirmedStartsAndConsentAreSentWithoutCalendarContentAndMustMatchTheReply() {
+        val starts = input.work.instructions.mapIndexed { index, instruction ->
+            instruction.scheduleId to fixture.now.toLocalDate().plusDays(1).atTime(10 + index, 0)
+        }.toMap()
+        val confirmed = input.copy(destinations = starts, confirmOutside = true)
+        val protected = source.current.schedules.filterNot { row -> row.scheduleId in starts }
+        val rows = protected + input.work.instructions.map { instruction ->
+            val row = source.current.schedules.single { it.scheduleId == instruction.scheduleId }
+            val start = starts.getValue(instruction.scheduleId)
+            row.copy(scheduleId = instruction.replacementScheduleId,
+                startDate = com.swpp.licenseplanner.domain.WireDateTime.format(start),
+                endDate = com.swpp.licenseplanner.domain.WireDateTime.format(start.plusMinutes(instruction.remainingMinutes.toLong())))
+        }
+        enqueue(valid.copy(schedules = rows, scheduleCsv = remainingCsv(rows)))
+        val repository = LiveRemainingStudyRepository(server.url("/api/v1").toString())
+        assertTrue(runBlocking { repository.replan(confirmed) } is AdjustmentOutcome.Success)
+        val body = server.takeRequest().body.readUtf8()
+        val dto = ApiJson.decodeFromString(RemainingStudyRequest.serializer(), body)
+        assertEquals(true, dto.confirmOutsideAvailability)
+        assertEquals(starts.mapValues { com.swpp.licenseplanner.domain.WireDateTime.format(it.value) },
+            dto.remainingSessions.associate { it.scheduleId to it.newStartDate })
+        assertEquals(setOf("mode", "schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
+            "preparation_start", "exam_date", "replan_from", "remaining_sessions", "confirm_outside_availability"),
+            ApiJson.parseToJsonElement(body).jsonObject.keys)
+        assertFalse(body.contains("occurrence"))
+        val shifted = rows.map { if (it.scheduleId == input.work.instructions.first().replacementScheduleId)
+            it.copy(startDate = "2026/11/17/09/00", endDate = "2026/11/17/09/40") else it }
+        enqueue(valid.copy(schedules = shifted, scheduleCsv = remainingCsv(shifted)))
+        assertTrue((runBlocking { repository.replan(confirmed) } as AdjustmentOutcome.Failure).error is ApiError.InvalidResponse)
+        assertEquals(2, server.requestCount)
+    }
+
 }

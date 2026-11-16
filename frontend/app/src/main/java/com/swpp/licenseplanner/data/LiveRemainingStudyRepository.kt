@@ -26,7 +26,9 @@ class LiveRemainingStudyRepository(
         val request = RemainingStudyRequest(scheduleCsvFile = file, schedules = source.current.schedules,
             weeklyAvailability = source.original.weeklyAvailability, availabilityOverrides = source.original.availabilityOverrides,
             preparationStart = source.original.preparationStart, examDate = source.original.examDate,
-            replanFrom = WireDateTime.format(input.replanFrom), remainingSessions = input.work.instructions)
+            replanFrom = WireDateTime.format(input.replanFrom), remainingSessions = input.work.instructions.map { instruction ->
+                instruction.copy(newStartDate = input.destinations?.get(instruction.scheduleId)?.let(WireDateTime::format))
+            }, confirmOutsideAvailability = input.destinations?.let { input.confirmOutside })
         val body = OneShotBody(ApiJson.encodeToString(RemainingStudyRequest.serializer(), request)
             .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE))
         val http = Request.Builder().url(apiUrl(baseUrl, "/schedules/adjust")).post(body).build()

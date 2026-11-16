@@ -48,4 +48,18 @@ class DemoRemainingStudyRepositoryTest {
         assertEquals("2026/11/16/19/00", result.schedules.single { it.scheduleId == "study-1" }.startDate)
         assertEquals(source.current.schedules.drop(1).toSet(), result.schedules.filter { it.scheduleId != "study-1" }.toSet())
     }
+    @Test fun confirmedDemoTimesNeedConsentAndAreSavedAtExactlyThoseStarts() = runBlocking {
+        val source = fixture.plan()
+        val work = RemainingStudy.calculate(source)
+        val starts = work.instructions.mapIndexed { index, item -> item.scheduleId to fixture.now.toLocalDate().plusDays(1).atTime(10 + index, 0) }.toMap()
+        val input = RemainingStudyInput(source, work, fixture.now.plusMinutes(1), starts)
+        val repository = DemoRemainingStudyRepository { fixture.now }
+        assertEquals(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows),
+            (repository.replan(input) as AdjustmentOutcome.Failure).error)
+        val response = (repository.replan(input.copy(confirmOutside = true)) as AdjustmentOutcome.Success).response
+        for (instruction in work.instructions) assertEquals(WireDateTime.format(starts.getValue(instruction.scheduleId)),
+            response.schedules.single { it.scheduleId == instruction.replacementScheduleId }.startDate)
+        assertEquals(source.current.schedules.first(), response.schedules.single { it.scheduleId == "study-1" })
+    }
+
 }
