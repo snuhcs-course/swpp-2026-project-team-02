@@ -5,6 +5,7 @@ import com.swpp.licenseplanner.domain.DemoAdjustment
 import com.swpp.licenseplanner.domain.DemoManualAdjustment
 import com.swpp.licenseplanner.domain.DemoScheduleAdjuster
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 /**
@@ -12,8 +13,8 @@ import java.time.temporal.ChronoUnit
  * exam date, for both the automatic move and a chosen time. No HTTP, no AI summary, and nothing is saved outside the app process.
  */
 class DemoAdjustmentRepository(
-    /** The current local minute; the manual policy refuses earlier starts. */
-    private val now: () -> LocalDateTime = { LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES) },
+    /** The current minute in plan time (Asia/Seoul); the manual policy refuses earlier starts. */
+    private val now: () -> LocalDateTime = { LocalDateTime.now(ZoneId.of("Asia/Seoul")).truncatedTo(ChronoUnit.MINUTES) },
 ) : AdjustmentRepository {
     override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
         val manual = input.manualMove ?: return automatic(input)
