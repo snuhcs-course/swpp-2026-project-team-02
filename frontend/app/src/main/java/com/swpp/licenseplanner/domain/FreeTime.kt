@@ -53,11 +53,14 @@ object FreeTime {
         val band = band(availability) ?: return emptyList()
         val target = PlanGrouping.sessions(rows).singleOrNull { it.scheduleId == targetId } ?: return emptyList()
         val lower = maxOf(roundUp10(now), preparationStart)
-        val blocked = blocked(rows, occurrences)
+        // The target's own slot is free for it; only its unchanged start is not a suggestion.
+        val blocked = blocked(rows.filterNot { it.scheduleId == targetId }, occurrences)
         val result = mutableListOf<FreeTimeSuggestion>()
         var date = lower.toLocalDate()
         while (date <= examDate.toLocalDate() && result.size < limit) {
-            earliestStart(band, blocked, lower, target.durationMinutes.toInt(), examDate, date, date)?.let { start ->
+            fun first(from: LocalDateTime) =
+                earliestStart(band, blocked, from, target.durationMinutes.toInt(), examDate, date, date)
+            first(lower)?.let { if (it == target.start) first(target.start.plusMinutes(1)) else it }?.let { start ->
                 val end = start.plusMinutes(target.durationMinutes)
                 result += FreeTimeSuggestion(start, end, !availability.fitsOneWindow(start, end))
             }

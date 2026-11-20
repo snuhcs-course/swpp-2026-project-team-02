@@ -29,6 +29,11 @@ class FreeTimeTest {
         assertEquals(listOf("2026-11-17T11:00", "2026-11-18T18:00", "2026-11-20T10:00").map(::at), result.map { it.start })
         assertTrue(result.all { it.outsideWindows && it.end == it.start.plusHours(1) })
     }
+    @Test fun targetOwnSlotIsFreeButItsUnchangedStartIsNotSuggested() {
+        val upcoming = row("study-1", "2026-11-17T10:00", 60)
+        val result = FreeTime.suggest(availability, listOf(upcoming), upcoming.scheduleId, emptyList(), prep, exam, now)
+        assertEquals(at("2026-11-17T10:10"), result.first().start)
+    }
     @Test fun noWindowsGiveNoBandOrSuggestionsOrBatch() {
         val empty = StudyAvailability(emptyMap())
         assertNull(FreeTime.band(empty))
