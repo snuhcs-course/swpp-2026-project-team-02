@@ -23,6 +23,15 @@ data class DayPlan(val date: LocalDate, val sessions: List<PlanSession>)
 
 data class WeekPlan(val monday: LocalDate, val days: List<DayPlan>) {
     val sunday: LocalDate get() = monday.plusDays(6)
+
+    private val studySessions: List<PlanSession>
+        get() = days.flatMap { it.sessions }.filterNot { it.isExternal }
+
+    /** Number of this week's study sessions; existing (external) schedules are not counted. */
+    val studySessionCount: Int get() = studySessions.size
+
+    /** Summed actual minutes of this week's study sessions, excluding existing schedules. */
+    val studyMinutes: Long get() = studySessions.sumOf { it.durationMinutes }
 }
 
 /** Sorts returned rows and groups them into Monday-based weeks of seven days. */

@@ -21,8 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -36,12 +38,12 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.R
-import com.swpp.licenseplanner.data.model.StudyPlanResponse
-import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.DayPlan
 import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.PlanSession
+import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WeeklyTimeUsage
 import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
@@ -49,6 +51,7 @@ import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.RemovedStudySchedule
+import com.swpp.licenseplanner.ui.components.AlertCard
 import com.swpp.licenseplanner.ui.components.ChoiceCard
 import com.swpp.licenseplanner.ui.components.DashedBox
 import com.swpp.licenseplanner.ui.components.EXPORT_SUBTITLE
@@ -66,6 +69,7 @@ import com.swpp.licenseplanner.ui.components.exportBlockText
 import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkBody
+import com.swpp.licenseplanner.ui.theme.InkMuted
 import com.swpp.licenseplanner.ui.theme.InkSecondary
 import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.MutedSurface
@@ -75,26 +79,78 @@ import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
 
+/** The alert a plan view shows for a plan that cannot be adjusted as it stands, from its stored state. */
+internal enum class PlanViewAlert(val title: String, val body: String) {
+    ReloadRequired(
+        "최신 계획을 확인해 주세요",
+        "마지막 조정 결과를 확인하지 못해 화면의 일정이 이전 계획일 수 있어요. '일정 조정하기'에서 최신 계획을 불러와 주세요.",
+    ),
+    Missing("이 계획은 더 이상 조정할 수 없어요", "서버에서 이 계획을 찾을 수 없어요. 일정은 볼 수 있어요."),
+    NoIdentity(
+        "이 계획은 조정할 수 없어요",
+        "서버가 계획 파일 정보를 보내지 않았어요. 일정은 볼 수 있지만, 조정하려면 새 계획을 만들어 주세요.",
+    ),
+}
+
 /**
- * Adapted from frame 2007:253: one Monday-based week at a time with
- * bounded previous/next, seven day sections, returned session cards, the AI-authored
- * summary when present, and the demo statement for local plans. The phase timeline and
- * on-track status from the frame are omitted (no backing data). Study rows carry a separate
- * report action ([checkIns]); a failed local save shows its retry here. The calendar export action
- * (2007:352) copies [exportCount] study sessions to a chosen device calendar; [exportBlock]
- * disables it with the reason. [onHome] and [onAdjust] lead to the home and plan-list screens.
+ * The stored recovery state takes precedence over a missing identity, as on the adjustment
+ * screen; a ready plan with an identity shows no alert.
+ */
+internal fun planViewAlert(plan: SessionPlan): PlanViewAlert? = when {
+    plan.recovery == PlanRecovery.Missing -> PlanViewAlert.Missing
+    plan.recovery == PlanRecovery.ReloadRequired -> PlanViewAlert.ReloadRequired
+    !plan.hasIdentity -> PlanViewAlert.NoIdentity
+    else -> null
+}
+
+/** The plan view's creation action, if any. */
+internal enum class PlanInputAction(val label: String) {
+    /** Opens 공부 시간 with the inputs that produced this plan; generating adds a new plan. */
+    EditInputs("입력 바꿔 새 계획 만들기"),
+    /** Starts creation as Home does; offered only for a plan without study sessions. */
+    NewPlan("새 계획 만들기"),
+}
+
+/**
+ * The input action is offered only while the creation form still holds the inputs of plan
+ * [ordinal] ([generatedPlan] is cleared by any later form change). An empty plan without held
+ * inputs offers a new creation instead; other plans offer neither.
+ */
+internal fun planInputAction(ordinal: Int, generatedPlan: Int?, hasSessions: Boolean): PlanInputAction? = when {
+    generatedPlan == ordinal -> PlanInputAction.EditInputs
+    !hasSessions -> PlanInputAction.NewPlan
+    else -> null
+}
+
+/** Index of the week holding [scheduleId], or -1. */
+private fun weekIndexHolding(weeks: List<WeekPlan>, scheduleId: String): Int =
+    weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == scheduleId } } }
+
+/**
+ * One plan, however it was opened: adapted from frame 2007:253, one Monday-based week at a time
+ * with bounded previous/next and that week's study totals, seven days (empty days as compact
+ * rows) with returned session cards, then the plan summary when present, and the demo
+ * statement for local plans. The phase timeline and
+ * on-track status from the frame are omitted (no backing data). A plan awaiting reload, missing
+ * on the server or without an identity shows its alert above the week picker; nothing is sent.
+ * Study rows carry a separate report action ([checkIns]); a failed local save shows its retry
+ * here. The calendar export action (2007:352) copies [exportCount] study sessions to a chosen
+ * device calendar; [exportBlock] disables it with the reason. [onAdjust] opens this plan's
+ * adjustment, and [onHome] leads home. [initialScheduleId] shows that session's week once, then
+ * [onFocusApplied] lets the host forget it, so a later return keeps the learner's week.
  */
 @Composable
 fun PlanScreen(
-    originalRequest: StudyPlanRequest,
-    response: StudyPlanResponse,
-    isDemo: Boolean,
+    plan: SessionPlan,
+    generatedPlan: Int?,
     exportCount: Int,
     exportBlock: ExportBlock?,
     onExport: () -> Unit,
     onRegenerate: () -> Unit = {},
     regenerationReason: String? = null,
-    onEdit: () -> Unit,
+    onBack: () -> Unit,
+    onEditInputs: () -> Unit,
+    onCreate: () -> Unit,
     onHome: () -> Unit,
     onAdjust: () -> Unit,
     checkIns: CheckInRows,
@@ -103,19 +159,34 @@ fun PlanScreen(
     conflictNotices: @Composable () -> Unit = {},
     onRemainingStudy: () -> Unit = {},
     remainingStudyReason: String? = null,
+    initialScheduleId: String? = null,
+    onFocusApplied: () -> Unit = {},
 ) {
+    val response = plan.current
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
-    val weeklyTimeUsage = remember(originalRequest, response) {
-        WeeklyTimeUsageCalculator.calculate(originalRequest, response.schedules)
+    val weeklyTimeUsage = remember(plan.original, response) {
+        WeeklyTimeUsageCalculator.calculate(plan.original, response.schedules)
     }
     var weekIndex by rememberSaveable { mutableIntStateOf(0) }
+    var appliedFocus by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(initialScheduleId) {
+        if (initialScheduleId == null) {
+            appliedFocus = null
+        } else if (initialScheduleId != appliedFocus) {
+            weekIndexHolding(weeks, initialScheduleId).takeIf { it >= 0 }?.let { weekIndex = it }
+            appliedFocus = initialScheduleId
+            onFocusApplied()
+        }
+    }
     val week = weeks.getOrNull(weekIndex.coerceIn(0, (weeks.size - 1).coerceAtLeast(0)))
     val summary = response.agentSummary?.takeIf { it.isNotBlank() }
+    val alert = planViewAlert(plan)
+    val inputAction = planInputAction(plan.ordinal, generatedPlan, hasSessions = weeks.isNotEmpty())
 
     Scaffold(
         containerColor = Paper,
         contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = { TopBar("내 계획", NavIcon.Back, onEdit) },
+        topBar = { TopBar("내 계획", NavIcon.Back, onBack) { ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT) } },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
@@ -123,8 +194,13 @@ fun PlanScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Written-only scope, shown for nonempty and empty plans alike.
-            item { Heading(CERTIFICATION_NAME, "필기 시험 준비 계획") }
-            if (isDemo) {
+            item {
+                Heading(
+                    "계획 ${plan.ordinal} · $CERTIFICATION_NAME",
+                    "필기 시험 준비 · 준비 ${wireDate(plan.original.preparationStart)} – 시험 ${wireDate(plan.original.examDate)}",
+                )
+            }
+            if (plan.isDemo) {
                 item {
                     MutedBox {
                         Text("로컬 시연 계산", style = MaterialTheme.typography.titleSmall, color = Ink)
@@ -132,7 +208,7 @@ fun PlanScreen(
                     }
                 }
             }
-            if (summary != null) item { PlanSummary(summary) }
+            if (alert != null) item { AlertCard(alert.title, alert.body) }
             item { conflictNotices() }
             if (storage == PlanStorage.SaveFailure) {
                 item {
@@ -158,13 +234,15 @@ fun PlanScreen(
                         onNext = { weekIndex++ },
                     )
                 }
+                item { WeeklyStudyTotals(week) }
                 val selectedWeekUsage = weeklyTimeUsage.firstOrNull { it.monday == week.monday }
                 if (selectedWeekUsage != null) item { WeeklyTimeUsageChart(selectedWeekUsage) }
-                items(week.days.size, key = { week.days[it].date.toEpochDay() }) { DaySection(week.days[it], checkIns = checkIns) }
+                items(week.days.size, key = { week.days[it].date.toEpochDay() }) {
+                    val day = week.days[it]
+                    if (day.sessions.isEmpty()) CompactEmptyDay(day) else DaySection(day, checkIns = checkIns)
+                }
             }
-            item {
-                ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
-            }
+            if (summary != null) item { PlanSummary(summary) }
             item {
                 PrimaryButton(
                     exportButtonText(exportCount),
@@ -173,14 +251,56 @@ fun PlanScreen(
                     subtitle = exportBlock?.let(::exportBlockText) ?: EXPORT_SUBTITLE,
                 )
             }
-            item { PrimaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null) }
+            item { SecondaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null) }
             remainingStudyReason?.let { item { Note(it) } }
             regenerationReason?.let { item { Note(it) } }
             item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null) }
-            item { SecondaryButton("계획 조정하기", onAdjust) }
-            item { SecondaryButton("입력 수정하기", onEdit) }
+            item { SecondaryButton("일정 조정하기", onAdjust) }
+            // With no sessions export is disabled, so starting over is the next step unless a storage retry is.
+            val inputActionLeads = week == null && storage == PlanStorage.Ready
+            inputAction?.let { action ->
+                val onInput = if (action == PlanInputAction.EditInputs) onEditInputs else onCreate
+                item {
+                    if (inputActionLeads) PrimaryButton(action.label, onInput) else SecondaryButton(action.label, onInput)
+                }
+            }
             item { SecondaryButton("처음으로", onHome) }
         }
+    }
+}
+
+/** The selected week's study-session count and summed duration; existing schedules are not counted. */
+@Composable
+private fun WeeklyStudyTotals(week: WeekPlan) {
+    Text(
+        "공부 일정 ${week.studySessionCount}개 · ${PlanGrouping.formatDuration(week.studyMinutes)}",
+        style = MaterialTheme.typography.bodyMedium,
+        color = InkBody,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** A day without sessions as one muted row: weekday and date, with 「일정 없음」 wrapping on the right. */
+@Composable
+private fun CompactEmptyDay(day: DayPlan) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(MutedSurface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(dayLabel(day.date), style = MaterialTheme.typography.labelMedium, color = Ink)
+        Text(monthDay(day.date), style = MaterialTheme.typography.bodySmall, color = InkSecondary)
+        Text(
+            "일정 없음",
+            style = MaterialTheme.typography.bodySmall,
+            color = InkMuted,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

@@ -51,14 +51,18 @@ fun PlanListScreen(
 ) {
     val restored = storage != PlanStorage.Loading && storage != PlanStorage.LoadFailure
     AppScreen(
-        title = "조정할 계획",
+        title = "저장된 계획",
+        trailing = { ContextHelpButton(ContextHelpTopic.SAVED_PLANS) },
         onNav = onBack,
         footer = if (restored) {
-            { if (plans.isEmpty()) PrimaryButton("계획 생성", onCreate) else SecondaryButton("새 계획 만들기", onCreate) }
+            {
+                val canCreate = storage == PlanStorage.Ready
+                if (plans.isEmpty()) PrimaryButton("새 계획 만들기", onCreate, enabled = canCreate)
+                else SecondaryButton("새 계획 만들기", onCreate, enabled = canCreate)
+            }
         } else null,
     ) {
-        Heading("어떤 계획을 조정할까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
-        ContextHelpButton(ContextHelpTopic.SAVED_PLANS)
+        Heading("어떤 계획을 볼까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
         conflictNotices()
@@ -66,7 +70,7 @@ fun PlanListScreen(
             !restored -> Unit // the loading or failure state above stands in for the list
             plans.isEmpty() -> OutlinedCard {
                 Text("아직 만든 계획이 없어요", style = MaterialTheme.typography.titleSmall, color = Ink)
-                Note("계획을 먼저 만들면 여기에서 골라 조정할 수 있어요.")
+                Note("계획을 먼저 만들면 여기에서 열어 볼 수 있어요.")
             }
             else -> {
                 val unsaved = if (storage == PlanStorage.SaveFailure) unsavedOrdinals(plans, savedPlans) else emptySet()

@@ -85,12 +85,13 @@ fun AppScreen(
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     scrollable: Boolean = true,
     scrollState: ScrollState = rememberScrollState(),
+    trailing: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
         contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = { TopBar(title, navIcon, onNav) },
+        topBar = { TopBar(title, navIcon, onNav, trailing) },
         bottomBar = { if (footer != null) Footer(footer) },
     ) { padding ->
         val base = Modifier.padding(padding).fillMaxSize()

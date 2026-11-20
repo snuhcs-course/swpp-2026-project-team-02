@@ -26,7 +26,21 @@ data class PlanConflictNotice(
     val source: SessionPlan,
     val conflicts: CalendarConflictResult = CalendarConflictResult(emptyList()),
     val phase: NoticePhase = NoticePhase.Unchecked,
-)
+    val checkedAt: LocalDateTime? = null,
+    val failure: CalendarReadOutcome? = null,
+) {
+    val recovery: CalendarReadOutcome?
+        get() = failure.takeIf { phase == NoticePhase.Unchecked || phase == NoticePhase.Stale }
+}
+
+data class NoticeCheckFeedback(val sequence: Int, val message: String)
+
+internal fun PlanConflictNotice.checkedSummary(): String {
+    val count = conflicts.matches.map { it.target.scheduleId }.distinct().size
+    val result = if (count == 0) "겹치는 일정 없음" else "겹치는 공부 ${count}개"
+    val time = checkedAt?.let { " · ${it.toLocalDate()} ${it.toLocalTime()} 확인" }.orEmpty()
+    return "확인 완료 · $result$time"
+}
 
 data class KeepFeedback(val id: Int, val ordinal: Int, val scheduleId: String, val save: MoveSave = MoveSave.Saving)
 

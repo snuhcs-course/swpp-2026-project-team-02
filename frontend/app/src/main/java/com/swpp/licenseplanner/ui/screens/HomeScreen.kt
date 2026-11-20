@@ -13,7 +13,7 @@ import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 
 /**
- * The first screen offers creation (the existing input flow) and adjustment (the
+ * The first screen offers creation (the existing input flow) and the learner's plans (the
  * saved plan list). A visual extension of the existing components; no Figma frame exists.
  */
 @Composable
@@ -29,12 +29,15 @@ fun HomeScreen(
     onRetrySave: () -> Unit,
     conflictNotices: @Composable () -> Unit = {},
 ) {
-    AppScreen(title = "학습 계획", navIcon = null) {
-        Heading("무엇을 할까요?", "새 계획을 만들거나, 만든 계획에서 놓친 공부 일정을 다시 잡아요.")
-        ContextHelpButton(ContextHelpTopic.START)
+    AppScreen(
+        title = "학습 계획",
+        navIcon = null,
+        trailing = { ContextHelpButton(ContextHelpTopic.START) },
+    ) {
+        Heading("무엇을 할까요?", "새 계획을 만들거나, 저장한 계획을 보고 조정해요.")
         PrimaryButton("계획 생성", onCreate, subtitle = "$CERTIFICATION_NAME 필기", enabled = storage == PlanStorage.Ready)
         if (hasDraft) SecondaryButton("이어서 만들기", onResume, enabled = storage == PlanStorage.Ready)
-        SecondaryButton("계획 조정", onAdjust)
+        SecondaryButton("내 계획", onAdjust)
         conflictNotices()
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
@@ -73,7 +76,7 @@ internal fun StorageAlert(storage: PlanStorage, onRetryLoad: () -> Unit, onRetry
                 "저장된 계획을 불러오지 못했어요",
                 "기기에 저장된 계획은 지우거나 바꾸지 않았어요. 불러오기 전에는 계획을 만들거나 조정할 수 없어요.",
             )
-            SecondaryButton("다시 불러오기", onRetryLoad)
+            PrimaryButton("다시 불러오기", onRetryLoad)
         }
         PlanStorage.SaveFailure -> {
             AlertCard(
@@ -81,7 +84,7 @@ internal fun StorageAlert(storage: PlanStorage, onRetryLoad: () -> Unit, onRetry
                 "화면에 보이는 마지막 변경은 아직 저장되지 않아 앱을 닫으면 사라질 수 있어요. " +
                     "저장하기 전에는 계획을 만들거나 조정할 수 없어요. 다시 저장해도 서버에 요청을 다시 보내지 않아요.",
             )
-            SecondaryButton("다시 저장하기", onRetrySave)
+            PrimaryButton("다시 저장하기", onRetrySave)
         }
         else -> Unit
     }

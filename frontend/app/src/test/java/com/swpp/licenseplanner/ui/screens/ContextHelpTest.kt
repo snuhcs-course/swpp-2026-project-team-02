@@ -19,9 +19,11 @@ class ContextHelpTest {
     }
 
     @Test
-    fun adjustmentHelpNamesManualMoveAndRemainingStudyReplanning() {
+    fun adjustmentHelpNamesEveryAdjustmentActionAndNoPlanViewAction() {
         val body = ContextHelpTopic.ADJUSTMENT.body
+        assertTrue(body.contains("시험일 전 가능한 시간으로 옮겨요"))
         assertTrue(body.contains("시간 직접 옮기기"))
-        assertTrue(body.contains("남은 공부 다시 계획하기"))
+        assertTrue(body.contains("캘린더에서 빈 시간 찾기"))
+        assertFalse(body.contains("남은 공부 다시 계획하기"))
     }
 }

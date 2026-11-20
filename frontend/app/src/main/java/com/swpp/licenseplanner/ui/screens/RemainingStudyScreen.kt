@@ -20,6 +20,13 @@ internal fun remainingSaveText(save: MoveSave): String = when (save) {
     MoveSave.Unsaved -> "아직 이 기기에 저장하지 못했어요."
 }
 
+/** Remaining study is moved one session at a time from the plan view's adjustment screen. */
+internal const val REMAINING_STUDY_FALLBACK = "'일정 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요."
+
+internal fun remainingNoFitText(canSearchFreeTime: Boolean): String =
+    "기존 계획과 공부 기록을 유지했어요. 입력한 공부 시간이 이미 계획으로 차 있어요. $REMAINING_STUDY_FALLBACK" +
+        if (canSearchFreeTime) " 캘린더에서 비어 있는 시간에 남은 공부를 모두 배치할 수도 있어요." else ""
+
 /** Review and all outcomes use the same scrollable, text-scaling shell as the plan screens. */
 @Composable
 fun RemainingStudyScreen(
@@ -103,12 +110,13 @@ fun RemainingStudyScreen(
                     Note("다시 저장하면 이미 배치한 결과만 이 기기에 저장해요.")
                     PrimaryButton("다시 저장하기", onRetrySave)
                 }
-                PrimaryButton("계획 보기", onShowPlan, enabled = state.save != MoveSave.Saving)
+                val showPlanEnabled = state.save != MoveSave.Saving
+                if (state.save == MoveSave.Unsaved) SecondaryButton("계획 보기", onShowPlan, enabled = showPlanEnabled)
+                else PrimaryButton("계획 보기", onShowPlan, enabled = showPlanEnabled)
             }
             is RemainingStudyState.Failure -> {
                 AlertCard(if (state.noFit) "남은 공부를 모두 배치할 시간이 없어요" else "남은 공부를 다시 계획하지 못했어요",
-                    if (state.noFit) "기존 계획과 공부 기록을 유지했어요. 입력한 공부 시간이 이미 계획으로 차 있어요. '계획 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요." +
-                        (if (canSearchFreeTime) " 캘린더에서 비어 있는 시간에 남은 공부를 모두 배치할 수도 있어요." else "") else remainingFailureMessage(state.error))
+                    if (state.noFit) remainingNoFitText(canSearchFreeTime) else remainingFailureMessage(state.error))
                 if (canSearchFreeTime) {
                     PrimaryButton(if (state.noFit) "캘린더에서 빈 시간 찾기" else "다시 찾기", onSearchFreeTime)
                     SecondaryButton("계획으로 돌아가기", onShowPlan, enabled = !busy)

@@ -19,6 +19,7 @@ import com.swpp.licenseplanner.ui.KeepFeedback
 import com.swpp.licenseplanner.ui.ManualConflictReview
 import com.swpp.licenseplanner.ui.MoveSave
 import com.swpp.licenseplanner.ui.NoticePhase
+import com.swpp.licenseplanner.ui.checkedSummary
 import com.swpp.licenseplanner.ui.PlanConflictNotice
 import com.swpp.licenseplanner.ui.CalendarConflictState
 import com.swpp.licenseplanner.ui.ConflictKind
@@ -171,14 +172,13 @@ fun PlanConflictNotices(
             MoveSave.Saved -> "그대로 두기를 기기에 저장했어요."
         })
     }
-    if (phase != NoticePhase.Checked) {
-        Note(when (phase) {
+    Note(when (phase) {
+            NoticePhase.Checked -> notice.checkedSummary()
             NoticePhase.Checking -> "캘린더 시간을 확인하는 중이에요"
             NoticePhase.Stale -> "이전 확인 결과예요. 최신 캘린더를 확인하지 못했어요."
             else -> UNCHECKED_NOTICE
-        })
-        SecondaryButton("캘린더 시간 확인", onCheck, enabled = enabled && phase != NoticePhase.Checking)
-    }
+    })
+    CalendarNoticeRecovery(notice.recovery, enabled, onCheck)
     for ((id, matches) in notice.conflicts.matches.groupBy { it.target.scheduleId }) {
         if (id == null) continue
         OutlinedCard {
@@ -193,6 +193,21 @@ fun PlanConflictNotices(
             SecondaryButton("그대로 두기", { onKeep(id) }, enabled = enabled &&
                 phase == NoticePhase.Checked && owner?.save != MoveSave.Unsaved)
         }
+    }
+}
+
+@Composable
+internal fun CalendarNoticeRecovery(failure: CalendarReadOutcome?, enabled: Boolean, onCheck: () -> Unit) {
+    when (failure) {
+        CalendarReadOutcome.PermissionMissing -> {
+            Note("겹치는 일정을 보려면 캘린더 권한을 허용해 주세요. 권한 창이 뜨지 않으면 기기 설정에서 허용할 수 있어요.")
+            SecondaryButton("캘린더 권한 허용", onCheck, enabled = enabled)
+        }
+        CalendarReadOutcome.Unavailable -> {
+            Note("캘린더 일정을 불러오지 못했어요. 잠시 후 다시 확인해 주세요.")
+            SecondaryButton("다시 확인", onCheck, enabled = enabled)
+        }
+        else -> Unit
     }
 }
 

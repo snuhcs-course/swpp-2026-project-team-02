@@ -127,7 +127,7 @@ internal fun ManualMoveScreen(
     var picking by rememberSaveable { mutableStateOf<String?>(null) }
 
     AppScreen(
-        title = "계획 조정",
+        title = "일정 조정",
         navIcon = if (loading) null else NavIcon.Back,
         onNav = onCancel,
         footer = {

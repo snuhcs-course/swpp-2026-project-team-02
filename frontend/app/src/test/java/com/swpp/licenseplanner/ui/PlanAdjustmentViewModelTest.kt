@@ -438,7 +438,7 @@ class PlanAdjustmentViewModelTest {
 
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
         assertEquals(
-            "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요.",
+            "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요.",
             error.adjustmentMessage(),
         )
         assertEquals(before, vm.plans.value)

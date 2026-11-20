@@ -8,9 +8,16 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
@@ -18,24 +25,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.swpp.licenseplanner.data.CalendarAccess
+import com.swpp.licenseplanner.data.CalendarReadOutcome
 import com.swpp.licenseplanner.domain.CalendarExport
 import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.ui.components.CalendarConflictDialog
+import com.swpp.licenseplanner.ui.components.CalendarNoticeRecovery
 import com.swpp.licenseplanner.ui.components.ManualConflictDialog
 import com.swpp.licenseplanner.ui.components.PlanConflictNotices
 import com.swpp.licenseplanner.ui.components.Note
-import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
 import com.swpp.licenseplanner.ui.components.CreationExitDialog
 import com.swpp.licenseplanner.ui.screens.AvailabilityActions
@@ -51,13 +64,12 @@ import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
 import com.swpp.licenseplanner.ui.screens.RemainingStudyScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
-import com.swpp.licenseplanner.ui.screens.ProfileActions
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
 import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
 
-/** One route per step, plus home, plan list and adjustment. */
+/** One route per step, plus home, plan list, one plan view per plan ordinal, and adjustment. */
 private object Routes {
     const val HOME = "home"
     const val PLAN_LIST = "plan_list"
@@ -69,7 +81,9 @@ private object Routes {
     const val RESULTS = "results"
     const val AVAILABILITY = "availability"
     const val GENERATE = "generate"
-    const val PLAN = "plan"
+    const val PLAN_ORDINAL = "ordinal"
+    const val PLAN = "plan/{$PLAN_ORDINAL}"
+    fun plan(ordinal: Int) = "plan/$ordinal"
     const val SHORTFALL = "shortfall"
     const val EDIT_EXAM_DATE = "edit-exam-date"
     const val CHECK_IN = "check-in"
@@ -146,6 +160,11 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
     val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
     val notices by viewModel.notices.collectAsStateWithLifecycle()
+    val noticeCheckFeedback by viewModel.noticeCheckFeedback.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(noticeCheckFeedback) {
+        noticeCheckFeedback?.let { snackbar.showSnackbar(it.message, actionLabel = "닫기") }
+    }
     val keepFeedback by viewModel.keepFeedback.collectAsStateWithLifecycle()
     val noticePermission by viewModel.noticePermission.collectAsStateWithLifecycle()
     val manualReview by viewModel.manualReview.collectAsStateWithLifecycle()
@@ -236,7 +255,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             onMove = { id ->
                 if (viewModel.selectPlan(ordinal)) {
                     viewModel.selectFailedSession(id)
-                    if (viewModel.startManualMove()) nav.fromHome(Routes.ADJUST)
+                    if (viewModel.startManualMove()) nav.go(Routes.ADJUST)
                 }
             })
     }
@@ -246,11 +265,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             Note("계획 $ordinal · " + when (notice.phase) {
                 NoticePhase.Checked -> "캘린더와 겹치는 공부 ${count}개"
                 NoticePhase.Checking -> "캘린더 확인 중"
-                NoticePhase.Stale -> "이전 캘린더 확인 결과 · 다시 확인해 주세요"
+                NoticePhase.Stale -> "이전 캘린더 확인 결과"
                 NoticePhase.Unchecked -> "캘린더 확인 안 됨"
             })
+            if (notice.phase == NoticePhase.Checked) Note(notice.checkedSummary())
         }
-        if (notices.isNotEmpty()) SecondaryButton("캘린더 시간 확인", { viewModel.requestNoticeCheck() }, enabled = storage == PlanStorage.Ready)
+        val failures = notices.values.mapNotNull { it.recovery }
+        val recovery = failures.firstOrNull { it == CalendarReadOutcome.PermissionMissing } ?: failures.firstOrNull()
+        CalendarNoticeRecovery(recovery, storage == PlanStorage.Ready) { viewModel.requestNoticeCheck() }
     }
     val noticePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onNoticePermission(CalendarAccess.READ.isGranted(context))
@@ -350,7 +372,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 viewModel.cancelCalendarConflict()
                 if (ordinal != null && viewModel.selectPlan(ordinal)) {
                     viewModel.selectFailedSession(id)
-                    if (viewModel.startManualMove()) nav.fromHome(Routes.ADJUST)
+                    if (viewModel.startManualMove()) nav.go(Routes.ADJUST)
                 }
             },
             onSettings = { openAppSettings(context) },
@@ -381,6 +403,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
@@ -405,7 +428,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 plans = plans,
                 savedPlans = savedPlans,
                 storage = planStorage,
-                onOpen = { ordinal -> if (viewModel.selectPlan(ordinal)) nav.go(Routes.ADJUST) },
+                onOpen = { ordinal -> nav.go(Routes.plan(ordinal)) },
                 onCreate = ::createPlan,
                 onBack = { nav.popBackStack() },
                 onRetryLoad = viewModel::retryLoad,
@@ -430,14 +453,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
                     onBack = { nav.popBackStack() },
+                    onList = { nav.fromHome(Routes.PLAN_LIST) },
                     onCreate = ::createPlan,
                     onRetrySave = viewModel::retrySave,
-                    exportCount = exportCount(plan),
-                    exportBlock = exportBlocks.blockFor(plan.ordinal),
-                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
-                    onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
-                    regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
-                    initialScheduleId = remainingFocus,
                     freeTimeSearch = freeTimeSearch,
                     canSearchFreeTime = viewModel.canSearchFreeTime(),
                     onSearchFreeTime = { viewModel.startFreeTimeSearch() },
@@ -454,8 +472,6 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onManualCancel = viewModel::cancelManualMove,
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                     conflictNotices = { selectedNotices(plan.ordinal) },
-                    onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
-                    remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
                 )
             }
         }
@@ -504,14 +520,12 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         composable(Routes.AVAILABILITY) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
             val availabilityWeek by viewModel.availabilityWeek.collectAsStateWithLifecycle()
-            val profile by viewModel.profile.collectAsStateWithLifecycle()
             AvailabilityScreen(
                 form = form,
                 selectedWeek = availabilityWeek,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
                 calendarRead = calendarRead,
-                profile = profile.takeIf { viewModel.profileAvailable },
                 actions = AvailabilityActions(
                     onCapture = viewModel::captureWindow,
                     onApply = viewModel::applyWindow,
@@ -520,12 +534,6 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onReplaceWeek = { viewModel.replaceWeek(it) },
                     onClearWeek = { viewModel.clearWeek(it) },
                     onResetWeek = { viewModel.resetWeek(it) },
-                ),
-                profileActions = ProfileActions(
-                    onLoad = { viewModel.loadProfile() },
-                    onSave = { viewModel.saveProfile() },
-                    onAccept = viewModel::acceptProfile,
-                    onDismiss = viewModel::dismissProfile,
                 ),
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
@@ -536,11 +544,15 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         // Each result destination collects the flow itself, so its first frame sees the
         // current value (a host-level collector could still hold the previous result).
         // A new plan is shown once it is saved; a failed save stays here with its own retry.
+        // The new plan's view replaces the creation steps, so back from it returns home.
         composable(Routes.GENERATE) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
+            fun showGeneratedPlan() {
+                viewModel.generatedPlan.value?.let { nav.fromHome(Routes.plan(it)) }
+            }
             LaunchedEffect(generation, storage) {
                 when (generation) {
-                    is GenerationState.Success -> if (storage == PlanStorage.Ready) nav.showResult(Routes.PLAN)
+                    is GenerationState.Success -> if (storage == PlanStorage.Ready) showGeneratedPlan()
                     is GenerationState.DemoShortfall -> nav.showResult(Routes.SHORTFALL)
                     else -> Unit
                 }
@@ -551,43 +563,50 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onRetry = viewModel::retryGeneration,
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                 onRetrySave = viewModel::retrySave,
-                onShowPlan = { nav.showResult(Routes.PLAN) },
+                onShowPlan = ::showGeneratedPlan,
                 onCancelGeneration = {
                     viewModel.cancelGeneration()
                     nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
                 },
             )
         }
-        // Reads the stored plan, so an adjustment made from the list is shown here too.
-        composable(Routes.PLAN) {
+        // The route names the plan, so every plan view on the stack keeps its own plan; it reads
+        // the stored plan, so an adjustment made above it is shown on return.
+        composable(Routes.PLAN, arguments = listOf(navArgument(Routes.PLAN_ORDINAL) { type = NavType.IntType })) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
-            val plan = plans.firstOrNull { it.ordinal == generatedPlan }
+            val ordinal = entry.arguments?.getInt(Routes.PLAN_ORDINAL)
+            val plan = plans.firstOrNull { it.ordinal == ordinal }
             if (plan == null) {
-                LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
+                LaunchedEffect(Unit) { nav.popBackStack() }
             } else {
                 PlanScreen(
-                    originalRequest = plan.original,
-                    response = plan.current,
-                    isDemo = plan.isDemo,
+                    plan = plan,
+                    generatedPlan = generatedPlan,
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
                     onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
                     regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
-                    onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                    onBack = { nav.popBackStack() },
+                    onEditInputs = { nav.resumeCreation(CreationStep.AVAILABILITY) },
+                    onCreate = ::createPlan,
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
-                    onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                    onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                     storage = storage,
                     onRetrySave = viewModel::retrySave,
                     conflictNotices = { selectedNotices(plan.ordinal) },
                     onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
                     remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
+                    initialScheduleId = remainingFocus,
+                    onFocusApplied = { remainingFocus = null },
                 )
             }
         }
+        // Re-planning sits above the plan view it was started from, so every exit pops back to it;
+        // a placed result also shows the week of its first new session there.
         composable(Routes.REMAINING_STUDY) {
             val current = remainingStudy
             fun close() {
@@ -604,17 +623,13 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onFreeTimeRetry = viewModel::retryRemainingFreeTimeSearch,
                     onRetrySave = viewModel::retrySave,
                     onShowPlan = {
-                        val input = when (current) {
-                            is RemainingStudyState.Success -> current.input
-                            is RemainingStudyState.Failure -> current.input
-                            else -> null
+                        val focus = (current as? RemainingStudyState.Success)?.let { result ->
+                            val ids = result.input.work.instructions.map { it.replacementScheduleId }.toSet()
+                            result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
                         }
-                        if (input != null && viewModel.closeRemainingStudy() && viewModel.selectPlan(input.source.ordinal)) {
-                            remainingFocus = (current as? RemainingStudyState.Success)?.let { result ->
-                                val ids = result.input.work.instructions.map { it.replacementScheduleId }.toSet()
-                                result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
-                            }
-                            nav.navigate(Routes.ADJUST) { popUpTo(Routes.REMAINING_STUDY) { inclusive = true }; launchSingleTop = true }
+                        if (viewModel.closeRemainingStudy()) {
+                            remainingFocus = focus
+                            nav.popBackStack()
                         }
                     })
             }
@@ -681,5 +696,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 }
             }
         }
+    }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(16.dp))
     }
 }

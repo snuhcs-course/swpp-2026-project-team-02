@@ -212,7 +212,7 @@ class ErrorMessagesTest {
     @Test
     fun savedPlanWithoutStoredExamDateAsksForANewPlan() {
         val known = "This saved plan has no stored exam date. Create a new plan before adjusting study sessions."
-        val guidance = "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요."
+        val guidance = "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요."
         val error = invalid(known)
         assertEquals(guidance, error.adjustmentMessage())
         assertEquals("화면에는 이전 계획이 남아 있어요. $guidance", error.reloadMessage())

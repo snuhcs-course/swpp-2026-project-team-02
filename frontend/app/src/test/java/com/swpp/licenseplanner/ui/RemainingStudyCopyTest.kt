@@ -1,7 +1,9 @@
 package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.ui.screens.freeTimeFallback
 import com.swpp.licenseplanner.ui.screens.remainingDatedTime
+import com.swpp.licenseplanner.ui.screens.remainingNoFitText
 import com.swpp.licenseplanner.ui.screens.remainingSaveText
 import org.junit.Assert.*
 import org.junit.Test
@@ -15,6 +17,17 @@ class RemainingStudyCopyTest {
 
     @Test fun bothDatesArePresentAcrossMidnightAndYears() {
         assertEquals("2026년 12월 31일 23:30 – 2027년 1월 1일 00:30", remainingDatedTime("2026/12/31/23/30", "2027/01/01/00/30"))
+    }
+
+    @Test fun noFitFallbacksNameThePlanViewAdjustmentAndManualMove() {
+        val fallbacks = listOf(remainingNoFitText(true), remainingNoFitText(false), freeTimeFallback(remaining = true))
+        for (text in fallbacks) {
+            assertTrue(text, text.contains("'일정 조정하기'"))
+            assertTrue(text, text.contains("'시간 직접 옮기기'"))
+            assertFalse(text, text.contains("계획 조정하기"))
+        }
+        assertTrue(remainingNoFitText(true).contains("캘린더에서 비어 있는 시간"))
+        assertFalse(remainingNoFitText(false).contains("캘린더"))
     }
 
     @Test fun failuresDescribeRulesUnsupportedModeAndUncertaintyWithoutRawDiagnostics() {

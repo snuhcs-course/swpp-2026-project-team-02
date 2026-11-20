@@ -125,12 +125,83 @@ class CalendarKeepViewModelTest {
         assertTrue(reader.windows.isEmpty())
         assertNull(vm.noticePermission.value)
         assertEquals(NoticePhase.Unchecked, vm.notices.value.getValue(1).phase)
+        assertEquals(CalendarReadOutcome.PermissionMissing, vm.notices.value.getValue(1).recovery)
         assertTrue(vm.requestNoticeCheck())
         vm.noticePermissionPrompted()
         vm.onNoticePermission(true)
         advanceUntilIdle()
         assertEquals(NoticePhase.Checked, vm.notices.value.getValue(1).phase)
         assertTrue(store.attempts.isEmpty())
+    }
+
+    @Test fun explicitRefreshRepeatsFreshReadsAndReportsIdenticalClearResultsWithoutWrites() = runTest(dispatcher) {
+        val store = Store(source)
+        val reader = Reader()
+        val vm = model(store, reader)
+        foreground(vm)
+        val before = reader.windows.size
+        repeat(2) { index ->
+            now = now.plusMinutes(1)
+            assertTrue(vm.requestNoticeCheck())
+            vm.onNoticePermission(true)
+            advanceUntilIdle()
+            assertEquals(before + index + 1, reader.windows.size)
+            assertEquals(now, vm.notices.value.getValue(1).checkedAt)
+            assertEquals(index + 1, vm.noticeCheckFeedback.value!!.sequence)
+            assertEquals("확인 완료 · 겹치는 일정 없음", vm.noticeCheckFeedback.value!!.message)
+        }
+        reader.outcome = busy()
+        assertTrue(vm.requestNoticeCheck())
+        vm.onNoticePermission(true)
+        advanceUntilIdle()
+        assertEquals("확인 완료 · 겹치는 공부 1개", vm.noticeCheckFeedback.value!!.message)
+        assertTrue(store.attempts.isEmpty() && inputs.isEmpty())
+        assertEquals(source, store.snapshot)
+    }
+
+    @Test fun explicitUnavailableOrDeniedRefreshNeverAnnouncesClearResults() = runTest(dispatcher) {
+        val reader = Reader()
+        val vm = model(Store(source), reader)
+        foreground(vm)
+        val checked = vm.notices.value.getValue(1).checkedAt
+        reader.outcome = CalendarReadOutcome.Unavailable
+        assertTrue(vm.requestNoticeCheck())
+        vm.onNoticePermission(true)
+        advanceUntilIdle()
+        assertEquals(NoticePhase.Stale, vm.notices.value.getValue(1).phase)
+        assertEquals(checked, vm.notices.value.getValue(1).checkedAt)
+        assertTrue(vm.noticeCheckFeedback.value!!.message.contains("확인하지 못했어요"))
+        val reads = reader.windows.size
+        assertTrue(vm.requestNoticeCheck())
+        vm.onNoticePermission(false)
+        advanceUntilIdle()
+        assertEquals(reads, reader.windows.size)
+        assertTrue(vm.noticeCheckFeedback.value!!.message.contains("권한"))
+        assertEquals(NoticePhase.Stale, vm.notices.value.getValue(1).phase)
+    }
+
+    @Test fun blockedRefreshExplainsBusyStateAndInterruptedReadCannotAnnounceSuccess() = runTest(dispatcher) {
+        val reader = Reader()
+        val store = Store(source)
+        val vm = model(store, reader)
+        foreground(vm)
+        reader.gate = CompletableDeferred()
+        assertTrue(vm.requestNoticeCheck())
+        vm.onNoticePermission(true)
+        runCurrent()
+        val reads = reader.windows.size
+        assertFalse(vm.requestNoticeCheck())
+        val rejected = vm.noticeCheckFeedback.value
+        assertTrue(rejected!!.message.contains("확인하는 중"))
+        assertEquals(reads, reader.windows.size)
+        vm.leaveForeground()
+        reader.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(rejected, vm.noticeCheckFeedback.value)
+        reader.gate = null
+        foreground(vm)
+        assertEquals("확인 완료 · 겹치는 일정 없음", vm.noticeCheckFeedback.value!!.message)
+        assertTrue(store.attempts.isEmpty() && inputs.isEmpty())
     }
 
     @Test fun failedOrRevokedRefreshRetainsOnlyStaleResultsAndCannotKeep() = runTest(dispatcher) {
@@ -142,6 +213,7 @@ class CalendarKeepViewModelTest {
             vm.leaveForeground()
             foreground(vm)
             assertEquals(NoticePhase.Stale, vm.notices.value.getValue(1).phase)
+            assertEquals(outcome, vm.notices.value.getValue(1).recovery)
             assertFalse(vm.keepCurrentConflict(1, "study-1"))
         }
     }

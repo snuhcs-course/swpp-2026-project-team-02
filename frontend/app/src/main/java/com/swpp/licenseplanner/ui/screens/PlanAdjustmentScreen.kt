@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
@@ -32,7 +33,6 @@ import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.AdjustmentSelection
 import com.swpp.licenseplanner.ui.AdjustmentState
-import com.swpp.licenseplanner.ui.ExportBlock
 import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.RemovedStudySchedule
 import com.swpp.licenseplanner.ui.adjustmentMessage
@@ -47,7 +47,6 @@ import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.components.Tag
-import com.swpp.licenseplanner.ui.components.exportButtonText
 import com.swpp.licenseplanner.ui.reloadMessage
 import com.swpp.licenseplanner.ui.theme.Ink
 import java.time.LocalDateTime
@@ -125,8 +124,6 @@ private fun adjustmentWeeks(plan: SessionPlan, removedSessions: List<RemovedStud
  * Day and session cards reuse the plan screen's rendering (frame 2007:253). While a request
  * runs, back and every other action are held so it is neither abandoned nor repeated.
  * Requests wait while the plans are being saved or after a failed save; viewing does not.
- * Plans that can be viewed without a recovery step also offer the calendar export of their
- * [exportCount] study sessions, beside the adjustment actions; [exportBlock] disables it.
  * The selected session can instead be moved to a chosen time ([onManual]); while that draft is
  * open its editor replaces this screen, and the shown week is kept for the return.
  * Each study session also has a separate report action ([checkIns]) that leaves the selection
@@ -142,13 +139,9 @@ fun PlanAdjustmentScreen(
     onRetry: () -> Unit,
     onReload: () -> Unit,
     onBack: () -> Unit,
+    onList: () -> Unit,
     onCreate: () -> Unit,
     onRetrySave: () -> Unit,
-    exportCount: Int,
-    exportBlock: ExportBlock?,
-    onExport: () -> Unit,
-    onRegenerate: () -> Unit = {},
-    regenerationReason: String? = null,
     onManual: () -> Unit,
     onManualPick: (LocalDateTime) -> Unit,
     onManualSubmit: () -> Unit,
@@ -157,9 +150,6 @@ fun PlanAdjustmentScreen(
     onManualCancel: () -> Unit,
     checkIns: CheckInRows,
     conflictNotices: @Composable () -> Unit = {},
-    onRemainingStudy: () -> Unit = {},
-    remainingStudyReason: String? = null,
-    initialScheduleId: String? = null,
     freeTimeSearch: com.swpp.licenseplanner.ui.FreeTimeSearch? = null,
     canSearchFreeTime: Boolean = false,
     onSearchFreeTime: () -> Unit = {},
@@ -202,9 +192,6 @@ fun PlanAdjustmentScreen(
             AdjustmentState.Reloaded -> weekIndex = 0
             else -> Unit
         }
-    }
-    LaunchedEffect(initialScheduleId) {
-        if (initialScheduleId != null) weekIndexOf(weeks, initialScheduleId).takeIf { it >= 0 }?.let { weekIndex = it }
     }
     val manualSession = manualSession(plan, selection, mode)
     if (manualSession != null) {
@@ -249,80 +236,62 @@ fun PlanAdjustmentScreen(
     }
     val week = weeks.getOrNull(shownIndex)
     val summary = shownSummary(plan, state)
-    // Busy and storage states are explained on the screen itself, so a disabled action needs no subtitle.
-    val exportAction: @Composable () -> Unit = {
-        if (exportBlock != ExportBlock.NoStudy) {
-            ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
-            SecondaryButton(exportButtonText(exportCount), onExport, enabled = exportBlock == null)
-        }
-        regenerationReason?.let { Note(it) }
-        SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null)
-    }
     // A separate action on the same selected study session; never offered while a request runs.
     val manualAction: @Composable () -> Unit = {
         SecondaryButton("시간 직접 옮기기", onManual, enabled = !loading && selection.failedScheduleId != null && canSend)
     }
 
+    val detailFooter: @Composable ColumnScope.() -> Unit = {
+        when (mode) {
+            AdjustmentMode.Missing -> {
+                PrimaryButton("새 계획 만들기", onCreate, enabled = canSend)
+                SecondaryButton("목록으로", onList)
+            }
+            AdjustmentMode.ReloadNeeded -> {
+                PrimaryButton("최신 계획 불러오기", onReload, enabled = canSend)
+                SecondaryButton("목록으로", onList)
+            }
+            AdjustmentMode.Reloading -> PrimaryButton("불러오는 중…", onReload, enabled = false)
+            AdjustmentMode.ReloadFailed -> {
+                PrimaryButton("최신 계획 다시 불러오기", onReload, enabled = canSend)
+                SecondaryButton("목록으로", onList)
+            }
+            AdjustmentMode.NoIdentity -> {
+                PrimaryButton("새 계획 만들기", onCreate, enabled = canSend)
+                SecondaryButton("목록으로", onList)
+            }
+            AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onList)
+            AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure && !noFit) {
+                PrimaryButton("다시 시도", onRetry, enabled = canSend)
+                manualAction()
+            } else if (noFit) {
+                // The same selection would give the same result; another session or a new plan can.
+                if (canSearchFreeTime) PrimaryButton("캘린더에서 빈 시간 찾기", onSearchFreeTime, enabled = canSend)
+                manualAction()
+            } else {
+                PrimaryButton(
+                    if (loading) "조정하는 중…" else "선택한 일정 조정하기",
+                    onSubmit,
+                    enabled = !loading && selection.failedScheduleId != null && canSend,
+                )
+                manualAction()
+            }
+        }
+    }
+
     AppScreen(
-        title = "실패한 일정 선택",
+        title = "일정 조정",
         navIcon = if (busy) null else NavIcon.Back,
         onNav = onBack,
         scrollState = scrollState,
-        footer = {
-            when (mode) {
-                AdjustmentMode.Missing -> {
-                    PrimaryButton("목록으로", onBack)
-                    SecondaryButton("새 계획 만들기", onCreate, enabled = canSend)
-                }
-                AdjustmentMode.ReloadNeeded -> {
-                    PrimaryButton("최신 계획 불러오기", onReload, enabled = canSend)
-                    SecondaryButton("목록으로", onBack)
-                }
-                AdjustmentMode.Reloading -> PrimaryButton("불러오는 중…", onReload, enabled = false)
-                AdjustmentMode.ReloadFailed -> {
-                    PrimaryButton("최신 계획 다시 불러오기", onReload, enabled = canSend)
-                    SecondaryButton("목록으로", onBack)
-                }
-                AdjustmentMode.NoIdentity -> {
-                    PrimaryButton("새 계획 만들기", onCreate, enabled = canSend)
-                    exportAction()
-                    SecondaryButton("목록으로", onBack)
-                }
-                AdjustmentMode.NoStudy -> SecondaryButton("목록으로", onBack)
-                AdjustmentMode.Adjustable -> if (state is AdjustmentState.Failure && !noFit) {
-                    PrimaryButton("다시 시도", onRetry, enabled = canSend)
-                    manualAction()
-                    exportAction()
-                    SecondaryButton("목록으로", onBack)
-                } else if (noFit) {
-                    // The same selection would give the same result; another session or a new plan can.
-                    if (canSearchFreeTime) PrimaryButton("캘린더에서 빈 시간 찾기", onSearchFreeTime, enabled = canSend)
-                    manualAction()
-                    PrimaryButton("선택한 일정 조정하기", onSubmit, enabled = false, subtitle = "다른 일정을 선택해 주세요")
-                    exportAction()
-                    SecondaryButton("목록으로", onBack)
-                    SecondaryButton("새 계획 만들기", onCreate, enabled = canSend)
-                } else {
-                    PrimaryButton(
-                        if (loading) "조정하는 중…" else "선택한 일정 조정하기",
-                        onSubmit,
-                        enabled = !loading && selection.failedScheduleId != null && canSend,
-                        subtitle = if (!loading && selection.failedScheduleId == null) "놓친 공부 일정을 하나 골라 주세요" else null,
-                    )
-                    manualAction()
-                    exportAction()
-                }
-            }
-        },
+        trailing = { ContextHelpButton(ContextHelpTopic.ADJUSTMENT) },
+        footer = if (mode == AdjustmentMode.Adjustable && selection.failedScheduleId == null) null else detailFooter,
     ) {
         Heading(
             "계획 ${plan.ordinal} · $CERTIFICATION_NAME",
             "준비 ${wireDate(plan.original.preparationStart)} – 시험 ${wireDate(plan.original.examDate)}",
         )
-        PrimaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null)
-        remainingStudyReason?.let { Note(it) }
         OriginalPlanInputs(plan)
-        ContextHelpButton(ContextHelpTopic.ADJUSTMENT)
         if (plan.isDemo) {
             MutedBox {
                 Text("로컬 시연 계산", style = MaterialTheme.typography.titleSmall, color = Ink)
@@ -392,7 +361,7 @@ fun PlanAdjustmentScreen(
                 state == AdjustmentState.Reloaded -> Unit
                 else -> {
                     if (summary != null) PlanSummary(summary)
-                    Note("놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요.")
+                    Note("시간을 바꿀 공부 일정을 선택해 주세요.")
                 }
             }
         }

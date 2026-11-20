@@ -454,6 +454,13 @@ class PlanFormViewModel(
     val keepFeedback: StateFlow<KeepFeedback?> = _keepFeedback.asStateFlow()
     private val _noticePermission = MutableStateFlow<ConflictPhase?>(null)
     val noticePermission: StateFlow<ConflictPhase?> = _noticePermission.asStateFlow()
+    private val _noticeCheckFeedback = MutableStateFlow<NoticeCheckFeedback?>(null)
+    val noticeCheckFeedback: StateFlow<NoticeCheckFeedback?> = _noticeCheckFeedback.asStateFlow()
+    private var explicitNoticeCheck = false
+
+    private fun noticeFeedback(message: String) {
+        _noticeCheckFeedback.value = NoticeCheckFeedback((_noticeCheckFeedback.value?.sequence ?: 0) + 1, message)
+    }
     private val _freeTimeSearch = MutableStateFlow<FreeTimeSearch?>(null)
     val freeTimeSearch: StateFlow<FreeTimeSearch?> = _freeTimeSearch.asStateFlow()
     private val _manualReview = MutableStateFlow<ManualConflictReview?>(null)
@@ -532,7 +539,15 @@ class PlanFormViewModel(
     }
 
     fun requestNoticeCheck(): Boolean {
-        if (!storageReady || busy || generating || noticeReading || _noticePermission.value != null) return false
+        if (!storageReady || busy || generating || noticeReading || _noticePermission.value != null) {
+            noticeFeedback(when {
+                !storageReady -> "계획을 불러오거나 저장한 뒤 다시 확인해 주세요."
+                noticeReading || _noticePermission.value != null -> "캘린더를 확인하는 중이에요. 잠시 기다려 주세요."
+                else -> "진행 중인 작업을 마친 뒤 캘린더를 다시 확인해 주세요."
+            })
+            return false
+        }
+        explicitNoticeCheck = true
         _noticePermission.value = ConflictPhase.RequestingPermission
         return true
     }
@@ -561,13 +576,18 @@ class PlanFormViewModel(
         val now = currentMinute()
         val sources = _plans.value.map { source -> source to CalendarConflicts.sessions(source.current.schedules)
             .filter { it.interval.end > now } }
-        fun unchecked(source: SessionPlan): PlanConflictNotice {
+        fun unchecked(source: SessionPlan, failure: CalendarReadOutcome): PlanConflictNotice {
             val previous = _notices.value[source.ordinal]?.takeIf { noticeSourceCurrent(it.source) }
             return previous?.copy(phase = NoticePhase.Stale, conflicts = CalendarConflictResult(
-                previous.conflicts.matches.filter { it.target.interval.end > currentMinute() })) ?: PlanConflictNotice(source)
+                previous.conflicts.matches.filter { it.target.interval.end > currentMinute() }), failure = failure)
+                ?: PlanConflictNotice(source, failure = failure)
         }
         if (!foregroundGrant) {
-            _notices.value = sources.associate { (source, _) -> source.ordinal to unchecked(source) }
+            _notices.value = sources.associate { (source, _) -> source.ordinal to unchecked(source, CalendarReadOutcome.PermissionMissing) }
+            if (explicitNoticeCheck) {
+                explicitNoticeCheck = false
+                noticeFeedback("캘린더 권한이 없어 확인하지 못했어요. 권한을 허용한 뒤 다시 확인해 주세요.")
+            }
             return
         }
         noticeReading = true
@@ -588,10 +608,18 @@ class PlanFormViewModel(
                         if (!noticeSourceCurrent(source)) { noticePending = true; continue }
                         val snapshot = (outcome as? CalendarReadOutcome.Loaded)?.snapshot
                         val result = if (snapshot != null) PlanConflictNotice(source,
-                            CalendarConflicts.compare(targets.filter { it.interval.end > currentMinute() }, snapshot.occurrences), NoticePhase.Checked)
-                        else unchecked(source)
+                            CalendarConflicts.compare(targets.filter { it.interval.end > currentMinute() }, snapshot.occurrences), NoticePhase.Checked, currentMinute())
+                        else unchecked(source, outcome)
                         _notices.update { it + (source.ordinal to result) }
                     }
+                }
+                if (explicitNoticeCheck && foreground && epoch == foregroundEpoch && !noticePending) {
+                    explicitNoticeCheck = false
+                    val results = sources.mapNotNull { (source, _) -> _notices.value[source.ordinal]?.takeIf { noticeSourceCurrent(it.source) } }
+                    noticeFeedback(if (results.size == sources.size && results.all { it.phase == NoticePhase.Checked }) {
+                        val count = results.sumOf { notice -> notice.conflicts.matches.map { it.target.scheduleId }.distinct().size }
+                        if (count == 0) "확인 완료 · 겹치는 일정 없음" else "확인 완료 · 겹치는 공부 ${count}개"
+                    } else "캘린더를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.")
                 }
             } finally {
                 noticeReading = false

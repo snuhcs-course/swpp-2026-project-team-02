@@ -160,7 +160,7 @@ private const val NOT_ENOUGH_TIME_CODE = "NOT_ENOUGH_TIME:"
 private const val NO_STORED_EXAM_DATE =
     "This saved plan has no stored exam date. Create a new plan before adjusting study sessions."
 private const val NO_STORED_EXAM_DATE_MESSAGE =
-    "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요."
+    "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요."
 private const val UNKNOWN_CAUSE_MESSAGE = "원인을 알 수 없는 오류가 발생했어요. 세부 메시지를 확인해 주세요."
 private const val PLAN_NOT_FOUND_MESSAGE =
     "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."

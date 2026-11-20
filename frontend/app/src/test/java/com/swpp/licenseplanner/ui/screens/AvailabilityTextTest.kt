@@ -49,11 +49,13 @@ class AvailabilityTextTest {
         assertEquals("일요일 시간대 1, 23:30–다음 날 00:30, 60분, 수정", windowEditDescription(Weekday.SUNDAY, 0, window(23, 30, 60)))
     }
 
-    @Test fun durationEntryAcceptsOnlyTheSupportedRange() {
-        assertEquals(1, parseDurationMinutes("1"))
-        assertEquals(90, parseDurationMinutes("90"))
-        assertEquals(1439, parseDurationMinutes("1439"))
-        for (text in listOf("", "0", "1440", "9999", "-5", "1.5")) assertNull(text, parseDurationMinutes(text))
+    @Test fun startAndEndTimesResolveSameDayAndOvernightDurations() {
+        assertEquals(120, studyWindowMinutes(LocalTime.of(18, 0), LocalTime.of(20, 0)))
+        assertEquals(90, studyWindowMinutes(LocalTime.of(23, 0), LocalTime.of(0, 30)))
+        assertEquals(60, studyWindowMinutes(LocalTime.of(23, 0), LocalTime.MIDNIGHT))
+        assertEquals(1, studyWindowMinutes(LocalTime.of(23, 59), LocalTime.MIDNIGHT))
+        assertEquals(1439, studyWindowMinutes(LocalTime.of(0, 1), LocalTime.MIDNIGHT))
+        assertNull(studyWindowMinutes(LocalTime.of(18, 0), LocalTime.of(18, 0)))
     }
 
     @Test fun summariesCountEveryWindowAndWeekKinds() {
@@ -63,8 +65,6 @@ class AvailabilityTextTest {
             Weekday.SUNDAY to listOf(window(23, 30, 60)),
         )
         assertEquals(WeekTotals(days = 3, minutes = 270), weekTotals(base))
-        assertEquals("주 3일 · 4시간 30분", baseLabel(base))
-        assertEquals("없음", baseLabel(emptyMap()))
 
         val empty = LocalDate.of(2026, 11, 30)
         val replaced = LocalDate.of(2026, 12, 7)
@@ -73,14 +73,13 @@ class AvailabilityTextTest {
         assertEquals("11월 30일 주 · 공부 안 함", overridesLabel(mapOf(empty to emptyMap())))
         assertEquals("12월 7일 주 · 시간 바꿈", overridesLabel(mapOf(replaced to twoWindows)))
         assertEquals("2개 주", overridesLabel(mapOf(empty to emptyMap(), replaced to twoWindows)))
-        assertEquals(2, retainedWindowCount(StudyAvailability(base, mapOf(empty to emptyMap(), replaced to twoWindows))))
     }
 
     @Test fun conflictNamesTheDaysAndOverlappingTime() {
         val spill = StudyAvailability(mapOf(Weekday.MONDAY to listOf(window(23, 0, 90)), Weekday.TUESDAY to listOf(window(0, 15, 60))))
         val text = conflictText(spill)!!
         assertEquals("월요일과 화요일 공부 시간이 겹쳐요.", text.title)
-        assertEquals("화요일 00:15–00:30이 겹쳐요. 시작 시간이나 공부할 분을 바꿔 주세요.", text.body)
+        assertEquals("화요일 00:15–00:30이 겹쳐요. 시작 시간이나 종료 시간을 바꿔 주세요.", text.body)
 
         // A replacement week colliding with the previous week's Sunday spill names that week.
         val monday = LocalDate.of(2026, 11, 30)
@@ -88,11 +87,11 @@ class AvailabilityTextTest {
             mapOf(Weekday.SUNDAY to listOf(window(23, 30, 60))),
             mapOf(monday to mapOf(Weekday.MONDAY to listOf(window(0, 0, 45)))),
         )
-        assertEquals(ConflictText("일요일과 월요일 공부 시간이 겹쳐요.", "11월 30일 주 월요일 00:00–00:30이 겹쳐요. 시작 시간이나 공부할 분을 바꿔 주세요."), conflictText(week))
+        assertEquals(ConflictText("일요일과 월요일 공부 시간이 겹쳐요.", "11월 30일 주 월요일 00:00–00:30이 겹쳐요. 시작 시간이나 종료 시간을 바꿔 주세요."), conflictText(week))
 
         val sameDay = StudyAvailability(mapOf(Weekday.FRIDAY to listOf(window(23, 0, 120), window(23, 30, 30))))
         assertEquals("금요일 공부 시간이 겹쳐요.", conflictText(sameDay)!!.title)
-        assertEquals("금요일 23:30–다음 날 00:00이 겹쳐요. 시작 시간이나 공부할 분을 바꿔 주세요.", conflictText(sameDay)!!.body)
+        assertEquals("금요일 23:30–다음 날 00:00이 겹쳐요. 시작 시간이나 종료 시간을 바꿔 주세요.", conflictText(sameDay)!!.body)
 
         val adjacent = StudyAvailability(mapOf(Weekday.MONDAY to listOf(window(23, 0, 90)), Weekday.TUESDAY to listOf(window(0, 30, 60))))
         assertNull(conflictText(adjacent))

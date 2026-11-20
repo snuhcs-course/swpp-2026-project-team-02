@@ -50,10 +50,13 @@ private fun FreeTimeInfo(title: String, body: String) {
     }
 }
 
+/** Where sessions can still be moved when a calendar search cannot place them. */
+internal fun freeTimeFallback(remaining: Boolean): String =
+    if (remaining) REMAINING_STUDY_FALLBACK else "'시간 직접 옮기기'에서 직접 고를 수 있어요."
+
 @Composable
 private fun FreeTimeStatus(phase: FreeTimePhase, source: SessionPlan, remaining: Boolean = false) {
-    val fallback = if (remaining) "'계획 조정하기'에서 일정을 하나씩 골라 '시간 직접 옮기기'로 옮길 수 있어요."
-        else "'시간 직접 옮기기'에서 직접 고를 수 있어요."
+    val fallback = freeTimeFallback(remaining)
     when (phase) {
         FreeTimePhase.RequestingPermission, FreeTimePhase.AwaitingPermission, FreeTimePhase.Reading ->
             FreeTimeInfo("캘린더에서 빈 시간을 찾는 중이에요", "평소 공부하는 시간대(${bandLabel(source)})에서 캘린더 일정과 다른 공부 일정을 피한 시간을 찾고 있어요.")
@@ -70,7 +73,7 @@ fun CalendarFreeTimeScreen(search: FreeTimeSearch, onSelect: (Int) -> Unit, onCo
                            onManual: () -> Unit, onRetry: () -> Unit, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val results = search.phase == FreeTimePhase.Results
-    AppScreen("계획 조정", onNav = onBack, footer = {
+    AppScreen("일정 조정", onNav = onBack, footer = {
         if (results) PrimaryButton("이번 한 번만 옮기기", onConfirm, enabled = search.selected != null)
         else {
             if (search.phase in setOf(FreeTimePhase.PermissionDenied, FreeTimePhase.Unavailable, FreeTimePhase.NoTime)) {
@@ -96,7 +99,7 @@ fun CalendarFreeTimeScreen(search: FreeTimeSearch, onSelect: (Int) -> Unit, onCo
                 }
             }
             Note("캘린더 일정과 다른 공부 일정을 피했어요. 입력한 공부 시간은 바뀌지 않아요.")
-            SecondaryButton("직접 시간 고르기", onManual)
+            SecondaryButton("시간 직접 옮기기", onManual)
         } else FreeTimeStatus(search.phase, search.source)
     }
 }
@@ -105,7 +108,14 @@ fun CalendarFreeTimeScreen(search: FreeTimeSearch, onSelect: (Int) -> Unit, onCo
 fun RemainingCalendarFreeTimeScreen(search: RemainingStudyState.CalendarSearch, onConfirm: () -> Unit,
                                     onRetry: () -> Unit, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    AppScreen("남은 공부 다시 계획하기", onNav = onBack) {
+    AppScreen("남은 공부 다시 계획하기", onNav = onBack, footer = {
+        when (search.phase) {
+            FreeTimePhase.Results -> PrimaryButton("이번 한 번만 이 시간으로 다시 계획하기", onConfirm)
+            FreeTimePhase.Unavailable -> PrimaryButton("다시 찾기", onRetry)
+            else -> Unit
+        }
+        SecondaryButton("계획으로 돌아가기", onBack)
+    }) {
         if (search.input.source.isDemo) Note("로컬 시연 계산 · 서버나 AI를 사용하지 않아요.")
         Heading("캘린더 빈 시간으로 다시 계획")
         if (search.phase == FreeTimePhase.Results) {
@@ -123,9 +133,6 @@ fun RemainingCalendarFreeTimeScreen(search: RemainingStudyState.CalendarSearch, 
             if (search.input.work.contributions.any { it.report != null && it.remainingMinutes > 0 }) {
                 Note("다시 배치하는 일정의 이전 공부 기록은 그대로 저장되지만 현재 계획에서는 표시되지 않아요. 새 일정은 기록 없음으로 시작해요.")
             }
-            PrimaryButton("이번 한 번만 이 시간으로 다시 계획하기", onConfirm)
         } else FreeTimeStatus(search.phase, search.input.source, remaining = true)
-        if (search.phase == FreeTimePhase.Unavailable) SecondaryButton("다시 찾기", onRetry)
-        SecondaryButton("계획으로 돌아가기", onBack)
     }
 }
