@@ -187,7 +187,6 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                         return result
                     }
                 },
-                availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                 currentDate = { deviceDate },
                 currentMinute = { deviceMinute },
                 remainingStudyRepository = object : com.swpp.licenseplanner.data.RemainingStudyRepository {

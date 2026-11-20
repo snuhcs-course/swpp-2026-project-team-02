@@ -7,7 +7,6 @@ import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.ApiJson
-import com.swpp.licenseplanner.data.AvailabilityProfileRepository
 import com.swpp.licenseplanner.data.BytesPlanStore
 import com.swpp.licenseplanner.data.DemoAdjustmentRepository
 import com.swpp.licenseplanner.data.LiveAdjustmentRepository
@@ -16,7 +15,6 @@ import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanningRepository
-import com.swpp.licenseplanner.data.ProfileOutcome
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
@@ -29,7 +27,6 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanRecovery
-import com.swpp.licenseplanner.domain.StudyAvailability
 import com.swpp.licenseplanner.domain.StudyCheckIn
 import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
@@ -108,12 +105,6 @@ class PlanAdjustmentViewModelTest {
         }
     }
 
-    /** Adjustment never reads or saves the shared profile; any call fails the test. */
-    private object UntouchedProfile : AvailabilityProfileRepository {
-        override suspend fun load(): ProfileOutcome = throw AssertionError("profile loaded")
-        override suspend fun save(availability: StudyAvailability): ProfileOutcome = throw AssertionError("profile saved")
-    }
-
     private val mondayWindows = mapOf("monday" to listOf(TimeWindow("18:00", durationMinutes = 120)))
     private val wednesdayWindows = mapOf("wednesday" to listOf(TimeWindow("18:00", durationMinutes = 60)))
 
@@ -145,7 +136,6 @@ class PlanAdjustmentViewModelTest {
         adjustment,
         LocalDate.of(2026, 10, 5),
         BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
-        availabilityProfileRepository = UntouchedProfile,
 
         calendarReadRepository = ClearCalendarForTest,
     ).apply {

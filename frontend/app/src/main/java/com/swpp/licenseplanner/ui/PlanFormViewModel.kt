@@ -17,7 +17,6 @@ import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.AvailabilityWire
-import com.swpp.licenseplanner.data.AvailabilityProfileRepository
 import com.swpp.licenseplanner.data.AndroidCalendarExportRepository
 import com.swpp.licenseplanner.data.AndroidCalendarReadRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
@@ -39,7 +38,6 @@ import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
-import com.swpp.licenseplanner.data.ProfileOutcome
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
 import com.swpp.licenseplanner.data.ReloadOutcome
@@ -66,14 +64,12 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
-import com.swpp.licenseplanner.domain.StudyAvailability
 import com.swpp.licenseplanner.domain.StudyCheckIn
 import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.emptyWeek
 import com.swpp.licenseplanner.domain.hasInputBeyondDefaults
-import com.swpp.licenseplanner.domain.toEditorDays
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -292,18 +288,6 @@ fun isCheckInUnsaved(shown: List<SessionPlan>, saved: List<SessionPlan>, ordinal
     return report != saved.firstOrNull { it.ordinal == ordinal }?.checkInFor(scheduleId)
 }
 
-/** Explicit load or save of the server's shared study-time profile (live only). */
-sealed interface ProfileState {
-    data object Idle : ProfileState
-    data object Loading : ProfileState
-    /** A loaded profile waiting for the learner to accept it; the form is unchanged until then. */
-    data class Preview(val availability: StudyAvailability) : ProfileState
-    data object Saving : ProfileState
-    data object Saved : ProfileState
-    /** The draft is kept; [saving] says which explicit action failed. */
-    data class Failure(val error: ApiError, val saving: Boolean) : ProfileState
-}
-
 /**
  * Activity-scoped state for the whole input flow and the generated plans.
  * Form inputs survive back navigation and configuration changes, not process death; the plans
@@ -319,8 +303,6 @@ class PlanFormViewModel(
     private val planStore: LocalPlanStore,
     private val calendarExportRepository: CalendarExportRepository = UnavailableCalendarExport,
     private val calendarReadRepository: CalendarReadRepository = UnavailableCalendarRead,
-    /** The shared server profile; null in demo, which keeps study times on the device. */
-    private val availabilityProfileRepository: AvailabilityProfileRepository? = null,
     /**
      * The device's current date, read whenever a report gate is checked. Separate from [today],
      * which is captured once for the creation form.
@@ -374,12 +356,6 @@ class PlanFormViewModel(
     private val _calendarExport = MutableStateFlow<CalendarExportState?>(null)
     val calendarExport: StateFlow<CalendarExportState?> = _calendarExport.asStateFlow()
     private var nextExportId = 1
-
-    private val _profile = MutableStateFlow<ProfileState>(ProfileState.Idle)
-    val profile: StateFlow<ProfileState> = _profile.asStateFlow()
-
-    /** Whether this build can load or save the server profile at all. */
-    val profileAvailable: Boolean get() = availabilityProfileRepository != null
 
     private val _availabilityWeek = MutableStateFlow<LocalDate?>(null)
 
@@ -514,8 +490,7 @@ class PlanFormViewModel(
         }
         viewModelScope.launch {
             combine(_plans, _storage, _generation, _adjustment,
-                combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision,
-                    combine(_profile, _remainingStudy) { _, _ -> Unit }) { _, _, _, _, _ -> Unit },
+                combine(_calendarExport, _calendarRead, _calendarConflict, _draftDecision, _remainingStudy) { _, _, _, _, _ -> Unit },
             ) { _, _, _, _, _ -> Unit }.collect { refreshNoticesWhenIdle() }
         }
     }
@@ -569,7 +544,7 @@ class PlanFormViewModel(
     } == true
 
     private fun refreshNoticesWhenIdle() {
-        if (!foreground || !noticePending || noticeReading || !storageReady || busy || generating || profileBusy ||
+        if (!foreground || !noticePending || noticeReading || !storageReady || busy || generating ||
             _draftDecision.value != null || _checkIn.value?.save == CheckInSave.Saving) return
         noticePending = false
         val epoch = foregroundEpoch
@@ -714,7 +689,7 @@ class PlanFormViewModel(
     }
 
     private fun canEditWindow(): Boolean =
-        storageReady && !generating && !busy && !profileBusy && _draftDecision.value == null
+        storageReady && !generating && !busy && _draftDecision.value == null
 
     private fun windowTargetIsCurrent(target: AvailabilityWindowTarget): Boolean =
         captureWindow(target.day, target.index, target.week) == target
@@ -772,61 +747,6 @@ class PlanFormViewModel(
         _availabilityWeek.value = monday
         return true
     }
-
-    /**
-     * Reads the server profile on explicit request and shows it as a preview; the form changes only
-     * after [acceptProfile]. Returns whether a request was sent.
-     */
-    fun loadProfile(): Boolean {
-        val repository = availabilityProfileRepository ?: return false
-        if (generating || busy || profileBusy) return false
-        _profile.value = ProfileState.Loading
-        viewModelScope.launch {
-            _profile.value = when (val outcome = repository.load()) {
-                is ProfileOutcome.Loaded -> ProfileState.Preview(outcome.availability)
-                is ProfileOutcome.Failure -> ProfileState.Failure(outcome.error, saving = false)
-            }
-        }
-        return true
-    }
-
-    /** Replaces the form's base week and week replacements with the previewed profile, every window included. */
-    fun acceptProfile() {
-        val preview = _profile.value as? ProfileState.Preview ?: return
-        if (generating) return
-        edit(CreationStep.AVAILABILITY) { state ->
-            state.copy(
-                availability = preview.availability.base.toEditorDays(),
-                availabilityOverrides = preview.availability.overrides.mapValues { it.value.toEditorDays() },
-            )
-        }
-        _profile.value = ProfileState.Idle
-    }
-
-    /** Closes a preview, failure or saved notice without touching the form. */
-    fun dismissProfile() {
-        if (!profileBusy) _profile.value = ProfileState.Idle
-    }
-
-    /**
-     * Saves the complete current context (every window, shown or not, and every week replacement)
-     * as the shared profile on explicit request. Nothing is sent while the context is invalid.
-     */
-    fun saveProfile(): Boolean {
-        val repository = availabilityProfileRepository ?: return false
-        val form = _form.value
-        if (generating || busy || profileBusy || form.availabilityError != null) return false
-        _profile.value = ProfileState.Saving
-        viewModelScope.launch {
-            _profile.value = when (val outcome = repository.save(form.studyAvailability)) {
-                is ProfileOutcome.Loaded -> ProfileState.Saved
-                is ProfileOutcome.Failure -> ProfileState.Failure(outcome.error, saving = true)
-            }
-        }
-        return true
-    }
-
-    private val profileBusy get() = _profile.value == ProfileState.Loading || _profile.value == ProfileState.Saving
 
     /** Starts an explicit device-calendar import. No calendar is read before this action. */
     fun startCalendarRead(): Boolean {
@@ -923,7 +843,7 @@ class PlanFormViewModel(
 
     /** Starts a fresh calendar check for the complete creation input before any planning request. */
     fun generate(): Boolean {
-        if (generating || busy || !storageReady || profileBusy || _draftDecision.value != null) return false
+        if (generating || busy || !storageReady || _draftDecision.value != null) return false
         val form = _form.value
         val request = (RequestMapper.map(form) as? MappingResult.Ready)?.request ?: return false
         openGenerationReview(request, form = form)
@@ -961,7 +881,7 @@ class PlanFormViewModel(
         val ownExport = _calendarExport.value?.source?.planOrdinal == ordinal &&
             _calendarConflict.value?.kind == ConflictKind.Export &&
             _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
-        if (generating || adjusting || reloading || readingCalendar || profileBusy || _questionLoad.value == QuestionLoadState.Loading ||
+        if (generating || adjusting || reloading || readingCalendar || _questionLoad.value == QuestionLoadState.Loading ||
             _remainingStudy.value.holdsSource || _freeTimeSearch.value != null || noticeReading || _manualReview.value != null ||
             (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
@@ -1358,7 +1278,7 @@ class PlanFormViewModel(
         if (!regenerationSaveReady()) return "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
         val source = plan(ordinal) ?: return "계획을 찾을 수 없어요."
         if (!source.canAdjust) return "최신 계획을 확인하거나 새 계획을 만들어 주세요."
-        if (busy || generating || profileBusy || noticeReading || _noticePermission.value != null ||
+        if (busy || generating || noticeReading || _noticePermission.value != null ||
             _questionLoad.value == QuestionLoadState.Loading || _adjustment.value.manual != null ||
             _checkIn.value?.save == CheckInSave.Editing) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
@@ -1395,7 +1315,7 @@ class PlanFormViewModel(
     private fun sendRemainingStudy(input: RemainingStudyInput): Boolean {
         if (input.work.totalMinutes == 0L) return false
         if (!regenerationSaveReady() || plan(input.source.ordinal) != input.source ||
-            adjusting || reloading || exporting || readingCalendar || generating || profileBusy || noticeReading ||
+            adjusting || reloading || exporting || readingCalendar || generating || noticeReading ||
             _calendarConflict.value != null || _manualReview.value != null || _noticePermission.value != null ||
             _adjustment.value.manual != null || _checkIn.value?.save == CheckInSave.Editing) {
             _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었거나 저장할 변경이 있어요. 다시 검토해 주세요.")
@@ -2061,10 +1981,10 @@ class PlanFormViewModel(
 
     /**
      * A draft decision or resume waits for the stored collection, any generation, adjustment,
-     * reload, question load, calendar read or profile request, and any other draft decision.
+     * reload, question load, calendar read, and any other draft decision.
      */
     private fun canDecideDraft(): Boolean =
-        storageReady && !generating && !busy && !profileBusy &&
+        storageReady && !generating && !busy &&
             _questionLoad.value != QuestionLoadState.Loading && _draftDecision.value == null
 
     private fun writeDraft(snapshot: PlanSnapshot, decision: DraftDecision) {
@@ -2092,7 +2012,6 @@ class PlanFormViewModel(
         _generation.value = GenerationState.Idle
         _generatedPlan.value = null
         calendarReadId += 1
-        _profile.value = ProfileState.Idle
     }
 
     /** The target row as sent and as accepted; null only if a validated response lacked it. */
@@ -2235,8 +2154,6 @@ class PlanFormViewModel(
             if (_calendarConflict.value?.kind == ConflictKind.Creation) _calendarConflict.value = null
             _creationStep.value = step
             if (step == CreationStep.QUESTIONS) checkpointQuestion = question
-            // A saved notice describes the earlier draft.
-            if (_profile.value == ProfileState.Saved) _profile.value = ProfileState.Idle
             _generation.value = GenerationState.Idle
             _generatedPlan.value = null
         }
@@ -2278,7 +2195,6 @@ class PlanFormViewModel(
                     ),
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
                     calendarReadRepository = AndroidCalendarReadRepository.create(application),
-                    availabilityProfileRepository = FlavorRepositories.availabilityProfileRepository(),
                     remainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
                 )
             }

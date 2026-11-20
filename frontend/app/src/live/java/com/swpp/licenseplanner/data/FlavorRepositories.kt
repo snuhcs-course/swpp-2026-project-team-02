@@ -14,8 +14,4 @@ object FlavorRepositories {
     fun planningRepository(): PlanningRepository = LivePlanningRepository(BuildConfig.API_BASE_URL, client)
     fun adjustmentRepository(): AdjustmentRepository = LiveAdjustmentRepository(BuildConfig.API_BASE_URL, client)
     fun remainingStudyRepository(): RemainingStudyRepository = LiveRemainingStudyRepository(BuildConfig.API_BASE_URL, client)
-
-    /** The shared server profile, read or saved only on explicit request. */
-    fun availabilityProfileRepository(): AvailabilityProfileRepository? =
-        LiveAvailabilityProfileRepository(BuildConfig.API_BASE_URL, client)
 }
