@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
@@ -141,13 +142,13 @@ fun ExamDateEditScreen(form: PlanFormState, onBack: () -> Unit, onConfirm: (Loca
 private fun DateField(label: String, date: LocalDate?, onClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         FieldLabel(label)
-        InputBox(date?.toString() ?: "날짜 선택", onClick)
+        InputBox(date?.toString() ?: "날짜 선택", onClick, Modifier.testTag("date-$label"))
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DatePickerSheet(initial: LocalDate, onDismiss: () -> Unit, onPick: (LocalDate) -> Unit) {
+internal fun DatePickerSheet(initial: LocalDate, onDismiss: () -> Unit, onPick: (LocalDate) -> Unit) {
     val state = rememberDatePickerState(initialSelectedDateMillis = initial.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli())
     DatePickerDialog(
         onDismissRequest = onDismiss,

@@ -139,9 +139,10 @@ class PlannerRunnerEvidenceTests(EvidenceTestCase):
         result = self.evaluate("override_success", copy.deepcopy(RECORDED["request"]))
         self.assertEqual(result["http_status"], 200)
         inference = result["inference"]
-        self.assertEqual((inference["selected_model"], inference["model_request_count"]), (OVERRIDE_MODEL, 6))
-        self.assertEqual(self.provider.models, [OVERRIDE_MODEL] * 6)
-        self.assertEqual([record["model"] for record in inference["usage"]], [RETURNED_MODEL] * 6)
+        # The first build in the recorded trace is accepted, so the run ends after three requests.
+        self.assertEqual((inference["selected_model"], inference["model_request_count"]), (OVERRIDE_MODEL, 3))
+        self.assertEqual(self.provider.models, [OVERRIDE_MODEL] * 3)
+        self.assertEqual([record["model"] for record in inference["usage"]], [RETURNED_MODEL] * 3)
 
     def test_failed_call_without_usage_still_records_the_requested_model(self):
         self.provider.replies = [rejection]

@@ -1,5 +1,6 @@
 package com.swpp.licenseplanner.ui
 
+import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
@@ -9,6 +10,7 @@ import com.swpp.licenseplanner.data.ApiJson
 import com.swpp.licenseplanner.data.BytesPlanStore
 import com.swpp.licenseplanner.data.DemoAdjustmentRepository
 import com.swpp.licenseplanner.data.LiveAdjustmentRepository
+import com.swpp.licenseplanner.data.ManualMove
 import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
@@ -23,7 +25,10 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 import com.swpp.licenseplanner.domain.PlanRecovery
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.ui.screens.movedScheduleId
 import kotlinx.coroutines.CompletableDeferred
@@ -34,6 +39,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
@@ -41,6 +47,7 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,11 +56,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.util.concurrent.TimeUnit
 
 /** Session plans and adjustment lifecycle, with fake or local repositories. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanAdjustmentViewModelTest {
+    private fun removed(move: SessionMove) = listOf(RemovedStudySchedule(
+        PlanGrouping.sessions(listOf(move.before)).single(),
+        PlanGrouping.sessions(listOf(move.after)).single(),
+    ))
+
     private val dispatcher = StandardTestDispatcher()
 
     private class FakeQuestions(private val questions: QuestionOutcome) : QuestionRepository {
@@ -92,8 +105,8 @@ class PlanAdjustmentViewModelTest {
         }
     }
 
-    private val mondayWindows = mapOf("monday" to listOf(TimeWindow("18:00", "20:00")))
-    private val wednesdayWindows = mapOf("wednesday" to listOf(TimeWindow("18:00", "19:00")))
+    private val mondayWindows = mapOf("monday" to listOf(TimeWindow("18:00", durationMinutes = 120)))
+    private val wednesdayWindows = mapOf("wednesday" to listOf(TimeWindow("18:00", durationMinutes = 60)))
 
     private val fileA = "license_planner/output/study_plan_a.csv"
     private val fileB = "license_planner/output/study_plan_b.csv"
@@ -123,6 +136,8 @@ class PlanAdjustmentViewModelTest {
         adjustment,
         LocalDate.of(2026, 10, 5),
         BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
+
+        calendarReadRepository = ClearCalendarForTest,
     ).apply {
             selectCertification(CERTIFICATION_ID)
             setExamDate(LocalDate.of(2026, 11, 16))
@@ -141,10 +156,10 @@ class PlanAdjustmentViewModelTest {
     }
 
     private fun TestScope.generateAB(vm: PlanFormViewModel) {
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         vm.switchToWednesday()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
     }
 
@@ -153,6 +168,12 @@ class PlanAdjustmentViewModelTest {
     private fun PlanFormViewModel.select(ordinal: Int, scheduleId: String) {
         assertTrue(selectPlan(ordinal))
         selectFailedSession(scheduleId)
+    }
+
+    /** The saved result of moving [id] from its row in [sent] to its row in [returned]. */
+    private fun savedMove(sent: List<ScheduleRow>, returned: List<ScheduleRow>, id: String = "study-1"): AdjustmentState.Success {
+        val move = SessionMove(sent.single { it.scheduleId == id }, returned.single { it.scheduleId == id })
+        return AdjustmentState.Success(id, move, MoveSave.Saved, removed(move))
     }
 
     // --- Canonical session collection ---
@@ -174,9 +195,9 @@ class PlanAdjustmentViewModelTest {
 
     @Test fun sameFileFromSeparateGenerationsMakesTwoEntries() = runTest(dispatcher) {
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planA, false)), FakeAdjustment())
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(listOf(1, 2), vm.plans.value.map { it.ordinal })
         assertEquals(listOf(fileA, fileA), vm.plans.value.map { it.scheduleCsvFile })
@@ -185,10 +206,10 @@ class PlanAdjustmentViewModelTest {
 
     @Test fun revisitingTheResultRegistersNothing() = runTest(dispatcher) {
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), FakeAdjustment())
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         // Result, list and adjustment screens only read state.
-        repeat(3) { vm.selectPlan(1); vm.retryGeneration() }
+        repeat(3) { vm.selectPlan(1); vm.retryAfterCalendarCheck() }
         advanceUntilIdle()
         assertEquals(1, vm.plans.value.size)
         assertEquals(1, vm.generatedPlan.value)
@@ -203,18 +224,18 @@ class PlanAdjustmentViewModelTest {
             ),
             FakeAdjustment(),
         )
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         val stored = vm.plans.value
 
         vm.switchToWednesday()
         assertEquals(GenerationState.Idle, vm.generation.value)
         assertNull(vm.generatedPlan.value)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(GenerationState.Failure(ApiError.ServerFailure(502)), vm.generation.value)
         vm.stepDuration(Weekday.WEDNESDAY, 1)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(GenerationState.DemoShortfall(12, 3), vm.generation.value)
 
@@ -232,7 +253,7 @@ class PlanAdjustmentViewModelTest {
             ),
             adjustment,
         )
-        repeat(3) { vm.generate(); advanceUntilIdle() }
+        repeat(3) { vm.generateAfterCalendarCheck(); advanceUntilIdle() }
 
         assertEquals(listOf(false, false, true), vm.plans.value.map { it.hasIdentity })
         assertEquals(listOf(null, null, null), vm.plans.value.map { it.scheduleCsvFile })
@@ -248,7 +269,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun emptyPlanIsKeptAndCannotBeAdjusted() = runTest(dispatcher) {
         val adjustment = FakeAdjustment()
         val vm = viewModel(FakePlanning(PlanOutcome.Success(StudyPlanResponse(emptyList(), scheduleCsvFile = fileA), false)), adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         assertEquals(0, vm.plan(1).studyCount)
         vm.select(1, "study-1")
@@ -285,7 +306,11 @@ class PlanAdjustmentViewModelTest {
             vm.select(1, "study-1")
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
-            assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+            assertEquals(savedMove(rowsA, movedA), vm.adjustment.value.state)
+            val success = vm.adjustment.value.state as AdjustmentState.Success
+            assertEquals("study-1", success.targetScheduleId)
+            assertEquals("study-1", success.removedSessions.single().original.scheduleId)
+            assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
             assertTrue(vm.selectPlan(2))
             assertTrue(vm.selectPlan(1))
             assertEquals(AdjustmentSelection(1), vm.adjustment.value)
@@ -322,14 +347,19 @@ class PlanAdjustmentViewModelTest {
         assertEquals(AdjustmentState.Loading, vm.adjustment.value.state)
         assertFalse(vm.selectPlan(2))
         vm.selectFailedSession("study-2")
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         vm.retryAdjustment()
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Loading), vm.adjustment.value)
 
         adjustment.gate!!.complete(Unit)
         advanceUntilIdle()
         assertEquals(1, adjustment.inputs.size)
-        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1")), vm.adjustment.value)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, movedA)), vm.adjustment.value)
+        val success = vm.adjustment.value.state as AdjustmentState.Success
+        assertEquals(1, vm.adjustment.value.planOrdinal)
+        assertNull(vm.adjustment.value.failedScheduleId)
+        assertEquals("study-1", success.targetScheduleId)
+        assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
         val updated = vm.plan(1)
         assertEquals(movedA, updated.current.schedules)
         assertEquals("csv-a2", updated.current.scheduleCsv)
@@ -338,19 +368,19 @@ class PlanAdjustmentViewModelTest {
         assertEquals(mondayWindows, updated.original.weeklyAvailability)
         assertEquals(planBBefore, vm.plan(2))
         assertEquals(2, vm.plans.value.size)
-        assertTrue(vm.generate()) // unlocked
+        assertTrue(vm.generateAfterCalendarCheck()) // unlocked
     }
 
     @Test fun generationInFlightBlocksAdjustment() = runTest(dispatcher) {
         val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
         val adjustment = FakeAdjustment()
         val vm = viewModel(planning, adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         vm.select(1, "study-1")
         planning.gate = CompletableDeferred()
         vm.stepDuration(Weekday.MONDAY, 1)
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertFalse(vm.submitAdjustment())
         assertTrue(adjustment.inputs.isEmpty())
@@ -370,7 +400,7 @@ class PlanAdjustmentViewModelTest {
         )
         for ((error, recovery) in failures) {
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), FakeAdjustment(AdjustmentOutcome.Failure(error)))
-            vm.generate()
+            vm.generateAfterCalendarCheck()
             advanceUntilIdle()
             val before = vm.plan(1)
             vm.select(1, "study-1")
@@ -398,7 +428,7 @@ class PlanAdjustmentViewModelTest {
 
         assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
         assertEquals(
-            "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요.",
+            "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요.",
             error.adjustmentMessage(),
         )
         assertEquals(before, vm.plans.value)
@@ -417,7 +447,7 @@ class PlanAdjustmentViewModelTest {
             ))
             val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), live)
-            vm.generate()
+            vm.generateAfterCalendarCheck()
             advanceUntilIdle()
             val before = vm.plan(1)
             vm.select(1, "study-1")
@@ -429,7 +459,7 @@ class PlanAdjustmentViewModelTest {
             assertEquals("study-1", vm.adjustment.value.failedScheduleId)
             assertEquals(before.copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = "study-1"), vm.plan(1))
             val sent = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-            assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+            assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","duration_minutes":120}]}"""), sent["weekly_availability"])
         } finally {
             server.shutdown()
         }
@@ -438,7 +468,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun retryResendsTheIdenticalSnapshotAfterFormEdits() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerUnavailable("busy")), AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         vm.select(1, "study-1")
         vm.submitAdjustment()
@@ -453,13 +483,16 @@ class PlanAdjustmentViewModelTest {
         assertEquals(mondayWindows, adjustment.inputs[1].original.weeklyAvailability)
         assertEquals(fileA, adjustment.inputs[1].scheduleCsvFile)
         assertEquals(1, vm.plans.value.size)
-        assertEquals(AdjustmentState.Success("study-1"), vm.adjustment.value.state)
+        assertEquals(savedMove(rowsA, movedA), vm.adjustment.value.state)
+        val success = vm.adjustment.value.state as AdjustmentState.Success
+        assertEquals("study-1", success.targetScheduleId)
+        assertEquals("2026-10-12T18:00", success.removedSessions.single().destination?.start.toString())
     }
 
     @Test fun changingSelectionAfterFailureBuildsANewRequest() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerFailure(502)), AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         vm.select(1, "study-1")
         vm.submitAdjustment()
@@ -495,11 +528,11 @@ class PlanAdjustmentViewModelTest {
         for (isDemo in listOf(false, true)) {
             val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, isDemo), PlanOutcome.Success(planB, isDemo)), adjustment)
-            assertTrue(vm.generate()) // A with Monday and the 11/16 exam
+            assertTrue(vm.generateAfterCalendarCheck()) // A with Monday and the 11/16 exam
             advanceUntilIdle()
             vm.switchToWednesday()
             vm.setExamDate(LocalDate.of(2026, 12, 14))
-            assertTrue(vm.generate()) // B with Wednesday and a later exam
+            assertTrue(vm.generateAfterCalendarCheck()) // B with Wednesday and a later exam
             advanceUntilIdle()
             assertEquals("2026/12/14/00/00", vm.plan(2).original.examDate)
             vm.select(1, "study-1")
@@ -527,7 +560,7 @@ class PlanAdjustmentViewModelTest {
 
     @Test fun demoNoSlotKeepsPlanAndSelection() = runTest(dispatcher) {
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true)), FakeAdjustment(AdjustmentOutcome.DemoNoSlot))
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         val before = vm.plans.value
         vm.select(1, "study-1")
@@ -540,7 +573,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun demoNoSlotIsNotRecalculatedUntilAnotherSessionIsChosen() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.DemoNoSlot, AdjustmentOutcome.DemoNoSlot)
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true)), adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         val before = vm.plans.value
         vm.select(1, "study-1")
@@ -592,7 +625,7 @@ class PlanAdjustmentViewModelTest {
         // A new selection after a success clears the marker without sending anything.
         val again = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
         val vm2 = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), again)
-        vm2.generate()
+        vm2.generateAfterCalendarCheck()
         advanceUntilIdle()
         vm2.select(1, "study-1")
         vm2.submitAdjustment()
@@ -715,7 +748,7 @@ class PlanAdjustmentViewModelTest {
         assertEquals(AdjustmentState.Reloading, vm.adjustment.value.state)
         assertFalse(vm.reloadPlan())
         assertFalse(vm.selectPlan(2))
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         vm.selectFailedSession("study-2")
         assertFalse(vm.submitAdjustment())
         vm.retryAdjustment()
@@ -761,7 +794,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun retainedTargetsBelongToTheirOwnEntry() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Failure(ApiError.PlanConflict))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planA, false)), adjustment)
-        repeat(2) { vm.generate(); advanceUntilIdle() }
+        repeat(2) { vm.generateAfterCalendarCheck(); advanceUntilIdle() }
         vm.select(1, "study-1")
         assertTrue(vm.submitAdjustment())
         advanceUntilIdle()
@@ -856,7 +889,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun reloadChangesOnlyTheCapturedEntryWhenIdentitiesMatch() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planA, false)), adjustment)
-        repeat(2) { vm.generate(); advanceUntilIdle() }
+        repeat(2) { vm.generateAfterCalendarCheck(); advanceUntilIdle() }
         vm.select(2, "study-1")
         vm.submitAdjustment()
         advanceUntilIdle()
@@ -873,7 +906,7 @@ class PlanAdjustmentViewModelTest {
     @Test fun demoFailuresNeverRequireReload() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.Connection), AdjustmentOutcome.Success(adjustedA))
         val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true)), adjustment)
-        vm.generate()
+        vm.generateAfterCalendarCheck()
         advanceUntilIdle()
         vm.select(1, "study-1")
         vm.submitAdjustment()
@@ -925,6 +958,8 @@ class PlanAdjustmentViewModelTest {
             vm.submitAdjustment()
             advanceUntilIdle()
             assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+            assertTrue(vm.adjustment.value.state is AdjustmentState.Failure) // no move is claimed
+            assertEquals(rowsA, vm.plan(1).current.schedules)
             vm.retryAdjustment()
             vm.selectFailedSession("study-2")
             assertFalse(vm.submitAdjustment())
@@ -948,6 +983,7 @@ class PlanAdjustmentViewModelTest {
             assertTrue(vm.reloadPlan())
             advanceUntilIdle()
             assertEquals(savedA, vm.plan(1).current.schedules)
+            assertEquals(AdjustmentState.Reloaded, vm.adjustment.value.state) // a reload is not a move
             assertEquals(planBBefore, vm.plan(2))
             assertEquals(2, vm.plans.value.size)
             assertFalse(vm.submitAdjustment())
@@ -958,17 +994,18 @@ class PlanAdjustmentViewModelTest {
             assertTrue(vm.submitAdjustment())
             advanceUntilIdle()
             assertEquals(final, vm.plan(1).current.schedules)
+            assertEquals(savedMove(savedA, final, "study-2"), vm.adjustment.value.state) // from the reloaded rows
 
             val requests = server.requests()
             assertEquals(listOf("POST", "GET", "GET", "POST"), requests.map { it.method })
             val reloadA = "/api/v1/study-plans?schedule_csv_file=license_planner%2Foutput%2Fstudy_plan_a.csv"
             assertEquals(listOf("/api/v1/schedules/adjust", reloadA, reloadA, "/api/v1/schedules/adjust"), requests.map { it.path })
             val sent = ApiJson.parseToJsonElement(requests[3].body.readUtf8()).jsonObject
-            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
+            assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date", "availability_overrides"), sent.keys)
             assertEquals(ApiJson.parseToJsonElement("\"$fileA\""), sent["schedule_csv_file"])
             assertEquals(ApiJson.parseToJsonElement("\"study-2\""), sent["schedule_id"])
             assertEquals(ApiJson.parseToJsonElement(rowsJson(savedA)), sent["schedules"])
-            assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","end":"20:00"}]}"""), sent["weekly_availability"])
+            assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","duration_minutes":120}]}"""), sent["weekly_availability"])
             assertEquals(ApiJson.parseToJsonElement("\"2026/11/16/00/00\""), sent["exam_date"])
         } finally {
             server.shutdown()
@@ -998,7 +1035,7 @@ class PlanAdjustmentViewModelTest {
         try {
             val live = LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher)
             val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false)), live)
-            vm.generate()
+            vm.generateAfterCalendarCheck()
             advanceUntilIdle()
             server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"$fileA"}}"""))
             vm.select(1, "study-1")
@@ -1014,5 +1051,502 @@ class PlanAdjustmentViewModelTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    // --- Chosen-time (manual) moves ---
+
+    private val chosen = LocalDateTime.of(2026, 10, 13, 14, 0)
+    private val elsewhere = LocalDateTime.of(2026, 10, 14, 9, 0)
+
+    /** A's study-1 at [chosen] with its one-hour duration and topic; every other row unchanged. */
+    private val manualA = rowsA.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/13/14/00", endDate = "2026/10/13/15/00") else it }
+
+    private fun TestScope.manualDraftOnA(adjustment: AdjustmentRepository): PlanFormViewModel {
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        return vm
+    }
+
+    @Test fun manualMoveSendsOnlyTheReviewedDestinationOnce() = runTest(dispatcher) {
+        val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
+        val adjustment = FakeAdjustment(outside, outside, AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertFalse(vm.submitManualAfterCalendarCheck()) // nothing opened
+        assertTrue(vm.startManualMove())
+        assertFalse(vm.submitManualAfterCalendarCheck()) // no destination yet
+        vm.setManualStart(chosen)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck()) // not solicited yet
+        vm.cancelManualMove()
+        assertNull(vm.adjustment.value.manual)
+        assertFalse(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(adjustment.inputs.isEmpty())
+
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        adjustment.gate = CompletableDeferred()
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent() // Complete the fresh calendar review before holding the actual request.
+        assertFalse(vm.submitManualAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        assertFalse(vm.submitAdjustment())
+        vm.setManualStart(elsewhere) // ignored while in flight
+        advanceUntilIdle()
+        adjustment.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+        val first = adjustment.inputs.single()
+        assertEquals(ManualMove(chosen, confirmOutsideAvailability = false), first.manualMove)
+        assertEquals(vm.plan(1).original, first.original)
+        assertEquals(rowsA, first.schedules)
+        assertEquals("study-1", first.scheduleId)
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+        assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+
+        // The same refused destination is not resent without the explicit exception.
+        assertFalse(vm.submitManualAfterCalendarCheck())
+        vm.retryAdjustment()
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+
+        // Another time clears the solicitation; it must be refused again before it can be confirmed.
+        vm.setManualStart(elsewhere)
+        assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        vm.setManualStart(chosen)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.confirmOutsideAfterCalendarCheck())
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        assertEquals(ManualDraft(chosen, confirmOutsideAvailability = true), vm.adjustment.value.manual)
+        advanceUntilIdle()
+        assertEquals(3, adjustment.inputs.size)
+        assertEquals(ManualMove(chosen, confirmOutsideAvailability = true), adjustment.inputs[2].manualMove)
+        assertEquals(first.copy(manualMove = ManualMove(chosen, true)), adjustment.inputs[2])
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(rowsB, vm.plan(2).current.schedules)
+    }
+
+    @Test fun onlyOutsideStudyWindowsCanBeConfirmedAndRefusalsStayDistinct() = runTest(dispatcher) {
+        val messages = mutableSetOf<String>()
+        for (reason in ManualMoveRejection.entries) {
+            val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(reason)))
+            val vm = manualDraftOnA(adjustment)
+            assertTrue(vm.submitManualAfterCalendarCheck())
+            advanceUntilIdle()
+            val selection = vm.adjustment.value
+            assertEquals(AdjustmentState.Failure(ApiError.ManualMoveRejected(reason)), selection.state)
+            assertEquals(ManualDraft(chosen), selection.manual) // the chosen time is kept
+            assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+            assertFalse(ApiError.ManualMoveRejected(reason).requiresReload())
+            assertEquals(reason == ManualMoveRejection.OutsideStudyWindows, selection.canConfirmOutsideAvailability)
+            if (reason != ManualMoveRejection.OutsideStudyWindows) {
+                assertFalse(vm.confirmOutsideAfterCalendarCheck())
+                advanceUntilIdle()
+                assertEquals(1, adjustment.inputs.size)
+            }
+            messages += ApiError.ManualMoveRejected(reason).adjustmentMessage()
+        }
+        assertEquals(ManualMoveRejection.entries.size, messages.size)
+        // The generic invalid-input refusal never solicits the exception either.
+        val vm = manualDraftOnA(FakeAdjustment(AdjustmentOutcome.Failure(ApiError.InvalidInput("bad"))))
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
+    }
+
+    @Test fun choosingAgainAfterTheWindowQuestionKeepsTheTimeAndSendsNothing() = runTest(dispatcher) {
+        val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
+        val adjustment = FakeAdjustment(outside, outside)
+        val vm = manualDraftOnA(adjustment)
+        vm.reviseManualMove() // nothing to decline yet
+        assertEquals(AdjustmentSelection(1, "study-1", manual = ManualDraft(chosen)), vm.adjustment.value)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+
+        vm.reviseManualMove()
+        assertEquals(AdjustmentSelection(1, "study-1", manual = ManualDraft(chosen)), vm.adjustment.value)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        vm.retryAdjustment()
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+
+        // Sending the same time again is a new, unconfirmed request that the server checks from the start.
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(listOf(ManualMove(chosen), ManualMove(chosen)), adjustment.inputs.map { it.manualMove })
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+    }
+
+    @Test fun inFlightManualMoveCannotBeCancelledOrChangedAndRetryResendsTheSameAction() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Failure(ApiError.ServerFailure(500)),
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+        )
+        val vm = manualDraftOnA(adjustment)
+        adjustment.gate = CompletableDeferred()
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent()
+        vm.cancelManualMove()
+        vm.reviseManualMove()
+        vm.setManualStart(elsewhere)
+        assertFalse(vm.selectPlan(2))
+        assertEquals(AdjustmentState.Loading, vm.adjustment.value.state)
+        assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
+        adjustment.gate!!.complete(Unit)
+        adjustment.gate = null
+        advanceUntilIdle()
+
+        // A definite server failure keeps the chosen time; retry resends exactly the reviewed action.
+        assertEquals(AdjustmentState.Failure(ApiError.ServerFailure(500)), vm.adjustment.value.state)
+        assertEquals(ManualDraft(chosen), vm.adjustment.value.manual)
+        assertFalse(vm.adjustment.value.canConfirmOutsideAvailability)
+        vm.retryAdjustment()
+        vm.onManualPermission(true)
+        advanceUntilIdle()
+        assertEquals(2, adjustment.inputs.size)
+        assertEquals(adjustment.inputs[0], adjustment.inputs[1])
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
+        assertEquals(manualA, vm.plan(1).current.schedules)
+    }
+
+    @Test fun changingTargetOrPlanClearsTheManualDraftAndConfirmation() = runTest(dispatcher) {
+        val outside = AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows))
+        val adjustment = FakeAdjustment(outside, outside)
+        val vm = manualDraftOnA(adjustment)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+
+        vm.selectFailedSession("study-2")
+        assertEquals(AdjustmentSelection(1, "study-2"), vm.adjustment.value)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.adjustment.value.canConfirmOutsideAvailability)
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertFalse(vm.confirmOutsideAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(2, adjustment.inputs.size)
+        assertTrue(adjustment.inputs.all { it.manualMove == ManualMove(chosen, false) })
+    }
+
+    @Test fun liveManualConfirmationSendsTheCapturedDestinationAndFlag() = runTest(dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val vm = manualDraftOnA(LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher))
+            server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"OUTSIDE_STUDY_WINDOWS","message":"x"}}"""))
+            server.enqueue(MockResponse().setBody(adjustedJson(manualA, "study-1")))
+            assertTrue(vm.submitManualAfterCalendarCheck())
+            advanceUntilIdle()
+            assertTrue(vm.confirmOutsideAfterCalendarCheck())
+            advanceUntilIdle()
+            assertEquals(manualA, vm.plan(1).current.schedules)
+            assertEquals(mondayWindows, vm.plan(1).original.weeklyAvailability)
+
+            val sent = server.requests().map { ApiJson.parseToJsonElement(it.body.readUtf8()).jsonObject }
+            assertEquals(2, sent.size)
+            for ((request, confirmed) in sent.zip(listOf(false, true))) {
+                assertEquals(ApiJson.parseToJsonElement("\"manual\""), request["mode"])
+                assertEquals(ApiJson.parseToJsonElement("\"2026/10/13/14/00\""), request["new_start_date"])
+                assertEquals(ApiJson.parseToJsonElement("$confirmed"), request["confirm_outside_availability"])
+                assertEquals(ApiJson.parseToJsonElement("\"study-1\""), request["schedule_id"])
+                assertEquals(ApiJson.parseToJsonElement(rowsJson(rowsA)), request["schedules"])
+                assertEquals(ApiJson.parseToJsonElement("""{"monday":[{"start":"18:00","duration_minutes":120}]}"""), request["weekly_availability"])
+            }
+            assertEquals(sent[0] - "confirm_outside_availability", sent[1] - "confirm_outside_availability")
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test fun liveUncertainManualOutcomesRequireReloadWithoutReplay() = runTest(dispatcher) {
+        fun moved(id: String, start: String, end: String, topic: String? = null) =
+            manualA.map { if (it.scheduleId == id) it.copy(startDate = start, endDate = end, topic = topic ?: it.topic) else it }
+        val failures = listOf(
+            MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""),
+            MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST),
+            MockResponse().setBody(adjustedJson(moved("study-1", "2026/10/13/16/00", "2026/10/13/17/00"), "study-1")),
+            MockResponse().setBody(adjustedJson(moved("study-1", "2026/10/13/14/00", "2026/10/13/15/30"), "study-1")),
+            MockResponse().setBody(adjustedJson(moved("study-1", "2026/10/13/14/00", "2026/10/13/15/00", "다른 주제"), "study-1")),
+            MockResponse().setBody(adjustedJson(moved("study-2", "2026/10/20/19/00", "2026/10/20/20/00"), "study-1")),
+        )
+        for (failure in failures) {
+            val server = MockWebServer().apply { start() }
+            try {
+                val vm = manualDraftOnA(LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher))
+                val planBBefore = vm.plan(2)
+                server.enqueue(failure)
+                server.enqueue(MockResponse().setBody(listJson(fileA to rowsA)))
+                assertTrue(vm.submitManualAfterCalendarCheck())
+                advanceUntilIdle()
+                val error = (vm.adjustment.value.state as AdjustmentState.Failure).error
+                assertTrue(error.toString(), error.requiresReload())
+                assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+                assertEquals(rowsA, vm.plan(1).current.schedules)
+                assertEquals(planBBefore, vm.plan(2))
+                assertNull(vm.adjustment.value.manual) // a fresh reviewed choice is needed
+                assertFalse(vm.confirmOutsideAfterCalendarCheck())
+                assertFalse(vm.submitManualAfterCalendarCheck())
+                vm.retryAdjustment()
+                assertFalse(vm.startManualMove())
+                advanceUntilIdle()
+                assertEquals(1, server.requestCount)
+
+                assertTrue(vm.reloadPlan())
+                advanceUntilIdle()
+                assertEquals(AdjustmentSelection(1, null, AdjustmentState.Reloaded), vm.adjustment.value)
+                assertFalse(vm.startManualMove()) // a session must be chosen again
+                assertFalse(vm.submitManualAfterCalendarCheck())
+                advanceUntilIdle()
+                assertEquals(listOf("POST", "GET"), server.requests().map { it.method })
+            } finally {
+                server.shutdown()
+            }
+        }
+    }
+
+    @Test fun liveManualPlanNotFoundSendsNothingMore() = runTest(dispatcher) {
+        val server = MockWebServer().apply { start() }
+        try {
+            val vm = manualDraftOnA(LiveAdjustmentRepository(server.url("/api/v1/").toString(), io = dispatcher))
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"$fileA"}}"""))
+            assertTrue(vm.submitManualAfterCalendarCheck())
+            advanceUntilIdle()
+            assertEquals(AdjustmentState.Failure(ApiError.PlanNotFound), vm.adjustment.value.state)
+            assertEquals(PlanRecovery.Missing, vm.plan(1).recovery)
+            assertNull(vm.adjustment.value.manual)
+            assertFalse(vm.startManualMove())
+            assertFalse(vm.submitManualAfterCalendarCheck())
+            vm.retryAdjustment()
+            assertFalse(vm.reloadPlan())
+            advanceUntilIdle()
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    // --- Study reports ---
+
+    private fun TestScope.report(vm: PlanFormViewModel, ordinal: Int, scheduleId: String, status: StudyCheckInStatus, minutes: String? = null) {
+        assertTrue(vm.startCheckIn(ordinal, scheduleId))
+        vm.chooseCheckInStatus(status)
+        minutes?.let(vm::setCheckInMinutes)
+        assertTrue(vm.saveCheckIn())
+        advanceUntilIdle()
+        vm.closeCheckIn()
+    }
+
+    @Test fun reportsFollowTheirRowsThroughAutomaticAndChosenMovesAndFailures() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(adjustedA),
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+            AdjustmentOutcome.Failure(ApiError.Connection),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        report(vm, 1, "study-1", StudyCheckInStatus.Partly, "45")
+        report(vm, 1, "study-2", StudyCheckInStatus.Missed)
+        report(vm, 2, "study-1", StudyCheckInStatus.Done, "20")
+        assertTrue(adjustment.inputs.isEmpty()) // reporting requested no adjustment
+        val reportsA = mapOf(
+            "study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 45),
+            "study-2" to StudyCheckIn(StudyCheckInStatus.Missed, 0),
+        )
+        val b = vm.plan(2)
+        assertEquals(mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20)), b.checkIns)
+
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(movedA, vm.plan(1).current.schedules)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), vm.plan(1).checkInFor("study-1"))
+        assertEquals(mondayWindows, adjustment.inputs[0].original.weeklyAvailability)
+
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired to "study-2", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+        assertEquals(reportsA, vm.plan(1).checkIns)
+        assertEquals(mondayWindows, vm.plan(1).original.weeklyAvailability)
+        assertEquals(b, vm.plan(2))
+        assertEquals(3, adjustment.inputs.size)
+    }
+
+    @Test fun chosenAutomaticAndFailedMovesKeepTheSavedDraftAndBothPlansReports() = runTest(dispatcher) {
+        val movedB = rowsB.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/21/18/00", endDate = "2026/10/21/19/00") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+            AdjustmentOutcome.Failure(ApiError.PlanConflict),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedB, "csv-b2", null, null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        report(vm, 1, "study-1", StudyCheckInStatus.Partly, "45")
+        report(vm, 2, "study-1", StudyCheckInStatus.Done, "20")
+        vm.setLevel(CurrentLevel.BEGINNER)
+        assertTrue(vm.saveDraftAndExit())
+        advanceUntilIdle()
+        vm.draftDecisionHandled()
+        val draft = vm.committedDraft.value!!
+        val reportA = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Partly, 45))
+        val reportB = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20))
+
+        fun assertSavedWithDraft() {
+            assertEquals(draft, vm.committedDraft.value)
+            assertEquals(vm.plans.value, vm.savedPlans.value)
+            assertEquals(reportA, vm.plan(1).checkIns)
+            assertEquals(reportB, vm.plan(2).checkIns)
+        }
+
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertSavedWithDraft()
+
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.ReloadRequired to "study-2", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+        assertSavedWithDraft()
+
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(movedB, vm.plan(2).current.schedules)
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertSavedWithDraft()
+        assertEquals(3, adjustment.inputs.size)
+    }
+
+    // --- Move feedback ---
+
+    @Test fun moveFeedbackComesFromTheSentAndAcceptedRowsOfItsOwnPlan() = runTest(dispatcher) {
+        val yearEnd = rowsB.map { if (it.scheduleId == "study-1") ScheduleRow("study-1", "2026/12/31/23/30", "2027/01/01/00/30", "셀 참조 심화") else it }
+        val monthEnd = yearEnd.map { if (it.scheduleId == "study-1") it.copy(startDate = "2027/01/31/23/40", endDate = "2027/02/01/00/40") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(StudyPlanResponse(yearEnd, "csv-b2", "", null)),
+            AdjustmentOutcome.Success(StudyPlanResponse(monthEnd, "csv-b3", "study-1을 10월 12일 18:00으로 옮겼습니다.", null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        val planABefore = vm.plan(1)
+
+        // A shares study-1, but only B's row moves; a blank summary does not matter.
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val first = SessionMove(
+            ScheduleRow("study-1", "2026/10/07/18/00", "2026/10/07/19/00", "셀 참조"),
+            ScheduleRow("study-1", "2026/12/31/23/30", "2027/01/01/00/30", "셀 참조 심화"),
+        )
+        assertEquals(AdjustmentSelection(2, null, AdjustmentState.Success("study-1", first, MoveSave.Saved, removed(first))), vm.adjustment.value)
+        assertEquals("study-1", movedScheduleId(vm.plan(2), vm.adjustment.value.state))
+        assertEquals(planABefore, vm.plan(1))
+
+        // The next move starts from the moved row, not the generated one; the summary is not read.
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val second = SessionMove(first.after, ScheduleRow("study-1", "2027/01/31/23/40", "2027/02/01/00/40", "셀 참조 심화"))
+        assertEquals(AdjustmentState.Success("study-1", second, MoveSave.Saved, removed(second)), vm.adjustment.value.state)
+        assertEquals(yearEnd, adjustment.inputs[1].schedules)
+        assertEquals(monthEnd, vm.plan(2).current.schedules)
+        assertEquals(planABefore, vm.plan(1))
+        assertEquals(2, adjustment.inputs.size)
+    }
+
+    @Test fun chosenTimeFeedbackShowsTheWholeOvernightInterval() = runTest(dispatcher) {
+        val overnight = rowsA.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/31/23/30", endDate = "2026/11/01/00/30") else it }
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(overnight, "csv", "요약 A", null)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(LocalDateTime.of(2026, 10, 31, 23, 30))
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        advanceUntilIdle()
+
+        val move = SessionMove(
+            ScheduleRow("study-1", "2026/10/05/18/00", "2026/10/05/19/00", "함수"),
+            ScheduleRow("study-1", "2026/10/31/23/30", "2026/11/01/00/30", "함수"),
+        )
+        assertEquals(AdjustmentSelection(1, null, AdjustmentState.Success("study-1", move, MoveSave.Saved, removed(move))), vm.adjustment.value)
+        assertEquals(rowsB, vm.plan(2).current.schedules)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun moveFeedbackStaysUntilAnotherSelectionOrReopening() = runTest(dispatcher) {
+        val movedTwice = movedA.map { if (it.scheduleId == "study-2") it.copy(startDate = "2026/10/12/19/00", endDate = "2026/10/12/20/00") else it }
+        val adjustment = FakeAdjustment(
+            AdjustmentOutcome.Success(adjustedA),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedTwice, "csv", null, null)),
+            AdjustmentOutcome.Success(StudyPlanResponse(movedTwice, "csv", null, null)),
+        )
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val shown = AdjustmentSelection(1, null, savedMove(rowsA, movedA))
+        assertEquals(shown, vm.adjustment.value)
+
+        // A report on the same plan is a separate change and leaves the shown move alone.
+        report(vm, 1, "study-1", StudyCheckInStatus.Done, "60")
+        assertEquals(shown, vm.adjustment.value)
+
+        // Choosing another session clears it without sending anything.
+        vm.selectFailedSession("study-2")
+        assertEquals(AdjustmentSelection(1, "study-2"), vm.adjustment.value)
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(movedA, vm.plan(1).current.schedules)
+
+        // Reopening the same plan clears it, and so does leaving for another plan.
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(savedMove(movedA, movedTwice, "study-2"), vm.adjustment.value.state)
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertNull(movedScheduleId(vm.plan(1), vm.adjustment.value.state))
+        vm.selectFailedSession("study-2")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertTrue(vm.adjustment.value.state is AdjustmentState.Success)
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertEquals(movedTwice, vm.plan(1).current.schedules)
+        assertEquals(mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 60)), vm.plan(1).checkIns)
+        assertEquals(3, adjustment.inputs.size)
     }
 }

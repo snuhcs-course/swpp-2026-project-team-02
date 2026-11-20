@@ -150,7 +150,9 @@ class CalendarExportViewModelTest {
         adjustment: AdjustmentRepository = FakeAdjustment(),
         calendar: CalendarExportRepository = FakeCalendar(),
         store: LocalPlanStore = GatedStore(),
-    ) = PlanFormViewModel(FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store, calendar).apply {
+    ) = PlanFormViewModel(FakeQuestions(), planning, adjustment, LocalDate.of(2026, 10, 5), store, calendar,
+        calendarReadRepository = ClearCalendarForTest,
+    ).apply {
         selectCertification(CERTIFICATION_ID)
         setExamDate(LocalDate.of(2026, 11, 16))
         setLevel(CurrentLevel.INTERMEDIATE)
@@ -161,7 +163,7 @@ class CalendarExportViewModelTest {
     }
 
     private fun TestScope.generate(vm: PlanFormViewModel, times: Int = 1) = repeat(times) {
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
     }
 
@@ -175,6 +177,7 @@ class CalendarExportViewModelTest {
         advanceUntilIdle()
         vm.chooseCalendar(destination)
         vm.reviewCalendarExport()
+        advanceUntilIdle()
         assertEquals(CalendarExportPhase.Confirming(listOf(work, study), destination), vm.phase)
     }
 
@@ -240,7 +243,7 @@ class CalendarExportViewModelTest {
 
         // Saving a new plan: storage is not ready.
         store.saveGate = CompletableDeferred()
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         assertEquals(PlanStorage.Saving, vm.storage.value)
         assertFalse(vm.startCalendarExport(2))
@@ -250,7 +253,7 @@ class CalendarExportViewModelTest {
         // Generating and adjusting are in progress.
         planning.gate = CompletableDeferred()
         planning.queue.addLast(PlanOutcome.Success(planB, false))
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         assertFalse(vm.startCalendarExport(2))
         planning.gate!!.complete(Unit)
         advanceUntilIdle()
@@ -383,7 +386,7 @@ class CalendarExportViewModelTest {
         // Generating, then saving the new plan.
         planning.gate = CompletableDeferred()
         planning.queue.addLast(PlanOutcome.Success(planD, false))
-        assertTrue(vm.generate())
+        assertTrue(vm.generateAfterCalendarCheck())
         assertEquals(mapOf(1 to busy, 2 to busy, 3 to ExportBlock.NoStudy), seen.latest)
         assertFalse(vm.startCalendarExport(1))
         store.saveGate = CompletableDeferred()
@@ -467,12 +470,13 @@ class CalendarExportViewModelTest {
 
         assertTrue(vm.confirmCalendarExport())
         assertFalse(vm.confirmCalendarExport()) // double tap
-        assertEquals(CalendarExportPhase.Writing(study), vm.phase)
+        assertEquals(CalendarExportPhase.Checking, vm.phase)
         advanceUntilIdle()
+        assertEquals(CalendarExportPhase.Writing(study), vm.phase)
         assertEquals(1, calendar.exports.size)
 
         // Competing operations and closing are refused while writing.
-        assertFalse(vm.generate())
+        assertFalse(vm.generateAfterCalendarCheck())
         assertFalse(vm.selectPlan(2))
         assertFalse(vm.submitAdjustment())
         assertFalse(vm.reloadPlan())

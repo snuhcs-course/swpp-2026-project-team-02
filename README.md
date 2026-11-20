@@ -18,6 +18,7 @@ project/
 | [`backend/DEVELOPER_GUIDE.md`](backend/DEVELOPER_GUIDE.md) | Internal architecture, validation, scheduling and storage rules, question-bank maintenance |
 | [`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md) | HTTP contract used by the Android app: payloads, errors, deadlines and reload recovery |
 | [`frontend/README.md`](frontend/README.md) | Android build, flavors and signing, app behavior, calendar permissions and verification procedures |
+| [`docs/testing-workflow.md`](docs/testing-workflow.md) | Local affected checks, task-specific filters, handoff evidence, review reuse and a bounded daemon comparison |
 | [`deploy/README.md`](deploy/README.md) | Server topology, installed-state inspection, updates and backups, release APK and operational checks |
 
 Package READMEs (for example `backend/schedule_adjuster/README.md`) describe
@@ -38,7 +39,8 @@ python api_server.py
 ```
 
 The API defaults to `http://127.0.0.1:8000/api/v1`. Study-plan generation and
-schedule adjustment call OpenRouter model `openai/gpt-6-luna`; configure
+automatic schedule adjustment call OpenRouter model `openai/gpt-6-luna`.
+Manual moves and the remaining-work batch use deterministic server placement. Configure
 `OPENROUTER_API_KEY` in the backend process environment or `backend/.env`. Never
 put API keys in frontend files. `.env` files and local
 availability profiles are excluded from Git.
@@ -52,7 +54,13 @@ backend at `http://10.0.2.2:8000/api/v1` from the Android Emulator. The backend
 provides the question-bank and locally-scored assessment API contract used by
 the app.
 
-Build, run, and backend setup are in [`frontend/README.md`](frontend/README.md).
+The app supports multiple daily study windows, per-week changes, device-local
+creation drafts and study reports, and viewing or moving saved study sessions.
+It can read calendar conflicts and copy study sessions to a chosen device
+calendar. Build and verification instructions are in
+[`frontend/README.md`](frontend/README.md#checks). The
+[Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)
+record which HE and topic-budget branch work was merged and the remaining-work rollout.
 
 ## Continuous integration
 
@@ -62,13 +70,16 @@ offline backend unit suites in `backend/tests/` with coverage (not the scenario
 runners in `backend/scenarios/`) plus unit tests for the evidence validator in
 `scripts/tests/`, and the Android unit tests, request contract check, coverage,
 debug APK builds, and lint. Only after both of those jobs succeed, a third job
-starts the fixed-response backend fixture and runs the live-flavor
-instrumentation test on an API 35 emulator, using an emulator action pinned to a
-full commit SHA. Commands and report locations are in
+starts the fixed-response backend fixture and runs the demo Compose UI suite
+and the live API instrumentation suite on one API 35 emulator, using an emulator
+action pinned to a full commit SHA. Both suites are attempted and either failure
+fails the job; separate reports and UI diagnostics are retained. Commands and
+report locations are in
 [`backend/README.md`](backend/README.md#checks-and-coverage) and
 [`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key or
-deployed server, so it does not verify live model planning or the Android UI
-screens.
+deployed server. Demo UI tests cover screen interactions with local demo
+behavior; live instrumentation covers controlled API integration. Neither
+verifies live model planning, production activity wiring or physical devices.
 
 ## Deployment
 
@@ -97,12 +108,19 @@ revision or configuration the server is running.
   version-neutral, without newer-cycle remapping), the section rename for IDs
   9–12, the remapping of ID 10, and missing AI basics, AI ethics and ICT
   convergence items. From 2027-01-01 the bank is behind the current syllabus
-  until that update lands. Deeper coverage, routine check-ins, practical
-  workbook tasks and timed mock exams remain later decisions. See
+  until that update lands. Deeper coverage, follow-up assessment questions,
+  practical workbook tasks and timed mock exams remain later decisions. See
   [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
+- **How much available time a plan uses:** plans now use every usable entered
+  minute (the entered windows minus calendar conflicts), and the backend, not the
+  model, sets each date's total; a missed session usually needs a manual move.
+  An earlier evaluation observed about 60% median use. Review
+  rounds from the HE branch were not merged. User testing still needs to establish whether
+  learners mean the entered time as a limit or a target and how they prefer to
+  distribute work across weekdays.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
 - **Deployment:** authentication, per-user storage and plan retention remain

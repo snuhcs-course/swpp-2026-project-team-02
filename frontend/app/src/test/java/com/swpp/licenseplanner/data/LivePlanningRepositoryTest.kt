@@ -125,11 +125,11 @@ class LivePlanningRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"NOT_FOUND","message":"API route not found"}}"""))
         assertEquals(PlanOutcome.Failure(ApiError.Configuration), generate())
         server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":{"code":"INTERNAL_ERROR","message":"x"}}"""))
-        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(500)), generate())
+        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(500, "x")), generate())
         server.enqueue(MockResponse().setResponseCode(502).setBody("""{"error":{"code":"UPSTREAM_ERROR","message":"Agent did not generate a schedule"}}"""))
-        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(502)), generate())
+        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(502, "Agent did not generate a schedule")), generate())
         server.enqueue(MockResponse().setResponseCode(503).setBody("not json"))
-        assertEquals(PlanOutcome.Failure(ApiError.ServerUnavailable(null)), generate())
+        assertEquals(PlanOutcome.Failure(ApiError.ServerUnavailable(null, "not json")), generate())
         assertEquals(4, server.requestCount)
     }
 
@@ -139,7 +139,7 @@ class LivePlanningRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
         assertEquals(PlanOutcome.Failure(ApiError.Configuration), generate())
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
-        assertEquals(PlanOutcome.Failure(ApiError.ServerFailure(409)), generate())
+        assertTrue((generate() as PlanOutcome.Failure).error is ApiError.UnknownFailure)
         assertEquals(2, server.requestCount)
     }
 
@@ -155,7 +155,7 @@ class LivePlanningRepositoryTest {
     fun refusedConnectionIsConnectionError() {
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(PlanOutcome.Failure(ApiError.Connection), generate(repository(base = base)))
+        assertTrue((generate(repository(base = base)) as PlanOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test
@@ -163,7 +163,7 @@ class LivePlanningRepositoryTest {
         server.enqueue(MockResponse().setBody(successBody).setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(PlanOutcome.Failure(ApiError.Connection), generate(repository(client = shortClient)))
+        assertTrue((generate(repository(client = shortClient)) as PlanOutcome.Failure).error is ApiError.RequestTimeout)
     }
 
     @Test
@@ -172,5 +172,31 @@ class LivePlanningRepositoryTest {
         assertEquals(10_000, client.connectTimeoutMillis)
         assertEquals(120_000, client.readTimeoutMillis)
         assertEquals(120_000, client.callTimeoutMillis)
+    }
+
+    private fun withSnapshot(monday: String, overrides: String = "{}") = successBody.replace(
+        "\"new_field\":true",
+        """"new_field":true,"availability_snapshot":{"weekly_availability":{"monday":[$monday],"tuesday":[],
+        "wednesday":[{"start":"18:00","duration_minutes":60,"end":"19:00"}],"thursday":[],"friday":[],
+        "saturday":[{"start":"10:00","duration_minutes":180,"end":"13:00"}],"sunday":[]},"availability_overrides":$overrides}""",
+    )
+
+    @Test
+    fun returnedSnapshotMustBeTheSubmittedContext() {
+        val matching = """{"start":"18:00","duration_minutes":120,"end":"20:00"}"""
+        server.enqueue(MockResponse().setBody(withSnapshot(matching)))
+        val success = generate() as PlanOutcome.Success
+        assertEquals(120, success.response.availabilitySnapshot!!.weeklyAvailability.getValue("monday").single().durationMinutes)
+
+        val mismatches = listOf(
+            withSnapshot("""{"start":"18:00","duration_minutes":120,"end":"20:30"}"""), // end disagrees with duration
+            withSnapshot("""{"start":"18:00","duration_minutes":90,"end":"19:30"}"""), // a different context
+            withSnapshot(matching, """{"2026/10/12":{}}"""), // a week replacement that was not submitted
+            withSnapshot("""{"start":"18:00","duration_minutes":120},{"start":"19:00","duration_minutes":30}"""), // overlap
+        )
+        for (body in mismatches) {
+            server.enqueue(MockResponse().setBody(body))
+            assertTrue(body, (generate() as PlanOutcome.Failure).error is ApiError.InvalidResponse)
+        }
     }
 }

@@ -82,15 +82,15 @@ class LiveAdjustmentRepositoryTest {
               {"schedule_id":"study-1","start_date":"2026/10/05/18/00","end_date":"2026/10/05/19/00","topic":"함수와 데이터 관리"},
               {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
               {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
-             "exam_date":"${originalA.examDate}"}
+             "weekly_availability":{"monday":[{"start":"18:00","duration_minutes":120}]},
+             "exam_date":"${originalA.examDate}","availability_overrides":{}}
         """).jsonObject
         assertEquals(expected, sent)
         // A's windows and exam date, not the edited form's.
         assertTrue(formB.weeklyAvailability != originalA.weeklyAvailability)
         assertEquals("2026/11/16/00/00", originalA.examDate)
         assertTrue(formB.examDate != originalA.examDate)
-        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date"), sent.keys)
+        assertEquals(setOf("schedule_csv_file", "schedule_id", "schedules", "weekly_availability", "exam_date", "availability_overrides"), sent.keys)
     }
 
     @Test
@@ -155,11 +155,11 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"NOT_FOUND","message":"API route not found"}}"""))
         assertEquals(AdjustmentOutcome.Failure(ApiError.Configuration), adjust())
         server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":{"code":"INTERNAL_ERROR","message":"x"}}"""))
-        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerFailure(500)), adjust())
+        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerFailure(500, "x")), adjust())
         server.enqueue(MockResponse().setResponseCode(502).setBody("""{"error":{"code":"UPSTREAM_ERROR","message":"Agent did not apply a schedule adjustment"}}"""))
-        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerFailure(502)), adjust())
+        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerFailure(502, "Agent did not apply a schedule adjustment")), adjust())
         server.enqueue(MockResponse().setResponseCode(503).setBody("not json"))
-        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerUnavailable(null)), adjust())
+        assertEquals(AdjustmentOutcome.Failure(ApiError.ServerUnavailable(null, "not json")), adjust())
         assertEquals(5, server.requestCount)
     }
 
@@ -184,7 +184,12 @@ class LiveAdjustmentRepositoryTest {
     private fun assertNotReplayed(first: MockResponse, expected: ApiError) {
         server.enqueue(first)
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"second"}}"""))
-        assertEquals(AdjustmentOutcome.Failure(expected), adjust())
+        val firstOutcome = adjust()
+        if (expected is ApiError.UnknownFailure && expected.status == null) {
+            assertTrue((firstOutcome as AdjustmentOutcome.Failure).error is ApiError.UnknownFailure)
+        } else {
+            assertEquals(AdjustmentOutcome.Failure(expected), firstOutcome)
+        }
         assertEquals(1, server.requestCount)
         assertEquals(AdjustmentOutcome.Failure(ApiError.InvalidInput("second")), adjust())
         assertEquals(2, server.requestCount)
@@ -194,14 +199,14 @@ class LiveAdjustmentRepositoryTest {
     @Test
     fun requestTimeoutIsNotReplayed() = assertNotReplayed(
         MockResponse().setResponseCode(408).setHeader("Retry-After", "0"),
-        ApiError.ServerFailure(408),
+        ApiError.RequestTimeout("HTTP 408\nNo response body"),
     )
 
     @Test
     fun unavailableWithZeroRetryAfterIsNotReplayed() = assertNotReplayed(
         MockResponse().setResponseCode(503).setHeader("Retry-After", "0")
             .setBody("""{"error":{"code":"SERVICE_UNAVAILABLE","message":"busy"}}"""),
-        ApiError.ServerUnavailable("busy"),
+        ApiError.ServerUnavailable("busy", "busy"),
     )
 
     /**
@@ -212,13 +217,13 @@ class LiveAdjustmentRepositoryTest {
     fun redirectIsNotFollowedOrReplayed() = assertNotReplayed(
         MockResponse().setResponseCode(307)
             .setHeader("Location", server.url("/api/v1/schedules/adjust-redirected")),
-        ApiError.ServerFailure(307),
+        ApiError.UnknownFailure(307, "No response body"),
     )
 
     @Test
     fun disconnectAfterSendingIsNotReplayed() = assertNotReplayed(
         MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST),
-        ApiError.Connection,
+        ApiError.UnknownFailure(rawDiagnostic = ""),
     )
 
     private fun failureFor(status: Int, body: String): ApiError {
@@ -233,10 +238,10 @@ class LiveAdjustmentRepositoryTest {
         // Unknown fields around a recognized code are tolerated.
         assertEquals(ApiError.PlanConflict, failureFor(409, """{"error":{"code":"PLAN_CONFLICT","detail":1},"trace":"x"}"""))
         // A code with the wrong status keeps that status's generic category.
-        assertEquals(ApiError.ServerFailure(409), failureFor(409, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
+        assertTrue(failureFor(409, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""") is ApiError.UnknownFailure)
         assertEquals(ApiError.Configuration, failureFor(404, """{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
         assertEquals(ApiError.InvalidInput("x"), failureFor(422, """{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
-        assertEquals(ApiError.ServerFailure(500), failureFor(500, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
+        assertEquals(ApiError.ServerFailure(500, "x"), failureFor(500, """{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}"""))
         assertEquals(7, server.requestCount)
     }
 
@@ -266,7 +271,10 @@ class LiveAdjustmentRepositoryTest {
             "not json",
             "",
         )
-        for (body in bodies) assertEquals(body, ApiError.ServerFailure(409), failureFor(409, body))
+        for (body in bodies) {
+            val error = failureFor(409, body)
+            assertTrue("$body: $error", error is ApiError.UnknownFailure)
+        }
         assertEquals(bodies.size, server.requestCount)
     }
 
@@ -276,7 +284,7 @@ class LiveAdjustmentRepositoryTest {
         for ((response, expected) in listOf(
             MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""") to ApiError.PlanNotFound,
             MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}""") to ApiError.PlanConflict,
-            MockResponse().setResponseCode(409).setHeader("Retry-After", "0") to ApiError.ServerFailure(409),
+            MockResponse().setResponseCode(409).setHeader("Retry-After", "0") to ApiError.UnknownFailure(409, "No response body"),
         )) {
             server.enqueue(response)
             server.enqueue(MockResponse().setBody(body()))
@@ -303,7 +311,7 @@ class LiveAdjustmentRepositoryTest {
     fun refusedConnectionIsConnectionError() {
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(AdjustmentOutcome.Failure(ApiError.Connection), adjust(repository(base = base)))
+        assertTrue((adjust(repository(base = base)) as AdjustmentOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test
@@ -311,7 +319,7 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setBody(body()).setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(AdjustmentOutcome.Failure(ApiError.Connection), adjust(repository(client = shortClient)))
+        assertTrue((adjust(repository(client = shortClient)) as AdjustmentOutcome.Failure).error is ApiError.RequestTimeout)
         assertEquals(1, server.requestCount)
     }
 
@@ -435,8 +443,8 @@ class LiveAdjustmentRepositoryTest {
         val cases = listOf(
             MockResponse().setResponseCode(404).setBody("""{"error":{"code":"NOT_FOUND","message":"API route not found"}}""") to ApiError.Configuration,
             MockResponse().setResponseCode(404).setBody("""{"error":{"code":"PLAN_NOT_FOUND","message":"x"}}""") to ApiError.Configuration,
-            MockResponse().setResponseCode(500).setBody("""{"error":{"code":"STORAGE_ERROR","message":"bad stored plan"}}""") to ApiError.ServerFailure(500),
-            MockResponse().setResponseCode(503).setBody("not json") to ApiError.ServerUnavailable(null),
+            MockResponse().setResponseCode(500).setBody("""{"error":{"code":"STORAGE_ERROR","message":"bad stored plan"}}""") to ApiError.ServerFailure(500, "bad stored plan"),
+            MockResponse().setResponseCode(503).setBody("not json") to ApiError.ServerUnavailable(null, "not json"),
         )
         for ((response, expected) in cases) {
             server.enqueue(response)
@@ -447,9 +455,9 @@ class LiveAdjustmentRepositoryTest {
 
     /** OkHttp may recover a dropped GET at transport level; either way it is a connection error. */
     @Test
-    fun reloadDisconnectIsConnectionError() {
+    fun reloadDisconnectIsUnknownTransportError() {
         repeat(2) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)) }
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null))
+        assertTrue((reload(null) as ReloadOutcome.Failure).error is ApiError.UnknownFailure)
         assertTrue(server.requestCount in 1..2)
         assertEquals("GET", server.takeRequest().method)
     }
@@ -459,10 +467,10 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setBody("""{"plans":[]}""").setHeadersDelay(2, TimeUnit.SECONDS))
         val shortClient = createApiHttpClient().newBuilder()
             .readTimeout(200, TimeUnit.MILLISECONDS).callTimeout(300, TimeUnit.MILLISECONDS).build()
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null, repo = repository(client = shortClient)))
+        assertTrue((reload(null, repo = repository(client = shortClient)) as ReloadOutcome.Failure).error is ApiError.RequestTimeout)
         val base = server.url("/api/v1/").toString()
         server.shutdown()
-        assertEquals(ReloadOutcome.Failure(ApiError.Connection), reload(null, repo = repository(base = base)))
+        assertTrue((reload(null, repo = repository(base = base)) as ReloadOutcome.Failure).error is ApiError.ServerUnreachable)
     }
 
     @Test
@@ -481,5 +489,75 @@ class LiveAdjustmentRepositoryTest {
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"PLAN_CONFLICT","message":"x"}}"""))
         reload(null)
         assertEquals(listOf("GET", "GET", "GET"), List(server.requestCount) { server.takeRequest().method })
+    }
+
+    // --- Manual mode ---
+
+    private val chosen = java.time.LocalDateTime.of(2026, 10, 13, 14, 0)
+    private val manualInput = input.copy(manualMove = ManualMove(chosen, confirmOutsideAvailability = true, confirmExternalOverlap = true))
+    private val movedRow = """{"schedule_id":"study-1","start_date":"2026/10/13/14/00","end_date":"2026/10/13/15/00","topic":"함수와 데이터 관리"}"""
+    private val otherRows = """
+        {"schedule_id":"study-2","start_date":"2026/10/07/18/00","end_date":"2026/10/07/19/00","topic":"새 서버 토픽, \"따옴표\""},
+        {"schedule_id":"external-1","start_date":"2026/10/08/18/00","end_date":"2026/10/08/19/00","topic":""}
+    """.trimIndent()
+
+    @Test
+    fun manualMoveSendsTheReviewedDestinationOnceAndAcceptsOnlyThatResult() {
+        server.enqueue(MockResponse().setBody(body("$movedRow,$otherRows", extra = ""","tool_calls":[]""")))
+        val success = adjust(with = manualInput) as AdjustmentOutcome.Success
+        assertEquals("2026/10/13/15/00", success.response.schedules.single { it.scheduleId == "study-1" }.endDate)
+        val sent = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals("manual", sent["mode"]!!.toString().trim('"'))
+        assertEquals("2026/10/13/14/00", sent["new_start_date"]!!.toString().trim('"'))
+        assertEquals("true", sent["confirm_outside_availability"].toString())
+        assertEquals("true", sent["confirm_external_overlap"].toString())
+        assertEquals(originalA.preparationStart, sent["preparation_start"]!!.toString().trim('"'))
+        assertEquals(1, server.requestCount)
+        // The automatic request carries none of the manual fields.
+        server.enqueue(MockResponse().setBody(body()))
+        adjust()
+        val automatic = ApiJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(listOf("mode", "new_start_date", "confirm_outside_availability", "confirm_external_overlap", "preparation_start").none { it in automatic })
+    }
+
+    @Test
+    fun manualSuccessThatDiffersFromTheReviewedActionIsUncertain() {
+        val otherDestination = movedRow.replace("13/14/00", "13/16/00").replace("13/15/00", "13/17/00")
+        val longer = movedRow.replace("2026/10/13/15/00", "2026/10/13/15/30")
+        val otherTopic = movedRow.replace("함수와 데이터 관리", "다른 주제")
+        val otherRowMoved = otherRows.replace("2026/10/07/18/00", "2026/10/07/20/00").replace("2026/10/07/19/00", "2026/10/07/21/00")
+        val cases = listOf(
+            "$otherDestination,$otherRows", "$longer,$otherRows", "$otherTopic,$otherRows",
+            "$movedRow,$otherRowMoved", movedRow,
+        )
+        for (rowsJson in cases) {
+            server.enqueue(MockResponse().setBody(body(rowsJson)))
+            val error = (adjust(with = manualInput) as AdjustmentOutcome.Failure).error
+            assertTrue(rowsJson, error is ApiError.InvalidResponse)
+            assertTrue(error.requiresReload())
+        }
+    }
+
+    @Test
+    fun manualRejectionCodesStayDistinctAndOnlyExactPairsAreTyped() {
+        for (reason in com.swpp.licenseplanner.domain.ManualMoveRejection.entries) {
+            server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"${reason.code}","message":"x"}}"""))
+            val error = (adjust(with = manualInput) as AdjustmentOutcome.Failure).error
+            assertEquals(ApiError.ManualMoveRejected(reason), error)
+            assertFalse(error.requiresReload())
+        }
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":{"code":"INVALID_INPUT","message":"bad"}}"""))
+        assertEquals(ApiError.InvalidInput("bad"), (adjust(with = manualInput) as AdjustmentOutcome.Failure).error)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":{"code":"OUTSIDE_STUDY_WINDOWS","message":"x"}}"""))
+        assertEquals(ApiError.UnknownFailure(409, "x"), (adjust(with = manualInput) as AdjustmentOutcome.Failure).error)
+    }
+
+    @Test
+    fun returnedSnapshotMustBeThePlansOriginalContext() {
+        val original = """"availability_snapshot":{"weekly_availability":{"monday":[{"start":"18:00","duration_minutes":120,"end":"20:00"}]},"availability_overrides":{}}"""
+        server.enqueue(MockResponse().setBody(body(extra = ",$original")))
+        assertTrue(adjust() is AdjustmentOutcome.Success)
+        server.enqueue(MockResponse().setBody(body(extra = ",${original.replace("\"duration_minutes\":120,\"end\":\"20:00\"", "\"duration_minutes\":60,\"end\":\"19:00\"")}")))
+        assertTrue((adjust() as AdjustmentOutcome.Failure).error is ApiError.InvalidResponse)
     }
 }

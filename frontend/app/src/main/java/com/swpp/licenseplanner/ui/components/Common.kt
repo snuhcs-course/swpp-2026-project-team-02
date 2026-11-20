@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -83,17 +84,19 @@ fun AppScreen(
     onNav: () -> Unit = {},
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     scrollable: Boolean = true,
+    scrollState: ScrollState = rememberScrollState(),
+    trailing: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Scaffold(
         containerColor = Paper,
         contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = { TopBar(title, navIcon, onNav) },
+        topBar = { TopBar(title, navIcon, onNav, trailing) },
         bottomBar = { if (footer != null) Footer(footer) },
     ) { padding ->
         val base = Modifier.padding(padding).fillMaxSize()
         Column(
-            modifier = (if (scrollable) base.verticalScroll(rememberScrollState()) else base)
+            modifier = (if (scrollable) base.verticalScroll(scrollState) else base)
                 .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             content = content,
@@ -430,35 +433,22 @@ fun AlertCard(title: String, body: String) {
     }
 }
 
-/** Bordered input-like box (Figma date field: #8A8A8A 1.5dp, 8dp corners, 48dp). */
+/**
+ * Bordered input-like box (Figma date field: #8A8A8A 1.5dp, 8dp corners, 48dp).
+ * [highlighted] marks the field an error message refers to with a 2dp Ink border.
+ */
 @Composable
-fun InputBox(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.small,
-        color = Paper,
-        border = BorderStroke(1.5.dp, ControlBorder),
-        modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
-    ) {
-        Box(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
-            Text(text, style = MaterialTheme.typography.bodyLarge, color = Ink)
-        }
-    }
-}
-
-/** 44dp square stepper button with the Figma minus/plus icons. */
-@Composable
-fun StepperButton(@DrawableRes icon: Int, description: String, enabled: Boolean, onClick: () -> Unit) {
+fun InputBox(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, highlighted: Boolean = false, enabled: Boolean = true) {
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = MaterialTheme.shapes.small,
         color = Paper,
-        border = BorderStroke(1.5.dp, if (enabled) ControlBorder else Divider),
-        modifier = Modifier.size(44.dp),
+        border = if (highlighted) BorderStroke(2.dp, Ink) else BorderStroke(1.5.dp, ControlBorder),
+        modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Image(painterResource(icon), contentDescription = description, alpha = if (enabled) 1f else 0.3f)
+        Box(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
+            Text(text, style = MaterialTheme.typography.bodyLarge, color = Ink)
         }
     }
 }

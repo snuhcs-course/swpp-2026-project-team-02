@@ -13,4 +13,5 @@ object FlavorRepositories {
     fun questionRepository(): QuestionRepository = LiveQuestionRepository(BuildConfig.API_BASE_URL, client)
     fun planningRepository(): PlanningRepository = LivePlanningRepository(BuildConfig.API_BASE_URL, client)
     fun adjustmentRepository(): AdjustmentRepository = LiveAdjustmentRepository(BuildConfig.API_BASE_URL, client)
+    fun remainingStudyRepository(): RemainingStudyRepository = LiveRemainingStudyRepository(BuildConfig.API_BASE_URL, client)
 }

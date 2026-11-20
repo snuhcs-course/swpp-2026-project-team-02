@@ -2,5 +2,5 @@
 
 `python -m scenarios.run_license_planner_availability_test_cases`, run from `backend/`,
 writes per-case CSVs and traces and `license_planner_availability_test_summary.json`
-here. The runner uses the deterministic scheduler and does not call Gemini.
+here. The runner uses the deterministic scheduler and does not call a model.
 Files in this folder are local output and are ignored by git.

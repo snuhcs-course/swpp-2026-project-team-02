@@ -5,22 +5,54 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.swpp.licenseplanner.data.CalendarAccess
+import com.swpp.licenseplanner.data.CalendarReadOutcome
 import com.swpp.licenseplanner.domain.CalendarExport
+import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.ui.components.CalendarConflictDialog
+import com.swpp.licenseplanner.ui.components.CalendarNoticeRecovery
+import com.swpp.licenseplanner.ui.components.ManualConflictDialog
+import com.swpp.licenseplanner.ui.components.PlanConflictNotices
+import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.CalendarExportDialog
+import com.swpp.licenseplanner.ui.components.CreationExitDialog
+import com.swpp.licenseplanner.ui.screens.AvailabilityActions
+import com.swpp.licenseplanner.ui.screens.CheckInRows
 import com.swpp.licenseplanner.ui.screens.AvailabilityScreen
 import com.swpp.licenseplanner.ui.screens.CertificationScreen
 import com.swpp.licenseplanner.ui.screens.DatesScreen
@@ -30,12 +62,14 @@ import com.swpp.licenseplanner.ui.screens.HomeScreen
 import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
+import com.swpp.licenseplanner.ui.screens.RemainingStudyScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
+import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
 
-/** One route per step, plus home, plan list and adjustment. */
+/** One route per step, plus home, plan list, one plan view per plan ordinal, and adjustment. */
 private object Routes {
     const val HOME = "home"
     const val PLAN_LIST = "plan_list"
@@ -47,9 +81,13 @@ private object Routes {
     const val RESULTS = "results"
     const val AVAILABILITY = "availability"
     const val GENERATE = "generate"
-    const val PLAN = "plan"
+    const val PLAN_ORDINAL = "ordinal"
+    const val PLAN = "plan/{$PLAN_ORDINAL}"
+    fun plan(ordinal: Int) = "plan/$ordinal"
     const val SHORTFALL = "shortfall"
     const val EDIT_EXAM_DATE = "edit-exam-date"
+    const val CHECK_IN = "check-in"
+    const val REMAINING_STUDY = "remaining-study"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -66,6 +104,13 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
     launchSingleTop = true
 }
 
+/** Rebuild only ordinary input destinations; requests and result routes never resume. */
+private fun NavHostController.resumeCreation(step: CreationStep) {
+    fromHome(Routes.CERTIFICATION)
+    val routes = listOf(Routes.CERTIFICATION, Routes.DATES, Routes.LEVEL, Routes.QUESTIONS, Routes.RESULTS, Routes.AVAILABILITY)
+    for (route in routes.drop(1).take(step.ordinal)) go(route)
+}
+
 private fun openAppSettings(context: Context) {
     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
     try {
@@ -74,6 +119,25 @@ private fun openAppSettings(context: Context) {
         // The dialog already says where to allow access.
     }
 }
+
+/**
+ * Report entries for [plan]'s study rows: the shown report, whether it differs from the saved
+ * collection, and the action that opens the editor on its own route above the originating screen.
+ */
+private fun checkInRows(
+    viewModel: PlanFormViewModel,
+    nav: NavHostController,
+    plan: SessionPlan,
+    plans: List<SessionPlan>,
+    savedPlans: List<SessionPlan>,
+    storage: PlanStorage,
+) = CheckInRows(
+    reportFor = { plan.checkInFor(it) },
+    isUnsaved = { isCheckInUnsaved(plans, savedPlans, plan.ordinal, it) },
+    enabled = storage == PlanStorage.Ready,
+    onOpen = { scheduleId -> if (viewModel.startCheckIn(plan.ordinal, scheduleId)) nav.go(Routes.CHECK_IN) },
+    canOpen = { viewModel.canReport(plan.ordinal, it) },
+)
 
 /** Study sessions a plan's export would add. */
 private fun exportCount(plan: SessionPlan) = CalendarExport.studyRows(plan.current.schedules).size
@@ -88,18 +152,232 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
+    val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
+    val freeTimeSearch by viewModel.freeTimeSearch.collectAsStateWithLifecycle()
+    var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
+    val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
+    val notices by viewModel.notices.collectAsStateWithLifecycle()
+    val noticeCheckFeedback by viewModel.noticeCheckFeedback.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(noticeCheckFeedback) {
+        noticeCheckFeedback?.let { snackbar.showSnackbar(it.message, actionLabel = "닫기") }
+    }
+    val keepFeedback by viewModel.keepFeedback.collectAsStateWithLifecycle()
+    val noticePermission by viewModel.noticePermission.collectAsStateWithLifecycle()
+    val manualReview by viewModel.manualReview.collectAsStateWithLifecycle()
+    val generationForConflict by viewModel.generation.collectAsStateWithLifecycle()
     val exportBlocks by viewModel.exportBlocks.collectAsStateWithLifecycle()
+    val committedDraft by viewModel.committedDraft.collectAsStateWithLifecycle()
+    val draftDecision by viewModel.draftDecision.collectAsStateWithLifecycle()
+    // A draft write leaves the plan collection unchanged and owns its feedback in the dialog.
+    val planStorage = if (draftDecision == null) storage else PlanStorage.Ready
+    val questionIndex by viewModel.questionIndex.collectAsStateWithLifecycle()
+    var draftPrompt by rememberSaveable { mutableStateOf<String?>(null) }
+    var draftWaiting by rememberSaveable { mutableStateOf(false) }
+    var creationWaiting by rememberSaveable { mutableStateOf(false) }
+
+    fun resumeDraft() {
+        val step = viewModel.resumeDraft()
+        if (step == null) draftWaiting = true
+        else {
+            draftPrompt = null
+            draftWaiting = false
+            nav.resumeCreation(step)
+        }
+    }
+    fun createPlan() {
+        draftWaiting = false
+        if (committedDraft != null) draftPrompt = "new"
+        else if (!viewModel.discardDraft(DraftContinuation.NewCreation)) creationWaiting = true
+    }
+    fun leaveCreation() {
+        if (viewModel.creationExitNeedsDecision()) {
+            draftWaiting = false
+            draftPrompt = "exit"
+        } else nav.popBackStack()
+    }
+    LaunchedEffect(draftDecision) {
+        val decision = draftDecision ?: return@LaunchedEffect
+        if (decision.phase != DraftPhase.Done) return@LaunchedEffect
+        draftPrompt = null
+        draftWaiting = false
+        if (decision.continuation == DraftContinuation.NewCreation) nav.fromHome(Routes.CERTIFICATION)
+        else nav.popBackStack(Routes.HOME, inclusive = false)
+        viewModel.draftDecisionHandled()
+    }
+    if (draftPrompt != null || draftDecision != null) {
+        val startingNew = draftPrompt == "new" || draftDecision?.continuation == DraftContinuation.NewCreation
+        CreationExitDialog(
+            startingNew = startingNew,
+            decision = draftDecision,
+            waiting = draftWaiting,
+            onSave = { draftWaiting = !viewModel.saveDraftAndExit() },
+            onDiscard = { draftWaiting = !viewModel.discardDraft(if (startingNew) DraftContinuation.NewCreation else DraftContinuation.Home) },
+            onResume = ::resumeDraft,
+            onRetry = viewModel::retrySave,
+            onStay = {
+                if (viewModel.stayInCreation()) {
+                    draftPrompt = null
+                    draftWaiting = false
+                }
+            },
+        )
+    }
+    if (creationWaiting) {
+        AlertDialog(
+            onDismissRequest = { creationWaiting = false },
+            text = { Text("진행 중인 작업이 끝나거나 권한 창을 닫은 뒤 다시 선택해 주세요.") },
+            confirmButton = { TextButton(onClick = { creationWaiting = false }) { Text("확인") } },
+        )
+    }
 
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, context, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.enterForeground(CalendarAccess.READ.isGranted(context))
+                Lifecycle.Event.ON_STOP -> if ((context as? android.app.Activity)?.isChangingConfigurations != true) viewModel.leaveForeground()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) viewModel.enterForeground(CalendarAccess.READ.isGranted(context))
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val selectedNotices: @Composable (Int) -> Unit = { ordinal ->
+        PlanConflictNotices(notices[ordinal], keepFeedback, storage == PlanStorage.Ready,
+            onCheck = { viewModel.requestNoticeCheck() },
+            onKeep = { viewModel.keepCurrentConflict(ordinal, it) },
+            onMove = { id ->
+                if (viewModel.selectPlan(ordinal)) {
+                    viewModel.selectFailedSession(id)
+                    if (viewModel.startManualMove()) nav.go(Routes.ADJUST)
+                }
+            })
+    }
+    val noticeCounts: @Composable () -> Unit = {
+        for ((ordinal, notice) in notices.toSortedMap()) {
+            val count = notice.conflicts.matches.map { it.target.scheduleId }.distinct().size
+            Note("계획 $ordinal · " + when (notice.phase) {
+                NoticePhase.Checked -> "캘린더와 겹치는 공부 ${count}개"
+                NoticePhase.Checking -> "캘린더 확인 중"
+                NoticePhase.Stale -> "이전 캘린더 확인 결과"
+                NoticePhase.Unchecked -> "캘린더 확인 안 됨"
+            })
+            if (notice.phase == NoticePhase.Checked) Note(notice.checkedSummary())
+        }
+        val failures = notices.values.mapNotNull { it.recovery }
+        val recovery = failures.firstOrNull { it == CalendarReadOutcome.PermissionMissing } ?: failures.firstOrNull()
+        CalendarNoticeRecovery(recovery, storage == PlanStorage.Ready) { viewModel.requestNoticeCheck() }
+    }
+    val noticePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onNoticePermission(CalendarAccess.READ.isGranted(context))
+    }
+    LaunchedEffect(noticePermission) {
+        if (noticePermission != ConflictPhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onNoticePermission(true)
+        else {
+            viewModel.noticePermissionPrompted()
+            noticePermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    var manualPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val manualPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onManualPermission(CalendarAccess.READ.isGranted(context), manualPermissionOwner)
+    }
+    LaunchedEffect(manualReview?.id, manualReview?.phase) {
+        if (manualReview?.phase != ConflictPhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onManualPermission(true, manualReview?.id)
+        else {
+            manualPermissionOwner = manualReview?.id
+            viewModel.manualPermissionPrompted()
+            manualPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    var freeTimePermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val freeTimePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onFreeTimePermission(CalendarAccess.READ.isGranted(context), freeTimePermissionOwner)
+    }
+    LaunchedEffect(freeTimeSearch?.id, freeTimeSearch?.phase) {
+        if (freeTimeSearch?.phase != FreeTimePhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onFreeTimePermission(true, freeTimeSearch?.id)
+        else {
+            freeTimePermissionOwner = freeTimeSearch?.id
+            viewModel.freeTimePermissionPrompted()
+            freeTimePermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    val remainingSearch = remainingStudy as? RemainingStudyState.CalendarSearch
+    var remainingPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val remainingPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onRemainingFreeTimePermission(CalendarAccess.READ.isGranted(context), remainingPermissionOwner)
+    }
+    LaunchedEffect(remainingSearch?.id, remainingSearch?.phase) {
+        if (remainingSearch?.phase != FreeTimePhase.RequestingPermission) return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onRemainingFreeTimePermission(true, remainingSearch?.id)
+        else {
+            remainingPermissionOwner = remainingSearch?.id
+            viewModel.remainingFreeTimePermissionPrompted()
+            remainingPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    manualReview?.let { state -> ManualConflictDialog(state,
+        onConfirm = { viewModel.confirmManualExternalOverlap() }, onCancel = viewModel::cancelManualReview,
+        onUnchecked = { viewModel.continueManualUnchecked() }, onRetry = viewModel::retryManualRead) }
     // The answer arrives here also after rotation; access is read again rather than taken from the result.
     val exportPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         viewModel.onCalendarPermission(CalendarAccess.EXPORT.isGranted(context))
     }
     val readPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onCalendarReadPermission(CalendarAccess.READ.isGranted(context))
+    }
+    var conflictPermissionOwner by rememberSaveable { mutableStateOf<Int?>(null) }
+    val conflictPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onConflictPermission(CalendarAccess.READ.isGranted(context), conflictPermissionOwner)
+    }
+    LaunchedEffect(calendarConflict?.id, calendarConflict?.phase) {
+        val review = calendarConflict?.takeIf { it.phase == ConflictPhase.RequestingPermission } ?: return@LaunchedEffect
+        if (CalendarAccess.READ.isGranted(context)) viewModel.onConflictPermission(true, review.id)
+        else if (review.kind != ConflictKind.Export) {
+            if (!viewModel.continueGenerationWithoutCalendar(review.id)) viewModel.onConflictPermission(false, review.id)
+        }
+        else if (viewModel.conflictPermissionPrompted()) {
+            conflictPermissionOwner = review.id
+            conflictPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
+        }
+    }
+    calendarConflict?.let { state ->
+        fun closeReview() {
+            viewModel.cancelCalendarConflict()
+            if (state.kind == ConflictKind.Creation && viewModel.calendarConflict.value == null) nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+        }
+        CalendarConflictDialog(
+            state = state,
+            generation = generationForConflict,
+            onContinue = { viewModel.continueCalendarConflict(it) },
+            onDetails = viewModel::showConflictDetails,
+            onSummary = viewModel::showConflictSummary,
+            onEdit = ::closeReview,
+            onRegenerate = { state.source?.let { viewModel.startRegeneration(it.ordinal) } },
+            regenerationReason = state.source?.let { viewModel.regenerationBlockReason(it.ordinal) },
+            onConfirmReplacement = { viewModel.confirmRegeneration() },
+            onRetryRead = viewModel::retryCalendarConflict,
+            onRetryGeneration = viewModel::retryGeneration,
+            onManual = { id ->
+                val ordinal = state.source?.ordinal
+                viewModel.cancelCalendarConflict()
+                if (ordinal != null && viewModel.selectPlan(ordinal)) {
+                    viewModel.selectFailedSession(id)
+                    if (viewModel.startManualMove()) nav.go(Routes.ADJUST)
+                }
+            },
+            onSettings = { openAppSettings(context) },
+            onClose = ::closeReview,
+        )
     }
     val requestingPermission = calendarExport?.phase == CalendarExportPhase.RequestingPermission
     LaunchedEffect(requestingPermission) {
@@ -113,7 +391,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         if (CalendarAccess.READ.isGranted(context)) viewModel.onCalendarReadPermission(true)
         else if (viewModel.calendarReadPermissionPrompted()) readPermissionLauncher.launch(CalendarAccess.READ.permissions.single())
     }
-    calendarExport?.let { state ->
+    calendarExport?.takeIf { calendarConflict == null }?.let { state ->
         CalendarExportDialog(
             state = state,
             onChoose = viewModel::chooseCalendar,
@@ -125,6 +403,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
     NavHost(navController = nav, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
@@ -132,11 +411,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             HomeScreen(
                 plans = plans,
                 savedPlans = savedPlans,
-                storage = storage,
-                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                storage = planStorage,
+                hasDraft = committedDraft != null,
+                onResume = ::resumeDraft,
+                onCreate = ::createPlan,
                 onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
+                conflictNotices = noticeCounts,
             )
         }
         composable(Routes.PLAN_LIST) {
@@ -145,16 +427,18 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             PlanListScreen(
                 plans = plans,
                 savedPlans = savedPlans,
-                storage = storage,
-                onOpen = { ordinal -> if (viewModel.selectPlan(ordinal)) nav.go(Routes.ADJUST) },
-                onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                storage = planStorage,
+                onOpen = { ordinal -> nav.go(Routes.plan(ordinal)) },
+                onCreate = ::createPlan,
                 onBack = { nav.popBackStack() },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
+                conflictNotices = noticeCounts,
             )
         }
         composable(Routes.ADJUST) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val selection by viewModel.adjustment.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
             if (plan == null) {
@@ -163,23 +447,41 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 PlanAdjustmentScreen(
                     plan = plan,
                     selection = selection,
-                    storage = storage,
+                    storage = planStorage,
                     onSelect = viewModel::selectFailedSession,
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
                     onBack = { nav.popBackStack() },
-                    onCreate = { nav.fromHome(Routes.CERTIFICATION) },
+                    onList = { nav.fromHome(Routes.PLAN_LIST) },
+                    onCreate = ::createPlan,
                     onRetrySave = viewModel::retrySave,
-                    exportCount = exportCount(plan),
-                    exportBlock = exportBlocks.blockFor(plan.ordinal),
-                    onExport = { viewModel.startCalendarExport(plan.ordinal) },
+                    freeTimeSearch = freeTimeSearch,
+                    canSearchFreeTime = viewModel.canSearchFreeTime(),
+                    onSearchFreeTime = { viewModel.startFreeTimeSearch() },
+                    onFreeTimeSelect = viewModel::selectFreeTime,
+                    onFreeTimeConfirm = { viewModel.confirmFreeTime() },
+                    onFreeTimeManual = { viewModel.chooseTimeManually() },
+                    onFreeTimeRetry = viewModel::retryFreeTimeSearch,
+                    onFreeTimeBack = viewModel::cancelFreeTimeSearch,
+                    onManual = { viewModel.startManualMove() },
+                    onManualPick = viewModel::setManualStart,
+                    onManualSubmit = { viewModel.submitManualMove() },
+                    onManualConfirm = { viewModel.confirmOutsideAvailability() },
+                    onManualRevise = viewModel::reviseManualMove,
+                    onManualCancel = viewModel::cancelManualMove,
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    conflictNotices = { selectedNotices(plan.ordinal) },
                 )
             }
         }
         // The top-bar back, like system back, returns home from the first input step.
         composable(Routes.CERTIFICATION) {
-            CertificationScreen(form, viewModel::selectCertification, onBack = { nav.popBackStack() }) { nav.go(Routes.DATES) }
+            BackHandler(onBack = ::leaveCreation)
+            CertificationScreen(form, viewModel::selectCertification, onBack = ::leaveCreation) {
+                viewModel.reachCreationStep(CreationStep.DATES)
+                nav.go(Routes.DATES)
+            }
         }
         composable(Routes.DATES) {
             DatesScreen(
@@ -187,35 +489,52 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onStartChange = viewModel::setPreparationStart,
                 onExamChange = viewModel::setExamDate,
                 onBack = { nav.popBackStack() },
-                onContinue = { nav.go(Routes.LEVEL) },
+                onContinue = { viewModel.reachCreationStep(CreationStep.LEVEL); nav.go(Routes.LEVEL) },
             )
         }
         composable(Routes.LEVEL) {
-            LevelScreen(form, viewModel::setLevel, onBack = { nav.popBackStack() }) { nav.go(Routes.QUESTIONS) }
+            LevelScreen(form, viewModel::setLevel, onBack = { nav.popBackStack() }) {
+                viewModel.showQuestion(0)
+                viewModel.reachCreationStep(CreationStep.QUESTIONS)
+                nav.go(Routes.QUESTIONS)
+            }
         }
         composable(Routes.QUESTIONS) {
             QuestionsScreen(
                 form = form,
                 loadState = questionLoad,
+                index = questionIndex,
+                onShowQuestion = { viewModel.showQuestion(it) },
                 onLoad = viewModel::loadQuestions,
                 onAnswer = viewModel::answer,
                 onExit = { nav.popBackStack(Routes.LEVEL, inclusive = false) },
-                onFinished = { nav.go(Routes.RESULTS) },
+                onFinished = { viewModel.reachCreationStep(CreationStep.RESULTS); nav.go(Routes.RESULTS) },
             )
         }
         composable(Routes.RESULTS) {
-            ResultsScreen(form, onBack = { nav.popBackStack() }) { nav.go(Routes.AVAILABILITY) }
+            ResultsScreen(form, onBack = { nav.popBackStack() }) {
+                viewModel.reachCreationStep(CreationStep.AVAILABILITY)
+                nav.go(Routes.AVAILABILITY)
+            }
         }
         composable(Routes.AVAILABILITY) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
+            val availabilityWeek by viewModel.availabilityWeek.collectAsStateWithLifecycle()
             AvailabilityScreen(
                 form = form,
+                selectedWeek = availabilityWeek,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
                 calendarRead = calendarRead,
-                onEnable = viewModel::setDayEnabled,
-                onStep = viewModel::stepDuration,
-                onStart = viewModel::setDayStart,
+                actions = AvailabilityActions(
+                    onCapture = viewModel::captureWindow,
+                    onApply = viewModel::applyWindow,
+                    onRemove = viewModel::removeWindow,
+                    onShowWeek = { viewModel.showAvailabilityWeek(it) },
+                    onReplaceWeek = { viewModel.replaceWeek(it) },
+                    onClearWeek = { viewModel.clearWeek(it) },
+                    onResetWeek = { viewModel.resetWeek(it) },
+                ),
                 onBack = { nav.popBackStack() },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
                 onReadCalendar = { viewModel.startCalendarRead() },
@@ -225,11 +544,15 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         // Each result destination collects the flow itself, so its first frame sees the
         // current value (a host-level collector could still hold the previous result).
         // A new plan is shown once it is saved; a failed save stays here with its own retry.
+        // The new plan's view replaces the creation steps, so back from it returns home.
         composable(Routes.GENERATE) {
             val generation by viewModel.generation.collectAsStateWithLifecycle()
+            fun showGeneratedPlan() {
+                viewModel.generatedPlan.value?.let { nav.fromHome(Routes.plan(it)) }
+            }
             LaunchedEffect(generation, storage) {
                 when (generation) {
-                    is GenerationState.Success -> if (storage == PlanStorage.Ready) nav.showResult(Routes.PLAN)
+                    is GenerationState.Success -> if (storage == PlanStorage.Ready) showGeneratedPlan()
                     is GenerationState.DemoShortfall -> nav.showResult(Routes.SHORTFALL)
                     else -> Unit
                 }
@@ -240,26 +563,102 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onRetry = viewModel::retryGeneration,
                 onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
                 onRetrySave = viewModel::retrySave,
-                onShowPlan = { nav.showResult(Routes.PLAN) },
+                onShowPlan = ::showGeneratedPlan,
+                onCancelGeneration = {
+                    viewModel.cancelGeneration()
+                    nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+                },
             )
         }
-        // Reads the stored plan, so an adjustment made from the list is shown here too.
-        composable(Routes.PLAN) {
+        // The route names the plan, so every plan view on the stack keeps its own plan; it reads
+        // the stored plan, so an adjustment made above it is shown on return.
+        composable(Routes.PLAN, arguments = listOf(navArgument(Routes.PLAN_ORDINAL) { type = NavType.IntType })) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
-            val plan = plans.firstOrNull { it.ordinal == generatedPlan }
+            val ordinal = entry.arguments?.getInt(Routes.PLAN_ORDINAL)
+            val plan = plans.firstOrNull { it.ordinal == ordinal }
             if (plan == null) {
-                LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
+                LaunchedEffect(Unit) { nav.popBackStack() }
             } else {
                 PlanScreen(
-                    response = plan.current,
-                    isDemo = plan.isDemo,
+                    plan = plan,
+                    generatedPlan = generatedPlan,
                     exportCount = exportCount(plan),
                     exportBlock = exportBlocks.blockFor(plan.ordinal),
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
-                    onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                    onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
+                    regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
+                    onBack = { nav.popBackStack() },
+                    onEditInputs = { nav.resumeCreation(CreationStep.AVAILABILITY) },
+                    onCreate = ::createPlan,
                     onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
-                    onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                    onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    storage = storage,
+                    onRetrySave = viewModel::retrySave,
+                    conflictNotices = { selectedNotices(plan.ordinal) },
+                    onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
+                    remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
+                    initialScheduleId = remainingFocus,
+                    onFocusApplied = { remainingFocus = null },
+                )
+            }
+        }
+        // Re-planning sits above the plan view it was started from, so every exit pops back to it;
+        // a placed result also shows the week of its first new session there.
+        composable(Routes.REMAINING_STUDY) {
+            val current = remainingStudy
+            fun close() {
+                if (viewModel.closeRemainingStudy()) nav.popBackStack()
+            }
+            if (current == null) {
+                LaunchedEffect(Unit) { nav.popBackStack(Routes.REMAINING_STUDY, inclusive = true) }
+            } else {
+                RemainingStudyScreen(current, storage,
+                    onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
+                    canSearchFreeTime = viewModel.canSearchRemainingFreeTime(),
+                    onSearchFreeTime = { viewModel.startRemainingFreeTimeSearch() },
+                    onFreeTimeConfirm = { viewModel.confirmRemainingFreeTime() },
+                    onFreeTimeRetry = viewModel::retryRemainingFreeTimeSearch,
+                    onRetrySave = viewModel::retrySave,
+                    onShowPlan = {
+                        val focus = (current as? RemainingStudyState.Success)?.let { result ->
+                            val ids = result.input.work.instructions.map { it.replacementScheduleId }.toSet()
+                            result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
+                        }
+                        if (viewModel.closeRemainingStudy()) {
+                            remainingFocus = focus
+                            nav.popBackStack()
+                        }
+                    })
+            }
+        }
+        // The report editor sits above the plan or saved-plan screen it was opened from, so closing
+        // it returns to the same week with the adjustment selection untouched. A confirmed save
+        // closes it; popping is idempotent, so a repeated empty frame cannot leave that screen.
+        composable(Routes.CHECK_IN) {
+            val editor by viewModel.checkIn.collectAsStateWithLifecycle()
+            val plans by viewModel.plans.collectAsStateWithLifecycle()
+            val current = editor
+            val plan = current?.let { open -> plans.firstOrNull { it.ordinal == open.planOrdinal } }
+            LaunchedEffect(current?.save) {
+                if (current?.save == CheckInSave.Saved) viewModel.closeCheckIn()
+            }
+            if (current == null || plan == null) {
+                LaunchedEffect(Unit) {
+                    viewModel.closeCheckIn()
+                    nav.popBackStack(Routes.CHECK_IN, inclusive = true)
+                }
+            } else {
+                StudyCheckInScreen(
+                    plan = plan,
+                    editor = current,
+                    onStatus = viewModel::chooseCheckInStatus,
+                    onMinutes = viewModel::setCheckInMinutes,
+                    onSave = { viewModel.saveCheckIn() },
+                    onRetrySave = viewModel::retrySave,
+                    onClose = viewModel::closeCheckIn,
                 )
             }
         }
@@ -297,5 +696,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 }
             }
         }
+    }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(16.dp))
     }
 }

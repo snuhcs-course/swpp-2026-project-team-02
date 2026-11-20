@@ -1,19 +1,45 @@
 package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.domain.ManualMoveRejection
 
 /** User-facing text for the error table in the README. Input advice points to the form's edit action. */
 fun ApiError.userMessage(): String = userMessage(InputAdvice.EditForm)
 
 private fun ApiError.userMessage(advice: InputAdvice): String = when (this) {
     is ApiError.InvalidInput -> invalidInputMessage(message, advice)
-    ApiError.Configuration -> "연결 또는 설정 문제가 있어요. API 주소를 확인해 주세요. (HTTP 404)"
+    is ApiError.ManualMoveRejected -> reason.message()
+    ApiError.Configuration -> "API 주소 또는 서버 경로를 확인해 주세요."
     ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
     ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
-    is ApiError.ServerUnavailable -> "서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요. (HTTP 503)"
-    is ApiError.ServerFailure -> "서버에서 요청을 처리하지 못했어요. 다시 시도해 주세요. (HTTP $status)"
-    ApiError.Connection -> "서버에 연결할 수 없어요. 네트워크와 서버 상태를 확인한 뒤 다시 시도해 주세요."
+    is ApiError.ServerUnavailable -> "서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요."
+    is ApiError.ServerFailure -> "서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요."
+    ApiError.Connection -> "네트워크에 연결되지 않았거나 서버가 응답하지 않아요. 연결 상태를 확인한 뒤 다시 시도해 주세요."
+    is ApiError.NetworkUnavailable -> "네트워크 연결이나 서버 주소를 확인한 뒤 다시 시도해 주세요."
+    is ApiError.RequestTimeout -> "서버 응답이 늦어지고 있어요. 잠시 후 다시 시도해 주세요."
+    is ApiError.ServerUnreachable -> "서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요."
+    is ApiError.UnknownFailure -> UNKNOWN_CAUSE_MESSAGE
     is ApiError.InvalidResponse -> "서버 응답을 읽을 수 없어요. 다시 시도해 주세요."
+}
+
+/** Developer-facing diagnostic shown only after the user opens the details disclosure. */
+fun ApiError.developerMessage(): String = when (this) {
+    is ApiError.InvalidInput -> "HTTP 422\n${message.orEmpty().ifBlank { "No error message in response" }}"
+    is ApiError.ManualMoveRejected -> reason.code
+    ApiError.Configuration -> "HTTP 404: API endpoint or route was not found."
+    ApiError.PlanNotFound -> "HTTP 404: PLAN_NOT_FOUND"
+    ApiError.PlanConflict -> "HTTP 409: PLAN_CONFLICT"
+    is ApiError.ServerUnavailable -> "HTTP 503\n${rawDiagnostic ?: message.orEmpty().ifBlank { "No error message in response" }}"
+    is ApiError.ServerFailure -> "HTTP $status\n${rawDiagnostic ?: "No error message in response"}"
+    ApiError.Connection -> "Connection error (no transport detail was retained)."
+    is ApiError.NetworkUnavailable -> rawDiagnostic.orEmpty().ifBlank { "Network or DNS failure" }
+    is ApiError.RequestTimeout -> rawDiagnostic.orEmpty().ifBlank { "Request timed out" }
+    is ApiError.ServerUnreachable -> rawDiagnostic.orEmpty().ifBlank { "Connection to server failed" }
+    is ApiError.UnknownFailure -> buildString {
+        if (status != null) append("HTTP $status\n")
+        append(rawDiagnostic.orEmpty().ifBlank { "No original error detail was available" })
+    }
+    is ApiError.InvalidResponse -> detail.orEmpty().ifBlank { "Response could not be parsed or validated" }
 }
 
 /**
@@ -22,7 +48,10 @@ private fun ApiError.userMessage(advice: InputAdvice): String = when (this) {
  * or a 200 that could not be read or did not match the request.
  */
 fun ApiError.requiresReload(): Boolean = when (this) {
-    ApiError.PlanConflict, ApiError.Connection, is ApiError.InvalidResponse -> true
+    ApiError.PlanConflict, ApiError.Connection, is ApiError.NetworkUnavailable,
+    is ApiError.RequestTimeout, is ApiError.ServerUnreachable,
+    is ApiError.InvalidResponse -> true
+    is ApiError.UnknownFailure -> status == null || status == 409
     is ApiError.ServerFailure -> status == 409
     else -> false
 }
@@ -35,6 +64,7 @@ fun ApiError.requiresReload(): Boolean = when (this) {
 fun ApiError.adjustmentMessage(): String = when {
     this == ApiError.Configuration -> ROUTE_NOT_FOUND_MESSAGE
     this == ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
+    this is ApiError.UnknownFailure && requiresReload() -> "$UNKNOWN_CAUSE_MESSAGE\n조정 결과가 서버에 반영되었을 수 있어 최신 계획을 불러와 확인해 주세요."
     requiresReload() -> "조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
     else -> userMessage(InputAdvice.NewPlan)
 }
@@ -43,6 +73,19 @@ fun ApiError.adjustmentMessage(): String = when {
 fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있어요. " + when (this) {
     ApiError.Configuration -> ROUTE_NOT_FOUND_MESSAGE
     else -> userMessage(InputAdvice.NewPlan)
+}
+
+/**
+ * Korean wording for a refused chosen time; the chosen time stays so the learner can change it.
+ * Only [ManualMoveRejection.OutsideStudyWindows] may lead to the one-time confirmation.
+ */
+fun ManualMoveRejection.message(): String = when (this) {
+    ManualMoveRejection.InPast -> "이미 지난 시간이에요. 앞으로의 시간을 골라 주세요."
+    ManualMoveRejection.BeforePreparationStart -> "준비 시작일 전이에요. 준비 기간 안에서 날짜를 골라 주세요."
+    ManualMoveRejection.ExamBoundExceeded -> "공부가 시험일을 넘겨요. 더 이른 시간을 골라 주세요."
+    ManualMoveRejection.StudySessionOverlap -> "다른 공부 일정과 겹쳐요. 다른 시간을 골라 주세요."
+    ManualMoveRejection.ExternalEventOverlap -> "캘린더에서 가져온 일정과 겹쳐요. 다른 시간을 골라 주세요."
+    ManualMoveRejection.OutsideStudyWindows -> "설정한 공부 시간 밖이에요. 이번 한 번만 이 시간으로 옮길지 확인해 주세요."
 }
 
 /** Where the user can fix rejected input from the current screen. */
@@ -82,7 +125,7 @@ private fun invalidInputMessage(message: String?, advice: InputAdvice): String {
     if (ASSESSMENT_PROBLEMS.any { it.matches(text) }) {
         return "답안 정보를 서버에서 처리하지 못했어요. 선택한 답이 틀렸다는 뜻은 아니에요."
     }
-    return FALLBACK_MESSAGE
+    return UNKNOWN_CAUSE_MESSAGE
 }
 
 /** Keeps the facts of a current capacity template; unfamiliar detail is dropped, never shown. */
@@ -117,8 +160,8 @@ private const val NOT_ENOUGH_TIME_CODE = "NOT_ENOUGH_TIME:"
 private const val NO_STORED_EXAM_DATE =
     "This saved plan has no stored exam date. Create a new plan before adjusting study sessions."
 private const val NO_STORED_EXAM_DATE_MESSAGE =
-    "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요."
-private const val FALLBACK_MESSAGE = "요청 정보를 확인하지 못했어요."
+    "이 계획에는 시험일 정보가 저장되어 있지 않아요.\n홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요."
+private const val UNKNOWN_CAUSE_MESSAGE = "원인을 알 수 없는 오류가 발생했어요. 세부 메시지를 확인해 주세요."
 private const val PLAN_NOT_FOUND_MESSAGE =
     "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."
 private const val PLAN_CONFLICT_MESSAGE = "서버의 계획이 변경되었어요. 최신 계획을 불러온 뒤 일정을 다시 선택해 주세요."

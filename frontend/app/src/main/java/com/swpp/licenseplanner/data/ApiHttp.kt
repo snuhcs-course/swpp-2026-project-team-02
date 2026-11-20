@@ -1,12 +1,23 @@
 package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.data.model.ApiErrorEnvelope
+import com.swpp.licenseplanner.domain.ManualMoveRejection
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import kotlin.coroutines.resume
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.UnknownHostException
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 /** OkHttp client with timeouts of 10 s connect, 120 s read and whole call (Gemini latency). */
@@ -45,10 +56,42 @@ internal suspend fun OkHttpClient.executeApi(
                 if (response.isSuccessful) HttpOutcome.Ok(body)
                 else HttpOutcome.Failed(errorForStatus(response.code, body, planErrors))
             }
-        } catch (_: IOException) {
-            HttpOutcome.Failed(ApiError.Connection)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            HttpOutcome.Failed(classifyTransportError(error))
         }
     }
+
+/** Async counterpart that cancels the underlying OkHttp call when its coroutine is cancelled. */
+internal suspend fun OkHttpClient.executeApiCancellable(
+    request: Request,
+    io: CoroutineDispatcher = Dispatchers.IO,
+    planErrors: Boolean = false,
+): HttpOutcome = withContext(io) { suspendCancellableCoroutine { continuation ->
+    val call = newCall(request.newBuilder().header("Connection", "close").build())
+    continuation.invokeOnCancellation { call.cancel() }
+    call.enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            continuation.resume(HttpOutcome.Failed(classifyTransportError(e)))
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            val outcome = try {
+                response.outcome(planErrors)
+            } catch (error: Exception) {
+                HttpOutcome.Failed(classifyTransportError(error))
+            }
+            continuation.resume(outcome)
+        }
+    })
+} }
+
+private fun Response.outcome(planErrors: Boolean): HttpOutcome = use {
+    val body = body.string()
+    if (isSuccessful) HttpOutcome.Ok(body)
+    else HttpOutcome.Failed(errorForStatus(code, body, planErrors))
+}
 
 internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = false): ApiError {
     val error = try {
@@ -61,17 +104,38 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
     return when {
         planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
         planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
-        else -> genericError(status, message)
+        planErrors && status == 422 && ManualMoveRejection.ofCode(error?.code) != null ->
+            ApiError.ManualMoveRejected(ManualMoveRejection.ofCode(error?.code)!!)
+        else -> genericError(status, message, body)
     }
 }
 
 private const val PLAN_NOT_FOUND = "PLAN_NOT_FOUND"
 private const val PLAN_CONFLICT = "PLAN_CONFLICT"
 
-private fun genericError(status: Int, message: String?): ApiError =
+private fun genericError(status: Int, message: String?, body: String): ApiError =
     when (status) {
-        422 -> ApiError.InvalidInput(message)
+        408, 504 -> ApiError.RequestTimeout("HTTP $status\n${responseDiagnostic(message, body)}")
+        422 -> ApiError.InvalidInput(message ?: responseDiagnostic(message, body))
         404 -> ApiError.Configuration
-        503 -> ApiError.ServerUnavailable(message)
-        else -> ApiError.ServerFailure(status)
+        503 -> ApiError.ServerUnavailable(message, responseDiagnostic(message, body))
+        in 500..599 -> ApiError.ServerFailure(status, responseDiagnostic(message, body))
+        else -> ApiError.UnknownFailure(status, responseDiagnostic(message, body))
     }
+
+private fun classifyTransportError(error: Exception): ApiError {
+    val diagnostic = "${error.javaClass.name}: ${error.message.orEmpty()}".take(MAX_DIAGNOSTIC_LENGTH)
+    return when (error) {
+        is SocketTimeoutException -> ApiError.RequestTimeout(diagnostic)
+        is UnknownHostException, is NoRouteToHostException -> ApiError.NetworkUnavailable(diagnostic)
+        is ConnectException -> ApiError.ServerUnreachable(diagnostic)
+        is IOException -> ApiError.UnknownFailure(rawDiagnostic = diagnostic)
+        else -> ApiError.UnknownFailure(rawDiagnostic = diagnostic)
+    }
+}
+
+private fun responseDiagnostic(message: String?, body: String): String =
+    (message?.takeIf { it.isNotBlank() } ?: body.trim().ifBlank { "No response body" })
+        .take(MAX_DIAGNOSTIC_LENGTH)
+
+private const val MAX_DIAGNOSTIC_LENGTH = 4_000

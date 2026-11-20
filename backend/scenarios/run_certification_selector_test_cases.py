@@ -1,6 +1,6 @@
 """오프라인 자격증 카탈로그/CLI 테스트 케이스 러너.
 
-외부 API나 Gemini를 호출하지 않습니다. 케이스별 판정 JSON과 실행 요약은
+외부 API나 모델을 호출하지 않습니다. 케이스별 판정 JSON과 실행 요약은
 scenarios/results/certification_selector/ 아래에 기록합니다.
 """
 from __future__ import annotations
