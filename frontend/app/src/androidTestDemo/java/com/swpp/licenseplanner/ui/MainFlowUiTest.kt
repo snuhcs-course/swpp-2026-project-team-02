@@ -2280,7 +2280,10 @@ class MainFlowUiTest {
         if (selectable) {
             show(sessionLabel(session, moved))
         } else {
-            show(session.topic, lazy = true)
+            // A filled plan repeats a topic on later days; days are listed in order, so the first copy is this session's.
+            val topic = hasText(session.topic)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(topic)
+            compose.onAllNodes(topic).onFirst().assertIsDisplayed()
             compose.onAllNodesWithText(time(session)).fetchSemanticsNodes().also { assertTrue(it.isNotEmpty()) }
             show(monthDay(session.start.toLocalDate()), lazy = true)
         }

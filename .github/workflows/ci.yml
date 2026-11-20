@@ -182,7 +182,7 @@ jobs:
         shell: bash
         run: |
           log_file="$GITHUB_WORKSPACE/backend/fixed-live-e2e.log"
-          python backend/test_support/fixed_live_e2e_server.py --host 0.0.0.0 --port 8000 > "$log_file" 2>&1 &
+          python backend/test_support/fixed_live_e2e_server.py --host 0.0.0.0 --port 8000 --now 2026/10/19/00/00 > "$log_file" 2>&1 &
           echo "$!" > "$GITHUB_WORKSPACE/backend/fixed-live-e2e.pid"
           for attempt in {1..20}; do
             if curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/health; then

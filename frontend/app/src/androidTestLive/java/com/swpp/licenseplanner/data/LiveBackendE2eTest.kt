@@ -24,7 +24,7 @@ import java.time.format.DateTimeFormatter
  * The test intentionally targets the checked-in Python fixed fixture through
  * the live-flavor BuildConfig URL. It exercises Android's real OkHttp transport
  * and serializers, then the production Python handler, scheduler, adjustment
- * agent loop with fixed model replies, stored exam deadline, and plan store.
+ * rules, stored exam deadline, and plan store.
  * It submits every loaded onboarding question, as a completed assessment does,
  * which the fixture's default synthetic trace plans by the reviewed topics.
  * CI maps emulator loopback to the fixture with `adb reverse`; no OpenRouter
@@ -36,7 +36,7 @@ class LiveBackendE2eTest {
     private val wire = DateTimeFormatter.ofPattern("yyyy/MM/dd/HH/mm")
 
     @Test
-    fun loadsQuestions_generatesPlan_adjustsIt_andReadsSavedPlanFromFixedBackend() = runBlocking {
+    fun loadsQuestions_generatesFullPlan_movesSessionWithConfirmation_andReadsBack() = runBlocking {
         assertFalse("Run this test with connectedLiveDebugAndroidTest", BuildConfig.DEMO_MODE)
         assertTrue("live API base URL must be configured", BuildConfig.API_BASE_URL.isNotBlank())
 
@@ -73,7 +73,6 @@ class LiveBackendE2eTest {
         val request = StudyPlanRequest(
             certificationId = CERTIFICATION_ID,
             preparationStart = "2026/10/19/18/00",
-            // Later than the fixture trace's sessions so a study session can still move before the exam.
             examDate = "2026/11/30/18/00",
             selfAssessment = "스프레드시트는 익숙하지만 컴퓨터 일반은 처음입니다.",
             assessmentResults = AssessmentResults(CERTIFICATION_ID, results),
@@ -100,7 +99,17 @@ class LiveBackendE2eTest {
         assertEquals(plan.schedules, readBack(adjustments, identity))
 
         val target = plan.schedules.first { it.scheduleId.startsWith("study-") }
-        val adjusted = when (val outcome = adjustments.adjust(AdjustmentInput(request, identity, plan.schedules, target.scheduleId))) {
+        val input = AdjustmentInput(request, identity, plan.schedules, target.scheduleId)
+        val automatic = adjustments.adjust(input)
+        val error = (automatic as? AdjustmentOutcome.Failure)?.error
+        assertTrue("expected no free slot in the filled study windows, got $automatic",
+            error is ApiError.InvalidInput && error.message?.startsWith("NOT_ENOUGH_TIME:") == true)
+        assertEquals(plan.schedules, readBack(adjustments, identity))
+
+        // This Saturday is outside the study windows. The fixture clock is frozen before it.
+        val destination = LocalDateTime.of(2026, 10, 24, 10, 0)
+        val confirmed = input.copy(manualMove = ManualMove(destination, confirmOutsideAvailability = true))
+        val adjusted = when (val outcome = adjustments.adjust(confirmed)) {
             is AdjustmentOutcome.Success -> outcome.response.schedules
             AdjustmentOutcome.DemoNoSlot -> throw AssertionError("live repository returned a demo-only result")
             is AdjustmentOutcome.Failure -> throw AssertionError("adjustment failed: ${outcome.error}")
@@ -108,7 +117,7 @@ class LiveBackendE2eTest {
         val moved = adjusted.single { it.scheduleId == target.scheduleId }
         val start = LocalDateTime.parse(moved.startDate, wire)
         val end = LocalDateTime.parse(moved.endDate, wire)
-        assertTrue("the session must move later", start > LocalDateTime.parse(target.startDate, wire))
+        assertEquals(destination, start)
         assertTrue("the whole session must end by the original exam", !end.isAfter(LocalDateTime.parse(request.examDate, wire)))
         assertEquals(target.topic, moved.topic)
         assertEquals(

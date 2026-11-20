@@ -266,9 +266,10 @@ retry, zero-work and no-fit outcomes).
 source set, so only `connectedLiveDebugAndroidTest` discovers this API test;
 demo instrumentation contacts no server. It loads the 18 onboarding questions, submits all of them
 (some answered 모르겠음), checks that the plan covers the topics of both written
-subjects, adjusts one study session, checks that the whole moved session ends
-by the plan's exam date and that no other row changed, and reads the plan back
-by its exact identity. The backend is
+subjects, verifies that a no-fit automatic move leaves the saved plan intact,
+and confirms a one-time manual move outside the study windows. It checks the
+chosen start, exam deadline and other rows, then reads the plan back by its
+exact identity. The backend is
 `backend/test_support/fixed_live_e2e_server.py`: the real API handler,
 scheduler, adjustment loop and plan store with fixed model replies and no
 OpenRouter access (see `backend/README.md`). Its default case,
@@ -281,7 +282,7 @@ fails rather than skipping. Use a disposable emulator:
 
 ```bash
 # from backend/
-python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000 --now 2026/10/19/00/00
 # in another terminal
 adb -s <test-device> reverse tcp:8000 tcp:8000
 # from frontend/: live API test (shared provider tests require their own device setup)
