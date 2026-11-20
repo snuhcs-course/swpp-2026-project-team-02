@@ -3,18 +3,29 @@
 Android app for the License Planner MVP (Kotlin, Jetpack Compose, single `:app`
 module, minSdk 26, target SDK 36).
 
-**Flow:** home (계획 생성 / 계획 조정). An explicitly saved draft adds 이어서 만들기.
+**Flow:** home (계획 생성 / 내 계획). An explicitly saved draft adds 이어서 만들기.
 Creation: select 컴퓨터활용능력 2급 →
 enter preparation start and exam dates → choose current level and answer example
 questions → set weekday study windows (and optional per-week changes; see
 [Study availability](#study-availability)) → generate a plan → browse it by week and
-day. Adjustment: pick a plan saved on this device → mark one missed
-study session → see the updated plan, or move that session to a time you
-choose (시간 직접 옮기기). See [Plan adjustment](#plan-adjustment).
-Calendar reviews can also lead to a single-session move or a confirmed
+day in its plan view; Back from a new plan returns home. 내 계획 opens
+저장된 계획; choosing a plan opens the same plan view. Adjustment starts there:
+일정 조정하기 → 일정 조정 → mark one missed study session → see the updated
+plan, or move that session to a time you choose (시간 직접 옮기기); Back returns
+to the plan view. See [Plan adjustment](#plan-adjustment).
+Calendar reviews can also lead to a single-session move, opened in 일정 조정
+above the current screen (Back returns there), or a confirmed
 replacement of the selected plan. See [Calendar conflict review](#calendar-conflict-review).
 Both the new plan and a reopened saved plan let you record how each study session
 went (공부 기록하기); see [Study reports](#study-reports).
+
+**Plan view (내 계획).** Below the heading, any demo disclosure, calendar notices
+and save alert, the week picker is followed by that week's totals
+(「공부 일정 N개 · D」: its study sessions and their summed durations, not counting
+existing schedules), the 일별 공부 시간 chart when shown, and all seven dates.
+A date without sessions is a single muted 「일정 없음」 row. The full 계획 요약
+follows Sunday (or the no-rows message) and precedes the unchanged footer
+actions, including calendar export of the whole plan.
 
 Cancelling generation stops the app from waiting; the live server may still finish and store that plan in shared storage, where it is not shown in the app.
 
@@ -239,8 +250,8 @@ The HE branch's `WorkflowRecoveryUiTest` was not merged. In the demo
 `MainFlowUiTest`, `cancellingGenerationKeepsTheSavedDraftAndAllInputs` covers
 cancelling generation, and `overnightAndOverrideGraphsFollowThePlanThroughALaterWeekMove`
 covers the daily chart across weeks and following a moved session to its
-destination. No instrumentation test opens contextual help or the error-details
-retry path. The live HTTP cancellation contract has its own JVM tests.
+destination. The contextual-help UI check opens each screen's corner guidance action.
+No instrumentation test opens the error-details retry path. The live HTTP cancellation contract has its own JVM tests.
 
 The remaining-work flow is covered by
 `remainingReviewCancelAndRepeatedReplanPreserveEffortIdentityAndOtherPlans`
@@ -278,7 +289,7 @@ bash ./gradlew --no-daemon connectedLiveDebugAndroidTest -PlicensePlanner.apiBas
 ```
 
 For manual controlled-live checks on a disposable emulator (current dates,
-availability load/save, manual moves), start the same fixture with
+study-time editing, manual moves), start the same fixture with
 `--planning scripted` and the isolation options described in
 `backend/README.md` (Fixed-response API fixture): `--storage-dir`,
 `--profile-seed`, `--now`, `--request-log` and `--test-control`. It never
@@ -426,7 +437,7 @@ that recognizes only exact backend messages or tightly anchored patterns:
 | A weekday window with a bad time, reversed order, or overlap | The weekday in Korean (for example 수요일) and the problem |
 | `NOT_ENOUGH_TIME:` with a current backend capacity sentence | 시험일 전까지 공부할 시간이 부족해요, plus the usable minutes and topic count. A zero-minute early check gives no topic count. |
 | `NOT_ENOUGH_TIME:` with any other text | The same headline without numbers |
-| Exactly `This saved plan has no stored exam date. Create a new plan before adjusting study sessions.` | 이 계획에는 시험일 정보가 저장되어 있지 않아요. / 목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요. |
+| Exactly `This saved plan has no stored exam date. Create a new plan before adjusting study sessions.` | 이 계획에는 시험일 정보가 저장되어 있지 않아요. / 홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요. |
 | Assessment-results payload checks | 답안 정보를 서버에서 처리하지 못했어요, with a note that it does not mean a wrong answer |
 | Anything else, including blank, technical, or path/trace text | 요청 정보를 확인하지 못했어요 |
 
@@ -440,6 +451,17 @@ selection behave as before. 다시 시도 is always explicit, and none of these
 messages claims that an unchanged retry fixes the input.
 
 ## Plan adjustment
+
+Saved plans open in their plan view. Its **일정 조정하기** opens **일정 조정** for
+the same plan, and Back returns to that plan view at the same week; 목록으로 in a
+recovery state opens 저장된 계획. Select a study session to reveal its automatic
+adjustment and manual-move actions. Remaining-study replanning, calendar export
+and regeneration stay on the plan view; 일정 조정 offers only its 조정 안내 help.
+Calendar conflicts are checked automatically when the app opens or returns to the
+foreground with permission. Successful results show the conflict status and check
+time. **캘린더 권한 허용** appears when access is missing, and **다시 확인** appears
+when the calendar could not be read. Explicit recovery reports its outcome.
+
 
 When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
 「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
@@ -462,7 +484,8 @@ movement available; no unchecked time is suggested. Search results are transient
 Remaining-study no-fit also offers calendar-free placement as described below.
 
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
-and 계획 조정 (a list of the plans generated and saved on this device). The first
+and 내 계획 (저장된 계획: a list of the plans generated and saved on this device,
+each opening its plan view). The first
 creation step (자격증) has a top-bar back arrow that, like system back, returns
 home without sending a request or clearing the inputs. Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
@@ -699,7 +722,7 @@ session. It is enabled only when that plan could also be adjusted
 automatically: a study session (never an external row) is selected, the plan
 is ready (not awaiting reload, not missing, with a live identity), the
 device list is saved, and no request is running. It opens 시간 직접 옮기기
-(top bar 계획 조정) with the session's topic, a 날짜 field and a 시작 시간 field
+(top bar 일정 조정) with the session's topic, a 날짜 field and a 시작 시간 field
 that open the existing date and time pickers, the original duration as
 read-only text (기존 공부 시간 · 60분 (그대로 유지)), and a preview of 기존 일정 and
 옮길 일정 as complete intervals (`11월 29일(일) 23:30–다음 날 00:30`). Fields start
@@ -776,11 +799,12 @@ released APKs behave this way has not been verified from this checkout. A plan
 saved before the server stored exam dates cannot have its study sessions
 moved, even though the app sends a date: the server answers 422 with the fixed
 message in [Validation errors](#validation-errors). The current app then shows
-이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새 계획을 만든 뒤
-다시 조정해 주세요. in the existing error panel. Every plan, its rows, the
-selection and the original inputs stay as they were, and nothing is sent
-automatically. 다시 시도 follows the usual rules and gets the same answer;
-목록으로 and then 새 계획 만들기 is the way forward. Old plans stay viewable.
+이 계획에는 시험일 정보가 저장되어 있지 않아요. 홈의 '계획 생성'에서 새 계획을
+만든 뒤 그 계획에서 조정해 주세요. in the existing error panel. Every plan, its rows,
+the selection and the original inputs stay as they were, and nothing is sent
+automatically. 다시 시도 follows the usual rules and gets the same answer; Back
+returns to the plan view and then the list, and Home's 계획 생성 is the way
+forward. Old plans stay viewable.
 Earlier app releases do not know this message and show the general
 요청 정보를 확인하지 못했어요 instead; only an app update changes that.
 
@@ -820,31 +844,32 @@ that detailed gate remains unverified. See [Verification](#verification).
 
 Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. The snapshot writes v5 and explicitly reads v1–v5 without read-time migration.
 
-The recurring study-time heading is 「언제, 얼마나 공부할 건가요?」. Its note
-says the plan uses all entered time except calendar conflicts. The weekly graph
-note explains that calendar conflicts are deducted from available time.
+The recurring study-time heading is 「매주 기본 시간」. Its note
+says the plan uses all entered time except calendar conflicts. Detailed instructions
+open from the small 안내 action at the top right. Home, saved plans, plan views
+and 일정 조정 use the same corner action.
 
-The study-time screen (공부 시간) shows every window for each weekday.
-시간대 추가 opens a candidate starting at 18:00 for 60 minutes. 수정 or tapping
-a window's minutes opens the same editor for its start and duration. 확인
-applies it, while
-취소 or Back keeps the entered list. Minutes must be a whole number from 1 to
-1439, and invalid text stays available for correction. Start times use the
-existing time picker. A next-day end is labeled 다음 날. 삭제 removes only its
-identified window, promoting the next one when necessary. Removing the final
-window leaves that weekday empty.
+The study-time screen (공부 시간) uses compact weekday rows with outlined
+＋ 시간대 추가 buttons beside the day labels. Each saved window shows its start,
+end and duration together, with a delete action beside it. Tapping the window
+opens its editor. 시간대 추가 opens an unconfirmed 18:00–19:00 window.
+The editor provides start and end time pickers. An earlier end belongs to the
+following day and is labeled 다음 날; equal times disable 확인. 확인 applies
+both times together, while 취소 or Back keeps the entered list. 삭제 removes
+only its identified window, promoting the next one when necessary. Removing
+the final window leaves that weekday empty. Week-specific actions appear side
+by side above the weekday list.
 
 Every base and replacement-week window participates in totals, validation,
-requests, profile saves and creation drafts. Dialog targets retain their
-weekday, week and captured list. Changing week or replacing the profile cannot
-apply a pending edit to another window.
+requests and creation drafts. Dialog targets retain their weekday, week and
+captured list. Changing week cannot apply a pending edit to another window.
 
 **Weeks.** With valid dates, a Monday-based week picker (`N / M주`) covers the
 weeks from the preparation start to the day before the exam; other weeks cannot be
 shown or changed. Each week is one of:
 
-- 기본 시간 (no change for that week): 이번 주는 기본 시간을 사용해요, and the
-  editor below (매주 기본 시간) changes the recurring base for every such week.
+- 기본 시간 (no change for that week): 매주 기본 시간 changes the recurring
+  base for every such week.
   이번 주 시간 바꾸기 gives the week its own copy of the base, with every
   window of each day; 이번 주 공부 안 함 makes it an empty week.
 - Replaced (이번 주 공부 시간): the editor changes only that week. 이번 주 공부 안 함
@@ -869,29 +894,13 @@ box (공부하는 요일, 공부 시간) counts every window of the shown week.
 into the next day's window, a Sunday spill into Monday, or a replaced week's
 boundary with its neighbours, switch the heading to 공부 시간을 확인해 주세요 and
 show which days and times overlap (for example 월요일과 화요일 공부 시간이 겹쳐요 /
-화요일 00:15–00:30이 겹쳐요). Both windows stay as entered, and 계획 만들기 and
-서버에 공부 시간 저장 stay disabled until it is fixed. Ending exactly when the next
-window starts is allowed.
+화요일 00:15–00:30이 겹쳐요). Both windows stay as entered, and 계획 만들기
+stays disabled until it is fixed. Ending exactly when the next window starts
+is allowed.
 
-**Server study time (live only).** The live build adds 서버 공부 시간 with the
-notice 서버의 공용 공부 시간이에요. 다른 사용자가 바꿀 수 있고, 이미 만든 계획은
-바뀌지 않아요. The profile is a single shared, unauthenticated record on the
-server; the last successful save wins.
-
-- 저장된 공부 시간 불러오기 sends `GET /availability` and shows a preview
-  (기본 시간, 별도 설정, 추가 공부 시간). The form changes only after 불러온 시간 적용,
-  which replaces the base and all week changes with the loaded ones, every window
-  included. 취소 or Back keeps the current draft.
-- 서버에 공부 시간 저장 sends the complete current base and every week change with
-  `PUT /availability` (an empty override map when there are none). The response
-  must match what was sent.
-- A failed load or save shows 공부 시간을 불러오지/저장하지 못했어요 with the current
-  draft summary; the draft and all its windows are unchanged. 다시 시도 repeats the
-  action once on tap; 취소 returns to the editor. Nothing is retried automatically.
-
-Generation, navigation, adjustment and restored plans never load or save the
-profile. The demo build has no server study time: these actions are absent and
-study times stay on the device.
+The study-time screen edits availability for the current plan. Generation uses
+the entered hours, and each saved plan retains its original availability for
+adjustments. Saved creation drafts retain the entered hours on the device.
 
 ## Calendar import
 
@@ -993,7 +1002,7 @@ Export checks all selected-plan current study sessions across every week after
 calendar selection. Conflicts offer 겹치지 않게 다시 만들기, 하나씩 확인 and
 겹쳐도 내보내기. Regeneration leaves export, asks separate replacement consent,
 and never resumes copying automatically. Per-session review can open the existing
-eligible manual editor and sends nothing on opening. Export anyway proceeds to
+eligible manual editor in 일정 조정 above the plan view and sends nothing on opening. Export anyway proceeds to
 the full destination/count/timezone/duplicate confirmation. Its final tap checks
 afresh before the first insert. Changed data clears override/unchecked consent and
 requires new review. An unavailable query permits explicit unchecked continuation
@@ -1007,10 +1016,12 @@ allows a timing-only check of upcoming and still-running study intervals. Identi
 plan ranges share one query; active operations defer it. Rotation keeps the same
 check. Foreground entry never requests permission, calls the backend or saves.
 Home and the saved-plan list show plan-scoped counts; plan screens show generic
-external intervals. Missing permission offers 캘린더 시간 확인; failed/revoked reads
-label older results as stale, never clear. There is no background monitoring.
+external intervals. Missing permission offers **캘린더 권한 허용** with instructions.
+A failed read offers **다시 확인**. Both states label older results as stale.
+There is no background monitoring.
 
-시간 옮기기 opens the existing editor without sending. 그대로 두기 saves a local
+시간 옮기기 opens the existing editor in 일정 조정, on top of the screen the notice
+was on, without sending; leaving 일정 조정 returns to that screen. 그대로 두기 saves a local
 acknowledgment for the displayed current study interval and exact occurrences;
 it does not move the study or edit a calendar. The persisted values are SHA-256
 digests scoped to plan ordinal, study ID, exact study interval and the existing
@@ -1078,8 +1089,8 @@ creates a calendar or account.
   appear on other devices or in Google Calendar on the web depends on that
   calendar account's sync, which the app does not check.
 
-**Steps.** On a generated plan (내 계획) the action sits below the weeks; on a
-plan opened from 계획 조정 it sits beside the adjustment actions. It counts the
+**Steps.** On the plan view (내 계획) of a new or reopened plan, the action sits
+below the weeks. It counts the
 plan's current study sessions across all weeks. Tap 캘린더에 N개 일정 추가 →
 allow calendar access if asked → choose a calendar (equal names show the
 account) → 다음 → check the plan number, calendar, count and 한국 시간
@@ -1189,9 +1200,10 @@ schedule or timing from an earlier run.
    that the app stays open. In the plan, every study session must lie inside a
    chosen weekday window, after the preparation start and before the exam, and
    must not overlap another session or an imported calendar event.
-2. **Reopen.** Force-stop and relaunch the app, open 계획 조정, and confirm the
+2. **Reopen.** Force-stop and relaunch the app, open 내 계획, and confirm the
    plan is listed under its number with the same rows.
-3. **Adjust.** Choose one study session and adjust it. On success the view
+3. **Adjust.** Open the plan, tap 일정 조정하기, choose one study session and
+   adjust it. On success the view
    jumps to the moved session's week; the moved session keeps its topic and
    duration, lies inside the plan's original windows, ends by the exam date and
    overlaps nothing, and every other row is unchanged. Relaunch the app and
@@ -1271,7 +1283,7 @@ adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
 ```
 
 In the app, create two plans (A, then B with different windows), open A from
-계획 조정, choose a study session and adjust it. Every request, response
+내 계획, tap 일정 조정하기, choose a study session and adjust it. Every request, response
 status and scripted event (for example `saved`, `not-saved`,
 `changed-elsewhere`) is appended to `requests.jsonl` in the output directory;
 count POSTs and GETs there, since a screenshot cannot show that nothing was
@@ -1293,10 +1305,11 @@ between actions (each tap within about 5 s of the previous result):
   away; both POSTs return 200. Choose an exam date at least a week after the
   chosen session, or the simulated move is refused with `NOT_ENOUGH_TIME`.
 - `legacy-plan`: create A and B, open A and adjust a study session. The error
-  panel shows 이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새
-  계획을 만든 뒤 다시 조정해 주세요.; A and B keep their rows, the session stays
-  selected, and `requests.jsonl` shows a single POST with no automatic GET or
-  generation. 목록으로 and then 새 계획 만들기 continue from there.
+  panel shows 이 계획에는 시험일 정보가 저장되어 있지 않아요. 홈의 '계획 생성'에서
+  새 계획을 만든 뒤 그 계획에서 조정해 주세요.; A and B keep their rows, the session
+  stays selected, and `requests.jsonl` shows a single POST with no automatic GET or
+  generation. The failure footer offers 다시 시도 and 시간 직접 옮기기 only; Back
+  returns to A's plan view, which shows no recovery alert, and then to the list.
 
 These checks show how the app handles the scripted responses. They are not
 evidence about the real backend or model.
@@ -1338,8 +1351,8 @@ time. Live adjustment results mean nothing until the backend dependency in
 
 ## Study reports
 
-Every study session of the new plan (내 계획) and of a reopened saved plan
-(실패한 일정 선택) shows its report, or 아직 기록하지 않았어요, with a separate
+Every study session in the plan view (내 계획) of a new or reopened plan, and
+in 일정 조정, shows its report, or 아직 기록하지 않았어요, with a separate
 공부 기록하기 / 기록 수정하기 action under the row. Existing calendar rows have no
 action. The action does not select the session for adjustment, and closing the
 editor returns to the same week with any selection unchanged. It waits while a
@@ -1373,14 +1386,16 @@ skip (이미 아는 내용이에요) action and no history of earlier reports.
 
 ## Remaining study re-planning
 
-Generated and reopened plans offer **남은 공부 다시 계획하기** independently
+The plan view of a generated or reopened plan offers **남은 공부 다시 계획하기**
+(일정 조정 does not) independently
 of single-session movement and reporting. Its scrollable review identifies the
 selected plan, each current study row's status and planned/actual/remaining
 minutes, and the total. Cancel writes nothing. A zero total shows
 다시 배치할 남은 공부가 없어요 with no request or save. Explicit confirmation
 (**남은 공부 다시 배치하기**) submits exactly one batch. The result lists the
-accepted session count/minutes and complete dated times; 계획 보기 opens the first
-affected week. A first-fit failure preserves the original plan and says the
+accepted session count/minutes and complete dated times; 계획 보기 returns to
+the plan view it started from, at the first affected week. Back, 취소 and
+계획으로 돌아가기 return to that plan view too. A first-fit failure preserves the original plan and says the
 current placement rules could not fit the whole batch.
 
 The live request uses `POST /schedules/adjust` with `mode: remaining`,
@@ -1419,7 +1434,8 @@ the same destination rules locally. The server validates the supplied times and
 does not search. A server that rejects the optional item fields shows
 「서버 업데이트가 필요해요」 without retry. Movement-code rejections offer
 「다시 찾기」; uncertain outcomes still require reload. Denied/unavailable/no-time
-states preserve the plan and reports and offer returning to move rows individually.
+states preserve the plan and reports and offer returning to the plan view to move
+rows individually with 일정 조정하기 and 시간 직접 옮기기.
 Calendar timing and identities stay on the device; only confirmed starts are sent.
 
 Before a live POST the complete v5 collection, all reports/keeps and the independent

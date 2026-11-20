@@ -260,8 +260,8 @@ kept; an explicit `{}` removes them. The file is written atomically in duration
 form (no `end`) only on a successful PUT; reads never rewrite an older start/end
 file, and a rejected PUT leaves the file byte-identical. Whoever saves last
 wins; existing plans keep their own snapshots. The Android app sends availability
-with generation, uses the selected plan's original context for adjustment, and
-reads or saves the profile only when the learner asks to. Android calls the
+with generation and uses the selected plan's original context for adjustment.
+The shared-profile endpoints are available to direct API clients. Android calls the
 adjustment endpoint and explicitly reloads a retained plan through the plan-list
 endpoint as described below; it does not import the server's plans into its list.
 
