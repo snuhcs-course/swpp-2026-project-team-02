@@ -360,6 +360,20 @@ class CalendarKeepViewModelTest {
         assertEquals(source.plans[0].checkIns, store.snapshot.plans[0].checkIns)
     }
 
+    @Test fun retriedManualReadWithoutOverlapMovesWithoutExternalConsent() = runTest(dispatcher) {
+        val reader = Reader().apply { outcome = CalendarReadOutcome.Unavailable }
+        val vm = model(Store(source), reader)
+        manual(vm)
+        assertEquals(ConflictPhase.Unchecked, vm.manualReview.value!!.phase)
+        reader.outcome = CalendarReadOutcome.Loaded(CalendarBusySnapshot(emptyList(), 0, 0))
+        vm.retryManualRead()
+        vm.onManualPermission(true)
+        advanceUntilIdle()
+        assertNull(vm.manualReview.value)
+        assertEquals(1, inputs.size)
+        assertFalse(inputs.single().manualMove!!.confirmExternalOverlap)
+    }
+
     @Test fun uncheckedManualWithRetainedConflictStillNeedsExternalConsentAndCancellationSendsNothing() = runTest(dispatcher) {
         val external = ScheduleRow("external-1", "2031/03/04/14/00", "2031/03/04/15/00", "")
         val retained = source.copy(plans = listOf(plan(1).copy(current = StudyPlanResponse(listOf(row, external))), plan(2)))

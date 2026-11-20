@@ -1496,7 +1496,8 @@ class PlanFormViewModel(
                 externalConsent = review.externalConsent && !changed,
                 unchecked = review.unchecked && !changed)
             _manualReview.value = updated
-            if (changed || (snapshot == null && !updated.unchecked)) return@launch
+            // A changed read clears consent above, so it stops below only when something overlaps.
+            if (snapshot == null && !updated.unchecked) return@launch
             val overlap = conflicts.matches.isNotEmpty() || review.retained.isNotEmpty()
             if (overlap && !updated.externalConsent) return@launch
             if (!final) { readManual(updated, final = true); return@launch }
