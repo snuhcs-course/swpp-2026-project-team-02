@@ -1,126 +1,89 @@
-# License Planner
+# License Planner - Iteration 4 Demo
 
-This repository is organized into separate application areas:
+License Planner helps a learner prepare for the **Computer Specialist Level 2 written exam (컴퓨터활용능력 2급 필기)**. The learner answers 18 example questions, enters when they can study, and gets a day-by-day plan that gives weaker topics more time and avoids events already in the phone calendar. The plan can be copied to the phone calendar, studied sessions can be recorded, and missed work can be moved or re-planned.
 
-```text
-project/
-├── frontend/   # Android app (Kotlin, Jetpack Compose)
-├── backend/    # Existing Python API, agents, planners, tests, and docs
-└── README.md   # Repository overview and team setup
-```
+## Demo version and video
 
-## Documentation
+- Branch: `iteration-4-demo`, created from tag `iter4-uat-20261115` (commit `54db19b`), the build frozen for UAT on November 15, 2026.
+- [Demo video](https://drive.google.com/file/d/1D53hDg2WHme4H6wOyElodOEi3QqqvXOw/view?usp=sharing) (about 4 minutes, edited from a full recording): physical Android phone, public server.
+- [Signed APK, Prod APK run 43716265710](https://github.com/snuhcs-course/swpp-2026-project-team-02/actions/runs/43716265710): download the `live-release-apk-54db19b96c457ee2c04870a8c08601ed1d5de4a7` artifact. Version 0.1.0, SHA-256 `9b0f532bae1772d6b27a9592867bd57feebc1f990e3d1e90d8dc192db356f418`.
+- Public API: `http://swpp26t02.147-46-242-174.sslip.io/api/v1` (deployed from `54db19b` for UAT).
 
-| Guide | Covers |
-| --- | --- |
-| This README | Product scope, quick start, guide index and open decisions |
-| [`backend/README.md`](backend/README.md) | Backend setup and configuration, offline checks and coverage, scenario runners, the fixed-response fixture and live model checks |
-| [`backend/DEVELOPER_GUIDE.md`](backend/DEVELOPER_GUIDE.md) | Internal architecture, validation, scheduling and storage rules, question-bank maintenance |
-| [`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md) | HTTP contract used by the Android app: payloads, errors, deadlines and reload recovery |
-| [`frontend/README.md`](frontend/README.md) | Android build, flavors and signing, app behavior, calendar permissions and verification procedures |
-| [`docs/testing-workflow.md`](docs/testing-workflow.md) | Local affected checks, task-specific filters, handoff evidence, review reuse and a bounded daemon comparison |
-| [`deploy/README.md`](deploy/README.md) | Server topology, installed-state inspection, updates and backups, release APK and operational checks |
+## Run the signed demo
 
-Package READMEs (for example `backend/schedule_adjuster/README.md`) describe
-their own command-line tools.
+1. Download and extract the APK from the run above (a GitHub login is required to download Actions artifacts).
+2. Install `app-live-release.apk` on Android 8.0 (API 26) or later. Allow installation from this source if Android asks. It has the same signing certificate as earlier release APKs, so it installs as an update; a debug build must be removed first.
+3. Open `http://swpp26t02.147-46-242-174.sslip.io/api/v1/health` in a browser and check `{"status":"ok"}`. If the network blocks it, switch to mobile data.
+4. Open the app and follow the scenario below.
 
-## Backend
+Plans saved by earlier releases have no stored exam date: they can be viewed, but to move their sessions create a new plan.
 
-The existing backend project is in [`backend/`](backend/). Backend commands and
-paths in its documentation are relative to that directory. Start by reading
-[`backend/README.md`](backend/README.md) and
-[`backend/FRONTEND_INTEGRATION_GUIDE.md`](backend/FRONTEND_INTEGRATION_GUIDE.md).
+## Development environment and local run
 
-To run the API locally:
+- Python 3.14 (3.13 also runs the tests); the backend uses only the standard library.
+- Android Studio, SDK platform 36, the checked-in Gradle wrapper, Java 17 (`frontend/gradle/gradle-daemon-jvm.properties`).
+- Android emulator or device: minimum SDK 26, target SDK 36.
+- Live generation and automatic adjustment call OpenRouter model `openai/gpt-6-luna` from the backend. Put `OPENROUTER_API_KEY` only in the backend environment or `backend/.env` (never in the app or Git). Manual moves and remaining-work re-planning do not call the model.
 
-```powershell
+```bash
+git clone --branch iteration-4-demo https://github.com/snuhcs-course/swpp-2026-project-team-02.git
+cd swpp-2026-project-team-02
+
+# backend
 cd backend
-python api_server.py
+python api_server.py            # http://127.0.0.1:8000/api/v1
+
+# Android, in another terminal (emulator reaches the host at 10.0.2.2)
+cd frontend
+./gradlew assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://10.0.2.2:8000/api/v1
+adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
 ```
 
-The API defaults to `http://127.0.0.1:8000/api/v1`. Study-plan generation and
-automatic schedule adjustment call OpenRouter model `openai/gpt-6-luna`.
-Manual moves and the remaining-work batch use deterministic server placement. Configure
-`OPENROUTER_API_KEY` in the backend process environment or `backend/.env`. Never
-put API keys in frontend files. `.env` files and local
-availability profiles are excluded from Git.
+Without a backend or model, `./gradlew installDemoDebug` installs the demo flavor. It is labeled as a demo and plans on the device with a fixed rule.
 
-## Frontend (Android)
+Tests (from `backend/`): `python -m unittest discover -s tests/license_planner_tests`, `.../schedule_adjuster_tests`, `.../api_tests`. On November 20 the UAT build ran 382 backend tests (381 passed, 1 skipped). Android: `./gradlew testDemoDebugUnitTest testLiveDebugUnitTest`. Details are in [frontend/README.md](frontend/README.md), [backend/README.md](backend/README.md) and the [Testing Documentation](https://github.com/snuhcs-course/swpp-2026-project-team-02/wiki/Testing-Documentation).
 
-[`frontend/`](frontend/) contains the Android app for the MVP, covering
-preparation for the 컴퓨터활용능력 2급 written exam (필기). The default `demo`
-build runs without a backend. The `live` build connects to this checkout's
-backend at `http://10.0.2.2:8000/api/v1` from the Android Emulator. The backend
-provides the question-bank and locally-scored assessment API contract used by
-the app.
+## Demo scenario
 
-The app supports multiple daily study windows, per-week changes, device-local
-creation drafts and study reports, and viewing or moving saved study sessions.
-It can read calendar conflicts and copy study sessions to a chosen device
-calendar. Build and verification instructions are in
-[`frontend/README.md`](frontend/README.md#checks). The
-[Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)
-track the separate HE and topic-budget branches and the remaining-work rollout.
+| Input | Value |
+| --- | --- |
+| Certification | 컴퓨터활용능력 2급 필기 |
+| Preparation start / exam | November 16 / December 7, 2026 (if these are in the past, move both by the same number of weeks) |
+| Experience | 기본 기능은 알아요 |
+| Answers (A–D = 1st–4th choice) | 1 B, 2 B, 3 모르겠음, 4 B, 5 C, 6 B, 7 D, 8 A, 9 C, 10 B, 11 D, 12 A, 13 C, 14 B, 15 D, 16 A, 17 C, 18 B |
+| Study times | Mon/Wed/Fri 19:00 for 1 h 30 min; Sat 10:00 for 2 h |
 
-## Continuous integration
+1. **Diagnosis:** 18 questions one at a time with 모르겠음. Result: 16 of 18 correct; 스프레드시트 기본 4/4, 함수와 데이터 관리 1/2, 차트와 분석 0/1, other five topics full.
+2. **Calendar check:** on 계획 만들기 the app asks for calendar permission, then summarizes events that overlap the study times and offers 겹치지 않게 계획 만들기.
+3. **Plan:** weekly and daily sessions inside the study times, around calendar events, with a 계획 요약 and a weekly available/assigned time graph. 차트와 분석 (weakest) gets the most time.
+4. **Calendar export:** 캘린더에 N개 일정 추가 copies the sessions to a chosen phone calendar.
+5. **Saved plan and adjustment:** reopen the plan from 계획 조정 after restarting the app, select a missed session and adjust it; the moved session is highlighted and stays before the exam.
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and
-pushes to `main`, on manual dispatch, and daily at 00:00 UTC. It runs the three
-offline backend unit suites in `backend/tests/` with coverage (not the scenario
-runners in `backend/scenarios/`) plus unit tests for the evidence validator in
-`scripts/tests/`, and the Android unit tests, request contract check, coverage,
-debug APK builds, and lint. Only after both of those jobs succeed, a third job
-starts the fixed-response backend fixture and runs the demo Compose UI suite
-and the live API instrumentation suite on one API 35 emulator, using an emulator
-action pinned to a full commit SHA. Both suites are attempted and either failure
-fails the job; separate reports and UI diagnostics are retained. Commands and
-report locations are in
-[`backend/README.md`](backend/README.md#checks-and-coverage) and
-[`frontend/README.md`](frontend/README.md#checks). CI uses no OpenRouter key or
-deployed server. Demo UI tests cover screen interactions with local demo
-behavior; live instrumentation covers controlled API integration. Neither
-verifies live model planning, production activity wiring or physical devices.
+## What the demo shows
 
-## Deployment
+**Features implemented**
 
-The public API is `http://swpp26t02.147-46-242-174.sslip.io/api/v1`, served by
-the shared CPU server through Nginx. Its systemd and Nginx templates, how to
-inspect the installed revision before an update, plan backups, the read-only
-public check and the signed release APK are documented in
-[`deploy/README.md`](deploy/README.md). This checkout does not establish which
-revision or configuration the server is running.
+| Area | Feature |
+| --- | --- |
+| Diagnosis | 18 authored questions covering both subjects and eight topics; local scoring; 모르겠음 option. |
+| Study times | Several windows per weekday, windows past midnight, week-specific changes, saved drafts (이어서 만들기). |
+| Plan generation | Model proposes per-date minutes; code splits them by diagnostic score and places contiguous topic blocks (P10). |
+| Calendar | Reads busy times (no titles) with permission, conflict review before generation, conflict notices on app open, one-way export. |
+| After generation | Study reports (done / partly / missed + minutes, stored on the device), automatic adjustment of a missed session, manual move to any valid time, re-planning all remaining work at once. |
+| Feedback | Contextual help on each screen, cause-specific error messages with details, Back confirmation during generation. |
 
-## Open decisions
+**Major progress in Iteration 4**
 
-- **Practical exam (실기):** whether and how to support it. The app currently
-  plans for the written exam only.
-- **Question bank:** onboarding presents a configured selection of 18 authored
-  example questions, nine each for 컴퓨터 일반 and 스프레드시트 일반, sampling
-  every major section of the KCCI 2024–2026 written syllabus with one to four
-  items per section. The stored collection may grow beyond that selection
-  without changing onboarding; it currently holds exactly those 18 items. They
-  are not an official or validated assessment. Their internal `reviewed` flags
-  were prepared for PR review; the second (teammate) content review is still
-  pending. The official comparison with the 2027–2029 syllabus is done: the bank
-  stays mapped to 2024–2026 (`syllabus_version: "2024-2026"`, IDs 1–18
-  unchanged), and updating it is planned as a separate change in 2027. Carried
-  forward are the Windows 10 basis of IDs 6/8 (their prompts are now
-  version-neutral, without newer-cycle remapping), the section rename for IDs
-  9–12, the remapping of ID 10, and missing AI basics, AI ethics and ICT
-  convergence items. From 2027-01-01 the bank is behind the current syllabus
-  until that update lands. Deeper coverage, follow-up assessment questions,
-  practical workbook tasks and timed mock exams remain later decisions. See
-  [question-bank maintenance](backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
-- **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
-  topic basis and recovery advice in `error.message`; the live app presents it in
-  Korean. A richer structured shortfall schema remains an open decision.
-- **How much available time a plan uses:** the week-one branch uses the model's
-  proposed workload and date totals, leaving spare time available for adjustments.
-  An earlier evaluation observed about 60% median use. Review
-  rounds from the HE branch were not merged. User testing still needs to establish whether
-  learners mean the entered time as a limit or a target and how they prefer to
-  distribute work across weekdays.
-- **Summary labeling:** generation summaries are composed by server code from
-  accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
-- **Deployment:** authentication, per-user storage and plan retention remain
-  open; the public server and release APK use the shared HTTP endpoint above.
+- **Weak-topic priority fixed (P10):** the frozen AI evaluation went from FAIL (weakest topic first in 48.4% of plans, Iteration 3) to PASS on all eight criteria (100%, 126/126 valid plans, p95 8.2 s).
+- **One integrated build:** calendar reading, conflict review and export now ship with planning and adjustment; physical-device test passed on November 12.
+- **New flows:** study reports, manual moves, remaining-work re-planning, flexible study windows and drafts.
+- **Heuristic Evaluation fixes:** HE-01 help, HE-09/23 Back during generation, HE-11 adjustment destination, HE-12 error causes, HE-13 available vs. assigned time.
+- **UAT cycle 1 (November 16):** 159 of 163 executed steps passed with three testers; follow-ups are per-topic totals in the summary, a first-attempt generation failure, one missing notice and the time picker.
+
+## Known limitations
+
+- Android only; written exam only.
+- About a third of sessions are shorter than 15 minutes, and plans use a median 31% of the entered time; the model still chooses the total workload.
+- The 18 questions are authored examples, not a validated test.
+- The server is shared over HTTP with no accounts; saved plans and busy times on it are not private.
+- Exporting the same plan again creates duplicate calendar copies (the app warns first).
