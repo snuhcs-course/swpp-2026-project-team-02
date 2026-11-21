@@ -158,4 +158,70 @@ class PlanGroupingTest {
         assertEquals(4 to 110L, before.studySessionCount to before.studyMinutes)
         assertEquals(4 to 155L, after.studySessionCount to after.studyMinutes)
     }
+
+    @Test
+    fun topicTotalsSpanWeeksFollowEarliestStartAndExcludeExternalRows() {
+        val totals = PlanGrouping.topicTotals(listOf(
+            row("study-3", "2026/10/13/18/00", "2026/10/13/18/45", "스프레드시트 기본"),
+            row("study-2", "2026/10/06/19/00", "2026/10/06/20/00", "함수와 데이터 관리"),
+            row("external-1", "2026/10/06/09/00", "2026/10/06/09/30", ""),
+            row("study-1", "2026/10/06/18/00", "2026/10/06/18/30", "스프레드시트 기본"),
+        ))
+        assertEquals(
+            listOf(TopicTotal("스프레드시트 기본", 75L), TopicTotal("함수와 데이터 관리", 60L)),
+            totals,
+        )
+        assertEquals("2시간 15분", PlanGrouping.formatDuration(totals.sumOf { it.minutes }))
+        assertEquals("1시간 15분", PlanGrouping.formatDuration(totals[0].minutes))
+        assertEquals("1시간", PlanGrouping.formatDuration(totals[1].minutes))
+    }
+
+    @Test
+    fun topicTotalsFollowChangedSchedules() {
+        val before = listOf(
+            row("study-1", "2026/10/06/18/00", "2026/10/06/18/30", "스프레드시트 기본"),
+            row("study-2", "2026/10/07/18/00", "2026/10/07/19/00", "함수와 데이터 관리"),
+        )
+        val moved = listOf(
+            row("study-1", "2026/10/08/18/00", "2026/10/08/18/30", "스프레드시트 기본"),
+            row("study-2", "2026/10/07/18/00", "2026/10/07/18/45", "함수와 데이터 관리"),
+        )
+        assertEquals(listOf("스프레드시트 기본", "함수와 데이터 관리"), PlanGrouping.topicTotals(before).map { it.topic })
+        assertEquals(
+            listOf(TopicTotal("함수와 데이터 관리", 45L), TopicTotal("스프레드시트 기본", 30L)),
+            PlanGrouping.topicTotals(moved),
+        )
+    }
+
+    @Test
+    fun noTopicTotalsWithoutStudyRows() {
+        assertTrue(PlanGrouping.topicTotals(emptyList()).isEmpty())
+        assertTrue(PlanGrouping.topicTotals(listOf(row("external-1", "2026/10/06/09/00", "2026/10/06/10/00", "회의"))).isEmpty())
+    }
+
+    @Test
+    fun topicsDifferingOnlyByWhitespaceStaySeparate() {
+        val totals = PlanGrouping.topicTotals(listOf(
+            row("study-1", "2026/10/06/18/00", "2026/10/06/18/30", "함수와 데이터 관리"),
+            row("study-2", "2026/10/07/18/00", "2026/10/07/18/20", "함수와 데이터 관리 "),
+            row("study-3", "2026/10/08/18/00", "2026/10/08/18/10", "함수와  데이터 관리"),
+        ))
+        assertEquals(
+            listOf(
+                TopicTotal("함수와 데이터 관리", 30L),
+                TopicTotal("함수와 데이터 관리 ", 20L),
+                TopicTotal("함수와  데이터 관리", 10L),
+            ),
+            totals,
+        )
+    }
+
+    @Test
+    fun aRowSpanningMidnightCountsOnceWithItsFullDuration() {
+        val totals = PlanGrouping.topicTotals(listOf(
+            row("study-1", "2026/10/06/23/30", "2026/10/07/00/40", "스프레드시트 기본"),
+            row("study-2", "2026/10/07/18/00", "2026/10/07/18/30", "스프레드시트 기본"),
+        ))
+        assertEquals(listOf(TopicTotal("스프레드시트 기본", 100L)), totals)
+    }
 }

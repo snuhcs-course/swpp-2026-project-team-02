@@ -359,12 +359,11 @@ fun PlanAdjustmentScreen(
                         if (canSearchFreeTime) " 캘린더에서 비어 있는 시간을 찾아 이번 한 번만 옮길 수도 있어요." else "",
                 )
                 state == AdjustmentState.Reloaded -> Unit
-                else -> {
-                    if (summary != null) PlanSummary(summary)
-                    Note("시간을 바꿀 공부 일정을 선택해 주세요.")
-                }
+                else -> if (summary != null) PlanSummary(summary)
             }
         }
+        // Whenever study rows can be chosen, explain that existing calendar rows cannot be.
+        if (mode == AdjustmentMode.Adjustable && !loading) Note(SELECTION_INSTRUCTION)
         if (week != null) {
             WeekNavigator(
                 week = week,
@@ -411,6 +410,8 @@ fun PlanAdjustmentScreen(
         }
     }
 }
+
+internal const val SELECTION_INSTRUCTION = "놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요."
 
 /** The immutable inputs from plan creation that are reused when the plan is adjusted. */
 @Composable

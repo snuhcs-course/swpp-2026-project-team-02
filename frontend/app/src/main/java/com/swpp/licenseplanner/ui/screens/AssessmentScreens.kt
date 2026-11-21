@@ -1,19 +1,34 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.LocalTopics
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.QuestionResult
 import com.swpp.licenseplanner.domain.Scoring
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.UNKNOWN_LABEL
@@ -30,8 +45,13 @@ import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.ProgressTrack
 import com.swpp.licenseplanner.ui.components.SecondaryButton
 import com.swpp.licenseplanner.ui.theme.Ink
+import com.swpp.licenseplanner.ui.theme.CorrectGreen
+import com.swpp.licenseplanner.ui.theme.Divider
 import com.swpp.licenseplanner.ui.theme.InkBody
+import com.swpp.licenseplanner.ui.theme.InkSecondary
 import com.swpp.licenseplanner.ui.theme.MonoStyles
+import com.swpp.licenseplanner.ui.theme.Outline
+import com.swpp.licenseplanner.ui.theme.WrongRed
 import com.swpp.licenseplanner.ui.userMessage
 
 /**
@@ -143,5 +163,62 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
             }
         }
         Note("단원별 예시 문항 점수예요. 공부 계획의 단원 구분은 이 결과와 다를 수 있어요.")
+        if (Scoring.allAnswered(questions, form.answers)) {
+            Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("문항별 결과", style = MaterialTheme.typography.titleSmall, color = Ink)
+                Column(
+                    Modifier.fillMaxWidth().border(1.5.dp, Outline, MaterialTheme.shapes.large)
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    questions.forEachIndexed { index, question ->
+                        if (index > 0) HorizontalDivider(color = Divider)
+                        QuestionResultRow(index + 1, question.prompt, Scoring.questionResult(question, form.answers.getValue(question.id)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuestionResultRow(number: Int, prompt: String, result: QuestionResult) {
+    val (status, chosen, correct) = when (result) {
+        QuestionResult.Correct -> Triple("정답", null, null)
+        is QuestionResult.Wrong -> Triple("오답", result.chosen, result.correct)
+        is QuestionResult.Unknown -> Triple(UNKNOWN_LABEL, UNKNOWN_LABEL, result.correct)
+    }
+    val color = if (result == QuestionResult.Correct) CorrectGreen else WrongRed
+    val icon = if (result == QuestionResult.Correct) R.drawable.ic_result_correct else R.drawable.ic_result_wrong
+    Column(
+        Modifier.fillMaxWidth().clearAndSetSemantics {
+            contentDescription = "문항 $number $status" +
+                (chosen?.let { ", 내 답 $it, 정답 $correct" } ?: "") + ", $prompt"
+        }.padding(vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("문항 $number", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Ink)
+            Text(prompt, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, color = InkBody)
+            Row(
+                Modifier.border(1.dp, color, RoundedCornerShape(4.dp))
+                    .padding(start = 4.dp, end = 6.dp, top = 1.dp, bottom = 1.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(painterResource(icon), contentDescription = null, Modifier.size(14.dp), tint = color)
+                Text(status, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, color = color)
+            }
+        }
+        if (chosen != null && correct != null) {
+            val style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = InkSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("내 답 $chosen", Modifier.weight(1f, fill = false), style = style,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("·", style = style)
+                Text("정답 $correct", Modifier.weight(1f, fill = false), style = style,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }

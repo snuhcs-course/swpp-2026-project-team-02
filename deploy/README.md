@@ -226,10 +226,13 @@ host before packaging because the release network policy would block it on the d
 
 ## Limitations
 
-- Intermittent HTTP 307 adjustment failures were observed on the deployed server (see the
-  [2026-10-30–31 device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md)). The backend sends no 307; an Nginx or
-  network redirect is only a hypothesis. The cause is unresolved, and successful retries or a later
-  failure to reproduce do not establish a fix.
+- The October device check recorded intermittent HTTP 307 responses to schedule adjustment.
+  The backend handler has no 307 response, and the installed Nginx site inspected on
+  2026-11-22 KST proxied `/api/v1/` without a redirect rule. Retained access logs covered
+  November 5–20 UTC and contained no 307 for the adjustment route. The October incident
+  predates those logs, so its cause remains unresolved. A controlled same-host redirect test
+  confirms the app surfaces the 307 and sends a second POST only after an explicit retry.
+  [October device report](https://github.com/snuhcs-course/swpp-2026-project-team-02/blob/6d8af7fe65295f286c881d7d6c059c4844bd633f/docs/iter3-HE/03_device_verification.md)
 - The assigned public endpoint is HTTP, not HTTPS.
 - The API has no authentication or per-user server storage.
 - Generated plans are retained as CSV files under `backend/license_planner/output/`, up to the

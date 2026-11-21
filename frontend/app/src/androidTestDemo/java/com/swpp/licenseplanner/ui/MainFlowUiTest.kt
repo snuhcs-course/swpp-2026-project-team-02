@@ -22,12 +22,14 @@ import com.swpp.licenseplanner.domain.CreationStep
 import com.swpp.licenseplanner.domain.CreationDraft
 import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.Question
 import com.swpp.licenseplanner.domain.StudyCheckIn
 import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.UNKNOWN_LABEL
+import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.screens.NOT_YET_REPORTABLE
@@ -1056,6 +1058,60 @@ class MainFlowUiTest {
         compose.waitForIdle()
     }
 
+    @Test fun rapidTopBarBackFromCertificationKeepsHomeUsable() = withApp {
+        click("계획 생성", substring = true)
+        show("어떤 시험을 준비하나요?")
+        compose.onNodeWithContentDescription("뒤로").performTouchInput { click(center); click(center) }
+        show("무엇을 할까요?")
+        click("계획 생성", substring = true)
+        show("어떤 시험을 준비하나요?")
+    }
+
+    @Test fun rapidSystemBackFromAdjustmentKeepsAValidPlanRoute() = withApp { host ->
+        seedFullPlanForFreeTime(host)
+        adjustShownPlan()
+        val activity = compose.activity
+        compose.runOnUiThread { repeat(4) { activity.onBackPressedDispatcher.onBackPressed() } }
+        if (!activity.isFinishing && !activity.isDestroyed) {
+            compose.waitUntil("Back leaves a visible plan route or home", 10_000) {
+                listOf(planViewTitle(), hasText(PLAN_LIST_HEADING), hasText("무엇을 할까요?")).any {
+                    compose.onAllNodes(it).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            repeat(2) {
+                if (compose.onAllNodesWithText("무엇을 할까요?").fetchSemanticsNodes().isEmpty()) pressBack()
+            }
+            show("무엇을 할까요?")
+            click("내 계획")
+            awaitPlanList()
+        }
+    }
+
+    @Test fun mixedQuizResultsShowStatusesAndAccessibleAnswerLabels() = withApp { host ->
+        val choices = mapOf("A" to "첫 선택지", "B" to "둘째 선택지", "C" to "셋째 선택지")
+        val questions = listOf(
+            Question(1, "첫 번째 예시 문항", choices, "A", 1.0),
+            Question(2, "두 번째 예시 문항", choices, "C", 1.0),
+            Question(3, "세 번째 예시 문항", choices, "A", 1.0),
+        )
+        val form = PlanFormState(preparationStart = LocalDate.of(2026, 11, 16), examDate = EXAM,
+            questions = questions, answers = mapOf(1 to "A", 2 to "B", 3 to UNKNOWN_KEY))
+        host.seedDraft(CreationDraft(form, CreationStep.RESULTS))
+        host.recreate()
+        click("이어서 만들기")
+        show("예시 문항 결과")
+        show("3문항 중 1문항 정답. ‘모르겠음’은 0점이에요.")
+        show("단원별 예시 문항 점수예요. 공부 계획의 단원 구분은 이 결과와 다를 수 있어요.")
+        show("문항별 결과")
+        for (description in listOf("문항 1 정답", "문항 2 오답, 내 답 B. 둘째 선택지, 정답 C. 셋째 선택지",
+            "문항 3 모르겠음, 내 답 모르겠음, 정답 A. 첫 선택지")) {
+            compose.onNodeWithContentDescription(description, substring = true).performScrollTo().assertIsDisplayed()
+        }
+        compose.onNodeWithText("내 답 B. 둘째 선택지", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("정답 C. 셋째 선택지", useUnmergedTree = true).assertExists()
+        host.capture("question-results")
+    }
+
     @Test fun calendarFreeTimeShowsOnlyTheDateWhereATwentyMinuteRowJoinsStudy() = withApp { host ->
         val source = seedFullPlanForFreeTime(host)
         val request = source.original.copy(weeklyAvailability = mapOf(
@@ -1698,13 +1754,26 @@ class MainFlowUiTest {
         host.capture("move-saved")
     }
 
+    /** Preparation from 2026-11-09 with a four-hour evening window every day. */
+    private fun seededRequest(noFit: Boolean = false) = com.swpp.licenseplanner.data.model.StudyPlanRequest(
+        com.swpp.licenseplanner.domain.CERTIFICATION_ID, "2026/11/09/00/00",
+        if (noFit) "2026/11/16/18/30" else "2026/11/30/00/00", "beginner",
+        com.swpp.licenseplanner.data.model.AssessmentResults(com.swpp.licenseplanner.domain.CERTIFICATION_ID, emptyList()),
+        7, Weekday.entries.associate { it.key to listOf(com.swpp.licenseplanner.data.model.TimeWindow("18:00", durationMinutes = 240)) })
+
+    private fun seededRows() = (1..4).map { id -> ScheduleRow("study-$id", "2026/11/${11 + id}/18/00", "2026/11/${11 + id}/19/00", "공부 주제 $id") }
+
+    private fun seedSinglePlan(host: DemoUiHost, rows: List<ScheduleRow>) {
+        val plan = com.swpp.licenseplanner.domain.SessionPlan.register(1, seededRequest(),
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true)
+        host.seedSnapshot(com.swpp.licenseplanner.data.PlanSnapshot(listOf(plan)))
+        host.recreate()
+        openPlanView(1)
+    }
+
     private fun seedRemainingPlans(host: DemoUiHost, zero: Boolean = false, noFit: Boolean = false): com.swpp.licenseplanner.data.PlanSnapshot {
-        val original = com.swpp.licenseplanner.data.model.StudyPlanRequest(
-            com.swpp.licenseplanner.domain.CERTIFICATION_ID, "2026/11/09/00/00",
-            if (noFit) "2026/11/16/18/30" else "2026/11/30/00/00", "beginner",
-            com.swpp.licenseplanner.data.model.AssessmentResults(com.swpp.licenseplanner.domain.CERTIFICATION_ID, emptyList()),
-            7, Weekday.entries.associate { it.key to listOf(com.swpp.licenseplanner.data.model.TimeWindow("18:00", durationMinutes = 240)) })
-        val rows = (1..4).map { id -> ScheduleRow("study-$id", "2026/11/${11 + id}/18/00", "2026/11/${11 + id}/19/00", "공부 주제 $id") }
+        val original = seededRequest(noFit)
+        val rows = seededRows()
         val reports = if (zero) rows.associate { it.scheduleId to StudyCheckIn(StudyCheckInStatus.Done, 20) } else mapOf(
             "study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20), "study-2" to StudyCheckIn(StudyCheckInStatus.Partly, 20),
             "study-3" to StudyCheckIn(StudyCheckInStatus.Missed, 0))
@@ -1718,6 +1787,90 @@ class MainFlowUiTest {
         host.seedSnapshot(snapshot); host.recreate()
         openPlanView(1)
         return snapshot
+    }
+
+    /** Title, summary, then each topic and its duration, as the topic-time section reads them in order. */
+    private fun topicTotalTexts(): List<String> {
+        fun collect(node: androidx.compose.ui.semantics.SemanticsNode): List<String> =
+            node.config.getOrElseNullable(SemanticsProperties.Text) { null }.orEmpty().map { it.text } +
+                node.children.flatMap { collect(it) }
+        return collect(compose.onNode(hasTestTag(TOPIC_TOTALS), useUnmergedTree = true).fetchSemanticsNode())
+    }
+
+    private fun expectedTopicTotalTexts(rows: List<ScheduleRow>, expanded: Boolean): List<String> {
+        val totals = PlanGrouping.topicTotals(rows)
+        val summary = "공부 주제 ${totals.size}개 · 총 ${PlanGrouping.formatDuration(totals.sumOf { it.minutes })}"
+        return listOf("주제별 공부 시간", summary) +
+            if (expanded) totals.flatMap { listOf(it.topic, PlanGrouping.formatDuration(it.minutes)) } else emptyList()
+    }
+
+    private fun showTopicTotals(expand: Boolean) {
+        scrollTo(hasTestTag(TOPIC_TOTALS), lazy = true)
+        val collapsed = hasText("주제별 공부 시간") and SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "접힘")
+        if (expand && compose.onAllNodes(collapsed).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNode(collapsed).performClick()
+            compose.onNode(hasText("주제별 공부 시간") and SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "펼침"))
+                .assertExists()
+            scrollTo(hasTestTag(TOPIC_TOTALS), lazy = true)
+        }
+    }
+
+    @Test fun topicTimeSectionStartsCollapsedAndFollowsAnAcceptedRemainingReplan() = withApp { host ->
+        val before = seedRemainingPlans(host).plans[0].current.schedules
+        showTopicTotals(expand = false)
+        assertEquals(listOf("주제별 공부 시간", "공부 주제 4개 · 총 4시간"), topicTotalTexts())
+        assertEquals(expectedTopicTotalTexts(before, expanded = false), topicTotalTexts())
+        host.capture("topic-totals-collapsed")
+        showTopicTotals(expand = true)
+        assertEquals(
+            listOf("주제별 공부 시간", "공부 주제 4개 · 총 4시간") + (1..4).flatMap { listOf("공부 주제 $it", "1시간") },
+            topicTotalTexts(),
+        )
+        host.capture("topic-totals-expanded")
+        clickPlanAction("남은 공부 다시 계획하기"); click("남은 공부 다시 배치하기")
+        host.awaitSaved(); show("남은 공부 160분을 배치했어요")
+        showPlacedPlan(host)
+        val after = host.snapshot().plans[0].current.schedules
+        assertNotEquals(PlanGrouping.topicTotals(before), PlanGrouping.topicTotals(after))
+        showTopicTotals(expand = true)
+        assertEquals(expectedTopicTotalTexts(after, expanded = true), topicTotalTexts())
+        host.capture("topic-totals-after-replan")
+        assertEquals(0, host.adjustmentCalls.get())
+    }
+
+    @Test fun planWithOnlyExistingCalendarRowsHasNoTopicTimeSection() = withApp { host ->
+        seedSinglePlan(host, listOf(ScheduleRow("external-1", "2026/11/12/09/00", "2026/11/12/10/00", "동아리 회의")))
+        show("동아리 회의", lazy = true)
+        show("기존 일정", lazy = true)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("처음으로"))
+        compose.onAllNodes(hasTestTag(TOPIC_TOTALS), useUnmergedTree = true).assertCountEquals(0)
+        compose.onAllNodesWithText("주제별 공부 시간", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun existingCalendarRowCannotBeChosenAndTheInstructionSaysWhy() = withApp { host ->
+        val external = ScheduleRow("external-1", "2026/11/12/09/00", "2026/11/12/10/00", "동아리 회의")
+        val rows = seededRows() + external
+        seedSinglePlan(host, rows)
+        adjustShownPlan()
+        show(SELECTION_INSTRUCTION)
+        scrollTo(hasText("동아리 회의"))
+        compose.onNode(hasText("동아리 회의")).performClick()
+        compose.waitForIdle()
+        assertNull(host.viewModel.adjustment.value.failedScheduleId)
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        compose.onAllNodes(hasText("선택한 일정 조정하기") and isEnabled()).assertCountEquals(0)
+        compose.onAllNodes(hasText("시간 직접 옮기기") and isEnabled()).assertCountEquals(0)
+        show(SELECTION_INSTRUCTION)
+        assertEquals(0, host.adjustmentCalls.get())
+        host.capture("external-row-tapped")
+        val target = PlanGrouping.sessions(rows).first { !it.isExternal }
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        assertEquals(1, host.adjustmentCalls.get())
+        show(SELECTION_INSTRUCTION)
+        host.capture("instruction-after-adjustment")
     }
 
     /** 「계획 보기」 on a placed result shows the plan view at the week of its earliest placed session. */
@@ -2406,5 +2559,7 @@ class MainFlowUiTest {
         private const val PLAN_LIST_HEADING = "어떤 계획을 볼까요?"
         private const val ADJUSTMENT_TITLE = "일정 조정"
         private const val EDIT_INPUTS = "입력 바꿔 새 계획 만들기"
+        private const val TOPIC_TOTALS = "topic-totals"
+        private const val SELECTION_INSTRUCTION = "놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요."
     }
 }

@@ -1,5 +1,16 @@
 package com.swpp.licenseplanner.ui.screens
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import com.swpp.licenseplanner.domain.TopicTotal
+import com.swpp.licenseplanner.ui.theme.Divider
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -164,6 +175,7 @@ fun PlanScreen(
 ) {
     val response = plan.current
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
+    val topicTotals = remember(response) { PlanGrouping.topicTotals(response.schedules) }
     val weeklyTimeUsage = remember(plan.original, response) {
         WeeklyTimeUsageCalculator.calculate(plan.original, response.schedules)
     }
@@ -242,6 +254,7 @@ fun PlanScreen(
                     if (day.sessions.isEmpty()) CompactEmptyDay(day) else DaySection(day, checkIns = checkIns)
                 }
             }
+            if (topicTotals.isNotEmpty()) item { TopicTotalsSection(topicTotals) }
             if (summary != null) item { PlanSummary(summary) }
             item {
                 PrimaryButton(
@@ -278,6 +291,67 @@ private fun WeeklyStudyTotals(week: WeekPlan) {
         color = InkBody,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * Whole-plan study time per returned topic (frames 2384:4326 collapsed, 2384:4353 expanded):
+ * collapsed by default so the week's schedule stays first; the header toggles the topic rows.
+ */
+@Composable
+private fun TopicTotalsSection(totals: List<TopicTotal>) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val summary = "공부 주제 ${totals.size}개 · 총 ${PlanGrouping.formatDuration(totals.sumOf { it.minutes })}"
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(Paper)
+            .border(1.5.dp, Outline, MaterialTheme.shapes.large)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .testTag("topic-totals"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClickLabel = if (expanded) "접기" else "펼치기") { expanded = !expanded }
+                .semantics(mergeDescendants = true) { stateDescription = if (expanded) "펼침" else "접힘" },
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("주제별 공부 시간", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Ink)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = InkBody)
+            }
+            Image(
+                painterResource(R.drawable.ic_chevron_right),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).rotate(if (expanded) -90f else 90f),
+            )
+        }
+        if (expanded) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                totals.forEach { total ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(total.topic, style = MaterialTheme.typography.bodyMedium, color = Ink, modifier = Modifier.weight(1f))
+                        Text(
+                            PlanGrouping.formatDuration(total.minutes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = Ink,
+                            textAlign = TextAlign.End,
+                            softWrap = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 /** A day without sessions as one muted row: weekday and date, with 「일정 없음」 wrapping on the right. */

@@ -27,6 +27,10 @@ A date without sessions is a single muted 「일정 없음」 row. The full 계�
 follows Sunday (or the no-rows message) and precedes the unchanged footer
 actions, including calendar export of the whole plan.
 
+The plan view can expand 「주제별 공부 시간」 to show total minutes per topic
+across all weeks. Example-question results list each answer as correct, wrong
+or 모르겠음, with the chosen and correct answers for each missed question.
+
 Cancelling generation stops the app from waiting; the live server may still finish and store that plan in shared storage, where it is not shown in the app.
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time

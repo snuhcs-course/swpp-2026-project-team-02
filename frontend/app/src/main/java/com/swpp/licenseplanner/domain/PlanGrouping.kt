@@ -34,6 +34,9 @@ data class WeekPlan(val monday: LocalDate, val days: List<DayPlan>) {
     val studyMinutes: Long get() = studySessions.sumOf { it.durationMinutes }
 }
 
+/** One returned topic, kept exactly as returned, with its summed study minutes across the whole plan. */
+data class TopicTotal(val topic: String, val minutes: Long)
+
 /** Sorts returned rows and groups them into Monday-based weeks of seven days. */
 object PlanGrouping {
     /** Rows with unparseable timestamps are skipped; the live repository rejects them earlier. */
@@ -60,6 +63,17 @@ object PlanGrouping {
             }
             .toList()
     }
+
+    /**
+     * Study minutes per topic over every week, ordered by each topic's earliest start. Existing
+     * (external) rows are excluded; topics are grouped by their exact string, so variants that
+     * differ only by whitespace stay separate. A row spanning midnight counts once in full.
+     */
+    fun topicTotals(rows: List<ScheduleRow>): List<TopicTotal> =
+        sessions(rows)
+            .filterNot { it.isExternal }
+            .groupBy { it.topic }
+            .map { (topic, sessions) -> TopicTotal(topic, sessions.sumOf { it.durationMinutes }) }
 
     /** `N시간 M분`, dropping a zero part: 90 → 1시간 30분, 120 → 2시간, 25 → 25분. */
     fun formatDuration(minutes: Long): String {
