@@ -23,7 +23,8 @@ from openrouter_client import InferenceConfigurationError
 from schedule_adjuster.agent import AdjustmentAgent
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.settings import AGENT_MAX_STEPS
-from study_plan_store import StudyPlanStore
+from test_support.admission import roomy_admission
+from test_support.device_tokens import bearer, owner_store
 
 RECORDED = json.loads((Path(__file__).with_name("fixtures") / "recorded_model_tool_calls.json")
                       .read_text(encoding="utf-8"))
@@ -93,18 +94,19 @@ class UpstreamErrorMessageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.store = StudyPlanStore(self.root)
+        self.plan_root = Path(self.temp.name)
+        self.store = owner_store(self.plan_root)
+        self.root = self.store.directory
         self.original = render_schedule_csv(parse_schedule_rows(ROWS))
         self.identifier = self.store.create(self.original, datetime(2026, 10, 20, 22, 0))
         self.filename = self.identifier.rsplit("/", 1)[1]
         self.adjust_payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
                                "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
                                "exam_date": "2026/10/20/22/00"}
-        patcher = patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.root)
+        patcher = patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.plan_root)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DEFAULT_API_CONFIG))
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DEFAULT_API_CONFIG, roomy_admission()))
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -112,7 +114,7 @@ class UpstreamErrorMessageTests(unittest.TestCase):
 
     def post(self, path, payload):
         request = Request(f"{self.base}{path}", data=json.dumps(payload).encode(),
-                          headers={"Content-Type": "application/json"}, method="POST")
+                          headers={"Content-Type": "application/json", **bearer()}, method="POST")
         try:
             with urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())

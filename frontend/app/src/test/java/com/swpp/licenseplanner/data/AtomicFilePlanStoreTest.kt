@@ -213,7 +213,7 @@ class AtomicFilePlanStoreTest {
     }
 
     @Test fun unusableSavedDataIsNotOverwrittenWithReports() = runTest {
-        val unsupported = String(encoded(earlier)).replaceFirst("\"version\":5", "\"version\":6").encodeToByteArray()
+        val unsupported = String(encoded(earlier)).replaceFirst("\"version\":6", "\"version\":7").encodeToByteArray()
         val cases = mapOf(
             "unsupported version" to (unsupported to PlanLoadFailure.Unsupported),
             "malformed" to ("{\"version\":3,".encodeToByteArray() to PlanLoadFailure.Malformed),
@@ -324,8 +324,8 @@ class AtomicFilePlanStoreTest {
         val cases = mapOf(
             "unknown step" to (text.replaceFirst("\"step\":\"questions\"", "\"step\":\"generate\"") to PlanLoadFailure.Malformed),
             "cursor past the end" to (text.replaceFirst("\"question_index\":0", "\"question_index\":4") to PlanLoadFailure.Invalid),
-            "draft in version 3" to (text.replaceFirst("\"version\":5", "\"version\":3").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "") to PlanLoadFailure.Invalid),
-            "unsupported version" to (text.replaceFirst("\"version\":5", "\"version\":6") to PlanLoadFailure.Unsupported),
+            "draft in version 3" to (text.replaceFirst("\"version\":6", "\"version\":3").replace(Regex(",\"next_plan_ordinal\":[0-9]+"), "").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "") to PlanLoadFailure.Invalid),
+            "unsupported version" to (text.replaceFirst("\"version\":6", "\"version\":7") to PlanLoadFailure.Unsupported),
         )
         for ((case, value) in cases) {
             val (savedText, reason) = value
@@ -343,7 +343,7 @@ class AtomicFilePlanStoreTest {
     }
 
     @Test fun loadingAnEarlierVersionDoesNotRewriteIt() = runTest {
-        val legacy = String(encoded(earlier)).replaceFirst("\"version\":5", "\"version\":3").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "").encodeToByteArray()
+        val legacy = String(encoded(earlier)).replaceFirst("\"version\":6", "\"version\":3").replace(Regex(",\"next_plan_ordinal\":[0-9]+"), "").replace("\"kept_conflicts\":{},", "").replace(",\"kept_conflicts\":{}", "").encodeToByteArray()
         val file = atomic(liveX)
         file.baseFile.writeBytes(legacy)
         assertTrue(file.baseFile.setLastModified(1_000_000L))

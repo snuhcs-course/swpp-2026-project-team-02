@@ -26,7 +26,7 @@ from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
     parse_overrides,
 )
-from study_plan_store import PlanSnapshot, StudyPlanStore, PlanConflictError, plan_fields
+from study_plan_store import PLAN_PREFIX, PlanSnapshot, StudyPlanStore, PlanConflictError, plan_fields
 
 
 BACKEND_ROOT = Path(__file__).resolve().parent
@@ -50,18 +50,27 @@ def current_korea_minute() -> datetime:
     return datetime.now(KOREA_TIMEZONE).replace(tzinfo=None, second=0, microsecond=0)
 
 
-def _save_study_plan_csv(content: str, request: PlanRequest) -> str:
-    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).create(
+def owner_plan_store(token: str) -> StudyPlanStore:
+    """The plans one device token owns under the configured plan root."""
+    return StudyPlanStore.for_owner(STUDY_PLAN_OUTPUT_DIR, token)
+
+
+def _save_study_plan_csv(content: str, request: PlanRequest, store: StudyPlanStore) -> str:
+    return store.create(
         content, request.exam_date, preparation_start=request.preparation_start,
         availability=request.weekly_availability)
 
 
-def read_study_plan_csv(filename: str) -> tuple[str, str]:
-    return StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).download(filename)
+def read_study_plan_csv(filename: str, store: StudyPlanStore) -> tuple[str, str]:
+    return store.download(filename)
 
 
-def list_study_plans(schedule_csv_file: str | None = None) -> dict[str, Any]:
-    return {"plans": StudyPlanStore(STUDY_PLAN_OUTPUT_DIR).list_plans(schedule_csv_file)}
+def delete_study_plan(filename: str, store: StudyPlanStore) -> None:
+    store.delete(PLAN_PREFIX + filename)
+
+
+def list_study_plans(schedule_csv_file: str | None, store: StudyPlanStore) -> dict[str, Any]:
+    return {"plans": store.list_plans(schedule_csv_file)}
 
 
 def _datetime(value: Any, field: str) -> datetime:
@@ -118,10 +127,17 @@ def select_availability_context(payload: dict[str, Any], load_inherited) -> Avai
     return make_context(base, overrides)
 
 
-def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = False) -> PlanRequest:
+def _no_shared_profile() -> None:
+    """The inherited context when the shared availability profile is disabled: none, without file access."""
+    return None
+
+
+def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = False,
+                       shared_availability: bool = True) -> PlanRequest:
     """입력 값: 학습 계획 API 요청 JSON 객체
     출력 값: 검증된 PlanRequest
     기능: JSON 요청 필드를 내부 계획 요청 객체로 변환합니다.
+    공용 프로필을 끄면 요청에 담긴 가능 시간만 쓰고 프로필 파일을 읽지 않습니다.
     """
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
@@ -146,7 +162,8 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
     busy = payload.get("busy_schedules") or []
     if not isinstance(busy, list):
         raise ValueError("busy_schedules must be an array or null")
-    availability = select_availability_context(payload, load_personal_availability)
+    availability = select_availability_context(
+        payload, load_personal_availability if shared_availability else _no_shared_profile)
     if availability is None or not availability.has_windows():
         raise ValueError(
             "weekly_availability is required. Enter at least one weekday and available time window."
@@ -172,18 +189,23 @@ def build_plan_request(payload: dict[str, Any], *, require_assessment: bool = Fa
     )
 
 
-def create_study_plan(payload: dict[str, Any]) -> dict[str, Any]:
-    """입력 값: 학습 계획 API 요청 JSON 객체
+def create_study_plan(payload: dict[str, Any], store: StudyPlanStore | None = None, *,
+                      shared_availability: bool = True) -> dict[str, Any]:
+    """입력 값: 학습 계획 API 요청 JSON 객체와 저장할 계획 저장소
     출력 값: 생성 CSV와 일정 행을 포함한 JSON 객체
     기능: JSON 요청을 검증하고 계획 Agent로 계획을 만듭니다.
+    HTTP 요청은 기기 소유자 저장소를 넘기며, 생략하면 로컬 CLI용 기본 출력 폴더에 저장합니다.
     """
-    request = build_plan_request(payload, require_assessment=True)
+    request = build_plan_request(payload, require_assessment=True, shared_availability=shared_availability)
+    if store is not None:
+        store.check_owner_directory()  # 모델 호출 전에 잘못된 소유자 저장소를 거절합니다.
     check_initial_capacity(request)  # 모델 설정이나 호출 없이 0분 가용 시간을 거절합니다.
     tools, summary = PlanningAgent().run(request)
     if tools.schedule is None:
         raise RuntimeError("Agent did not generate a schedule")
     csv_text = render_schedule_csv(request.busy_periods, tools.schedule)
-    csv_file = _save_study_plan_csv(csv_text, request)
+    csv_file = _save_study_plan_csv(
+        csv_text, request, store if store is not None else StudyPlanStore(STUDY_PLAN_OUTPUT_DIR))
     return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text,
             "schedule_csv_file": csv_file,
             "schedule_csv_url": f"/api/v1/study-plans/{Path(csv_file).name}",
@@ -217,18 +239,21 @@ def _adjustment_deadline(payload: dict[str, Any], snapshot: PlanSnapshot | None)
     return snapshot.exam_date
 
 
-def _adjustment_availability(payload: dict[str, Any], snapshot: PlanSnapshot | None) -> AvailabilityContext | None:
+def _adjustment_availability(payload: dict[str, Any], snapshot: PlanSnapshot | None,
+                             shared_availability: bool) -> AvailabilityContext | None:
     """Select the context one adjustment uses without saving it.
 
     Explicit request context wins; otherwise the selected plan's retained
-    context precedes the shared profile.  Explicit null or wholly empty
-    supplied context is rejected instead of falling back.
+    context precedes the shared profile, which is never read when disabled.
+    Explicit null or wholly empty supplied context is rejected instead of
+    falling back.
     """
     if "weekly_availability" in payload and payload["weekly_availability"] is None:
         raise ValueError("weekly_availability must contain at least one study window")
     retained = snapshot.availability if snapshot is not None else None
+    fallback = load_adjuster_availability if shared_availability else _no_shared_profile
     availability = select_availability_context(
-        payload, lambda: retained if retained is not None else load_adjuster_availability())
+        payload, lambda: retained if retained is not None else fallback())
     supplied = "weekly_availability" in payload or "availability_overrides" in payload
     if supplied and (availability is None or not availability.has_windows()):
         raise ValueError("weekly_availability must contain at least one study window")
@@ -265,11 +290,12 @@ def _manual_summary(entry: ScheduleEntry) -> str:
 
 
 def _adjust_manually(payload: dict[str, Any], entries: tuple[ScheduleEntry, ...], target: ScheduleEntry,
-                     store: StudyPlanStore, snapshot: PlanSnapshot | None) -> dict[str, Any]:
+                     store: StudyPlanStore, snapshot: PlanSnapshot | None,
+                     shared_availability: bool) -> dict[str, Any]:
     """Move one study row to the chosen start without any model request."""
     exam_date = _adjustment_deadline(payload, snapshot)
     preparation_start = _manual_preparation_start(payload, snapshot, exam_date)
-    availability = _adjustment_availability(payload, snapshot)
+    availability = _adjustment_availability(payload, snapshot, shared_availability)
     moved = place_study_entry_manually(
         entries, target.schedule_id, _datetime(payload["new_start_date"], "new_start_date"),
         availability=availability, preparation_start=preparation_start, exam_date=exam_date,
@@ -315,7 +341,7 @@ def _remaining_summary(placed: list[ScheduleEntry]) -> str:
     return f"남은 공부 {len(placed)}개, 총 {minutes}분을 다시 배치했어요."
 
 
-def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
+def _adjust_remaining(payload: dict[str, Any], store: StudyPlanStore) -> dict[str, Any]:
     """Place every listed remainder in one selected stored plan without any model request."""
     for field in ("schedule_id", "new_start_date"):
         if field in payload:
@@ -337,7 +363,6 @@ def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
     preparation_start = _datetime(payload["preparation_start"], "preparation_start")
     exam_date = _datetime(payload["exam_date"], "exam_date")
     replan_from = _datetime(payload["replan_from"], "replan_from")
-    store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
     snapshot = store.snapshot(payload["schedule_csv_file"])
     if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
         raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
@@ -365,8 +390,12 @@ def _adjust_remaining(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
-def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
-    """Adjust a snapshot and optionally update its existing generated file."""
+def adjust_schedule(payload: dict[str, Any], store: StudyPlanStore, *,
+                    shared_availability: bool = True) -> dict[str, Any]:
+    """Adjust a snapshot and optionally update its existing generated file in ``store``.
+
+    With ``shared_availability`` off, only request or retained plan context is used.
+    """
     if not isinstance(payload, dict):
         raise ValueError("request body must be an object")
     mode = _adjustment_mode(payload)
@@ -374,7 +403,7 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
         if mode != "manual" or not isinstance(payload["confirm_external_overlap"], bool):
             raise ValueError("confirm_external_overlap must be true or false and is only valid in manual mode")
     if mode == "remaining":
-        return _adjust_remaining(payload)
+        return _adjust_remaining(payload, store)
     entries = parse_schedule_rows(payload.get("schedules"))
     target_id = payload.get("schedule_id")
     if not isinstance(target_id, str) or not target_id:
@@ -392,16 +421,15 @@ def adjust_schedule(payload: dict[str, Any]) -> dict[str, Any]:
         _datetime(payload["new_start_date"], "new_start_date")
         if not isinstance(payload.get("confirm_outside_availability", False), bool):
             raise ValueError("confirm_outside_availability must be true or false")
-    store = StudyPlanStore(STUDY_PLAN_OUTPUT_DIR)
     snapshot = None
     if "schedule_csv_file" in payload:
         snapshot = store.snapshot(payload["schedule_csv_file"])
         if {e.schedule_id: e for e in entries} != {e.schedule_id: e for e in snapshot.entries}:
             raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
     if mode == "manual":
-        return _adjust_manually(payload, entries, target, store, snapshot)
+        return _adjust_manually(payload, entries, target, store, snapshot, shared_availability)
     exam_date = _adjustment_deadline(payload, snapshot) if target.schedule_type == "study" else None
-    availability = _adjustment_availability(payload, snapshot)
+    availability = _adjustment_availability(payload, snapshot, shared_availability)
     # Preflight constraints and guard agent output before any file mutation.
     expected = (move_study_entry(entries, target_id, availability, exam_date)
                 if target.schedule_type == "study" else remove_external_entry(entries, target_id))

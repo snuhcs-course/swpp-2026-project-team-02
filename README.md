@@ -90,6 +90,18 @@ public check and the signed release APK are documented in
 [`deploy/README.md`](deploy/README.md). This checkout does not establish which
 revision or configuration the server is running.
 
+The checked-in production configuration requires a per-installation device token
+(`Authorization: Bearer <token>`) on every plan route, stores each token's plans
+in its own directory, disables the shared availability profile, and limits
+generation and adjustment per token, client IP and server process. Health,
+certifications and questions stay public. The token identifies an installation,
+not an account. Over the cleartext HTTP endpoint it can be observed and replayed
+by anyone on the network path, which is an accepted risk of this release. The
+limits are kept in process memory and reset on restart. A pre-token backend must
+never return to public service. The deployment guide gives the coordinated
+backend and APK cutover, including the one-time reviewed wipe of legacy demo
+plans and the release verification sequence.
+
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently
@@ -125,5 +137,7 @@ revision or configuration the server is running.
   distribute work across weekdays.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
-- **Deployment:** authentication, per-user storage and plan retention remain
-  open; the public server and release APK use the shared HTTP endpoint above.
+- **Deployment:** plans are isolated per anonymous device token with retention
+  per token; account authentication, HTTPS, token recovery, plan transfer and
+  durable or global usage limits remain open. The public server and release APK
+  use the HTTP endpoint above.

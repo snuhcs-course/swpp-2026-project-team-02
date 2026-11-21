@@ -265,6 +265,21 @@ class RemainingStudyViewModelTest {
         assertEquals(a.current, o.vm.plans.value[0].current)
     }
 
+    @Test fun definiteAdmissionRejectionKeepsTheSourceWithoutAReloadGateOrReplay() = runTest(dispatcher) {
+        for (error in listOf(ApiError.RateLimited, ApiError.DeviceTokenRejected)) {
+            val o = open(); o.batch.error = error
+            assertTrue(o.vm.startRemainingStudy(1)); assertTrue(o.vm.confirmRemainingStudy()); advanceUntilIdle()
+            val failure = o.vm.remainingStudy.value as RemainingStudyState.Failure
+            assertEquals(error, failure.error)
+            assertEquals(error.userMessage(), remainingFailureMessage(failure.error))
+            assertEquals(a.current, o.vm.plans.value[0].current)
+            assertEquals(PlanRecovery.Ready, o.vm.plans.value[0].recovery)
+            assertEquals(PlanRecovery.Ready, restored(o).plans[0].recovery)
+            assertFalse(o.vm.confirmRemainingStudy())
+            assertEquals(1, o.batch.inputs.size); assertEquals(0, o.other.reloads)
+        }
+    }
+
     @Test fun definiteValidationFailureAllowsOnlyFreshReviewAndFailedReloadSaveStaysBlocked() = runTest(dispatcher) {
         val o = open(); o.batch.error = ApiError.InvalidInput("mode must be automatic or manual")
         assertTrue(o.vm.startRemainingStudy(1)); assertTrue(o.vm.confirmRemainingStudy()); advanceUntilIdle()
@@ -279,8 +294,8 @@ class RemainingStudyViewModelTest {
         assertEquals(1, pending.other.reloads)
     }
 
-    @Test fun everySupportedVersionLoadsWithoutWritingThenExplicitlySavesTheWholeCollectionAsV5() = runTest(dispatcher) {
-        for (version in 1..5) {
+    @Test fun everySupportedVersionLoadsWithoutWritingThenExplicitlySavesTheWholeCollection() = runTest(dispatcher) {
+        for (version in 1..PlanSnapshotCodec.VERSION) {
             val original = a.original.copy(weeklyAvailability = a.original.weeklyAvailability.mapValues { listOf(TimeWindow("18:00", "22:00")) })
             val plans = listOf(a, b).map { it.copy(original = original,
                 checkIns = if (version >= 3) it.checkIns else emptyMap(),
@@ -288,6 +303,7 @@ class RemainingStudyViewModelTest {
             val snapshot = PlanSnapshot(plans, creationDraft = draft.takeIf { version >= 4 })
             val root = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(snapshot, scope)).jsonObject.toMutableMap()
             root["version"] = JsonPrimitive(version)
+            if (version < 6) root.remove("next_plan_ordinal")
             root["entries"] = JsonArray(root.getValue("entries").jsonArray.map { element ->
                 JsonObject(element.jsonObject.toMutableMap().apply {
                     if (version < 3) remove("check_ins")
@@ -298,7 +314,7 @@ class RemainingStudyViewModelTest {
             val o = open(disk = MemoryPlanBytes(bytes))
             assertArrayEquals(bytes, o.store.disk.committed); assertEquals(0, o.store.count)
             assertTrue(o.vm.startRemainingStudy(1)); assertTrue(o.vm.confirmRemainingStudy()); advanceUntilIdle()
-            assertEquals(5, ApiJson.parseToJsonElement(o.store.disk.committed!!.decodeToString()).jsonObject.getValue("version").jsonPrimitive.int)
+            assertEquals(PlanSnapshotCodec.VERSION, ApiJson.parseToJsonElement(o.store.disk.committed!!.decodeToString()).jsonObject.getValue("version").jsonPrimitive.int)
             assertEquals(plans[1], restored(o).plans[1]); assertEquals(snapshot.creationDraft, restored(o).creationDraft)
             assertEquals(plans[0].checkIns, restored(o).plans[0].checkIns); assertEquals(plans[0].keptConflicts, restored(o).plans[0].keptConflicts)
         }

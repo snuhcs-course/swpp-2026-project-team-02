@@ -1,4 +1,5 @@
 """Stored exam-deadline and availability metadata kept beside each generated plan CSV."""
+import hashlib
 import json
 import os
 import tempfile
@@ -9,7 +10,7 @@ from unittest.mock import patch
 
 import study_plan_store
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
-from study_plan_store import PlanConflictError, PlanStorageError, StudyPlanStore
+from study_plan_store import PLAN_PREFIX, PlanConflictError, PlanNotFoundError, PlanStorageError, StudyPlanStore
 
 ROWS = [
     {"schedule_id": "study-1", "start_date": "2026/10/19/18/00",
@@ -56,6 +57,57 @@ class StoredExamDateTests(unittest.TestCase):
         snapshot = self.store.snapshot(identifier)
         self.assertIsNone(snapshot.exam_date)
         self.assertIsNone(snapshot.metadata_digest)
+
+    def test_delete_owned_plan_and_reject_an_update_from_a_predelete_snapshot(self):
+        owner = StudyPlanStore.for_owner(self.root, "a" * 64)
+        identifier = owner.create(self.csv, EXAM)
+        snapshot = owner.snapshot(identifier)
+
+        owner.delete(identifier)
+
+        self.assertEqual(list(owner.directory.iterdir()), [])
+        with self.assertRaises(PlanNotFoundError):
+            owner.delete(identifier)
+        with self.assertRaises(PlanNotFoundError):
+            owner.update(snapshot, self.csv)
+        self.assertEqual(list(owner.directory.iterdir()), [])
+
+    def test_delete_cannot_remove_another_owners_plan(self):
+        owner = StudyPlanStore.for_owner(self.root, "a" * 64)
+        other = StudyPlanStore.for_owner(self.root, "b" * 64)
+        identifier = owner.create(self.csv, EXAM)
+        before = {path.name: path.read_bytes() for path in owner.directory.iterdir()}
+
+        with self.assertRaises(PlanNotFoundError):
+            other.delete(identifier)
+
+        self.assertEqual({path.name: path.read_bytes() for path in owner.directory.iterdir()}, before)
+
+    def test_delete_rejects_a_malformed_filename_like_download(self):
+        filename = "../study_plan_deadbeef.csv"
+        with self.assertRaises(FileNotFoundError) as download:
+            self.store.download(filename)
+        with self.assertRaisesRegex(FileNotFoundError, str(download.exception)):
+            self.store.delete(PLAN_PREFIX + filename)
+
+    def test_retry_cleans_metadata_after_an_interrupted_delete(self):
+        identifier = self.store.create(self.csv, EXAM)
+        csv_path, metadata = self.paths(identifier)
+        unlink = Path.unlink
+
+        def fail_sidecar(path, *args, **kwargs):
+            if path == metadata:
+                raise PermissionError("metadata temporarily unavailable")
+            return unlink(path, *args, **kwargs)
+
+        with patch.object(Path, "unlink", fail_sidecar), self.assertRaises(PlanStorageError):
+            self.store.delete(identifier)
+        self.assertFalse(csv_path.exists())
+        self.assertTrue(metadata.exists())
+
+        with self.assertRaises(PlanNotFoundError):
+            self.store.delete(identifier)
+        self.assertFalse(metadata.exists())
 
     def test_present_but_damaged_metadata_is_a_storage_failure(self):
         identifier = self.store.create(self.csv, EXAM)
@@ -300,6 +352,40 @@ class RetainedContextMetadataTests(unittest.TestCase):
             self.store.update(snapshot, "schedule_id,start_date,end_date,topic\n")
         self.assertEqual(self.store.download(identifier.rsplit("/", 1)[1])[0], self.csv)
         self.assertEqual(metadata.read_bytes(), changed)
+
+
+
+class OwnerStoreTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.csv = render_schedule_csv(parse_schedule_rows(ROWS))
+
+    def test_owner_plans_live_in_a_hashed_directory_with_unchanged_identifiers(self):
+        token = "5e" * 32
+        store = StudyPlanStore.for_owner(self.root, token)
+        identifier = store.create(self.csv, EXAM)
+        digest = study_plan_store.owner_digest(token)
+        self.assertEqual(digest, hashlib.sha256(token.encode("ascii")).hexdigest())
+        self.assertEqual([path.name for path in self.root.iterdir()], [digest])
+        self.assertTrue(identifier.startswith("license_planner/output/study_plan_"))
+        self.assertTrue((self.root / digest / identifier.rsplit("/", 1)[1]).is_file())
+        # The unscoped root store never reads into owner directories.
+        self.assertEqual(StudyPlanStore(self.root).list_plans(), [])
+
+    def test_tokens_outside_the_exact_format_have_no_owner(self):
+        for token in ("", "5E" * 32, "5e" * 31, "5e" * 33, "../" + "5e" * 31, None):
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                StudyPlanStore.for_owner(self.root, token)
+
+    def test_owner_directory_that_is_not_a_directory_is_a_storage_error(self):
+        token = "6f" * 32
+        (self.root / study_plan_store.owner_digest(token)).write_text("not a directory", encoding="utf-8")
+        store = StudyPlanStore.for_owner(self.root, token)
+        for operation in (store.list_plans, lambda: store.create(self.csv, EXAM)):
+            with self.assertRaises(PlanStorageError):
+                operation()
 
 
 if __name__ == "__main__":

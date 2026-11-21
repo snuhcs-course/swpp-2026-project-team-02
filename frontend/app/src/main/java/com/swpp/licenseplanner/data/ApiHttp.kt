@@ -102,6 +102,8 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
     val message = error?.message?.takeIf { it.isNotBlank() }
     // Only the exact status/code pairs; anything else keeps its generic category.
     return when {
+        status == 401 && error?.code == INVALID_DEVICE_TOKEN -> ApiError.DeviceTokenRejected
+        status == 429 && error?.code == RATE_LIMITED -> ApiError.RateLimited
         planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
         planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
         planErrors && status == 422 && ManualMoveRejection.ofCode(error?.code) != null ->
@@ -112,6 +114,8 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
 
 private const val PLAN_NOT_FOUND = "PLAN_NOT_FOUND"
 private const val PLAN_CONFLICT = "PLAN_CONFLICT"
+private const val INVALID_DEVICE_TOKEN = "INVALID_DEVICE_TOKEN"
+private const val RATE_LIMITED = "RATE_LIMITED"
 
 private fun genericError(status: Int, message: String?, body: String): ApiError =
     when (status) {
@@ -124,6 +128,9 @@ private fun genericError(status: Int, message: String?, body: String): ApiError 
     }
 
 private fun classifyTransportError(error: Exception): ApiError {
+    if (error is DeviceTokenUnavailableException) return ApiError.DeviceTokenUnavailable
+    // Fixed text: the blocked origin and any credential stay out of diagnostics.
+    if (error is CrossOriginRequestException) return ApiError.UnknownFailure(rawDiagnostic = CROSS_ORIGIN_DIAGNOSTIC)
     val diagnostic = "${error.javaClass.name}: ${error.message.orEmpty()}".take(MAX_DIAGNOSTIC_LENGTH)
     return when (error) {
         is SocketTimeoutException -> ApiError.RequestTimeout(diagnostic)
@@ -139,3 +146,4 @@ private fun responseDiagnostic(message: String?, body: String): String =
         .take(MAX_DIAGNOSTIC_LENGTH)
 
 private const val MAX_DIAGNOSTIC_LENGTH = 4_000
+private const val CROSS_ORIGIN_DIAGNOSTIC = "A redirect or request to another origin was blocked."

@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 import license_planner.agent
 import license_planner.user_availability
+from api_admission import DEFAULT_ROUTE_LIMITS, AdmissionLimiter, RouteLimits
 import schedule_adjuster.agent
 import schedule_adjuster.settings
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
@@ -22,6 +23,7 @@ from study_plan_store import StudyPlanStore
 from test_support.fixed_live_e2e_server import (
     DEFAULT_CASE_ID, LEGACY_CASE_ID, ScriptedAdjustmentAgent, load_cases, running_server,
 )
+from test_support.device_tokens import DEVICE_TOKEN, OTHER_DEVICE_TOKEN, bearer
 from test_support.question_banks import custom_question_variant
 
 WIRE = "%Y/%m/%d/%H/%M"
@@ -38,16 +40,31 @@ def with_saturday_window(weekly: dict) -> dict:
     return {**copy.deepcopy(weekly), "saturday": [{"start": "10:00", "end": "12:00"}]}
 
 
-def request_json(url: str, method: str = "GET", payload: dict | None = None) -> tuple[int, dict]:
+def owner_store(server) -> StudyPlanStore:
+    """The fixture plans the test client's device token owns."""
+    return StudyPlanStore.for_owner(server.output_dir, DEVICE_TOKEN)
+
+
+def exchange(url: str, method: str = "GET", payload: dict | None = None,
+             credential: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
+    """One request with the given Authorization header (the shared synthetic token by default)."""
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
-    request = Request(url, data=body,
-                      headers={"Content-Type": "application/json"} if body else {}, method=method)
+    headers = dict(bearer() if credential is None else credential)
+    if body:
+        headers["Content-Type"] = "application/json"
+    request = Request(url, data=body, headers=headers, method=method)
     try:
         with urlopen(request, timeout=10) as response:
-            return response.status, json.loads(response.read())
+            return response.status, response.read(), dict(response.headers.items())
     except HTTPError as error:
         with error:
-            return error.code, json.loads(error.read())
+            return error.code, error.read(), dict(error.headers.items())
+
+
+def request_json(url: str, method: str = "GET", payload: dict | None = None,
+                 credential: dict[str, str] | None = None) -> tuple[int, dict]:
+    status, body, _ = exchange(url, method, payload, credential)
+    return status, json.loads(body)
 
 
 class FixedLiveE2EServerTests(unittest.TestCase):
@@ -86,7 +103,7 @@ class FixedLiveE2EServerTests(unittest.TestCase):
 
     @staticmethod
     def stored_files(server) -> dict[str, bytes]:
-        return {path.name: path.read_bytes() for path in sorted(server.output_dir.iterdir())}
+        return {path.name: path.read_bytes() for path in sorted(owner_store(server).directory.iterdir())}
 
     def test_real_handler_serves_questions_generates_and_reads_a_saved_plan(self):
         with running_server(case_id=LEGACY_CASE_ID) as server:
@@ -115,7 +132,7 @@ class FixedLiveE2EServerTests(unittest.TestCase):
             plan_a = self.generate(server, ROOMY_EXAM)
             # The recorded request's own exam leaves no free window after the plan.
             plan_b = self.generate(server)
-            legacy = StudyPlanStore(server.output_dir).create(
+            legacy = owner_store(server).create(
                 render_schedule_csv(parse_schedule_rows(plan_a["schedules"])))
             legacy_plan = {**plan_a, "schedule_csv_file": legacy}
             b_name = Path(plan_b["schedule_csv_file"]).name
@@ -176,7 +193,7 @@ class FixedLiveE2EServerTests(unittest.TestCase):
                 if name.endswith(".meta.json"):
                     self.assertEqual(after[name], content)
             self.assertNotIn(Path(legacy).stem + ".meta.json", after)
-            self.assertEqual(StudyPlanStore(server.output_dir).snapshot(plan_a["schedule_csv_file"]).exam_date,
+            self.assertEqual(owner_store(server).snapshot(plan_a["schedule_csv_file"]).exam_date,
                              datetime.strptime(ROOMY_EXAM, WIRE))
 
     def test_external_removal_runs_through_the_scripted_agent(self):
@@ -449,10 +466,77 @@ class IsolatedScriptedServerTests(unittest.TestCase):
             ("GET", "/api/v1/availability", 200), ("POST", "/api/v1/study-plans", 200),
             ("GET", "/api/v1/study-plans", 200), ("POST", "/api/v1/schedules/adjust", 200),
             ("GET", "/api/v1/study-plans", 200)])
+        self.assertEqual({entry["device_token"] for entry in entries}, {"valid"})
+        self.assertNotIn(DEVICE_TOKEN, log.read_text(encoding="utf-8"))
         self.assertEqual(entries[1]["body"]["busy_schedules"], [])
         self.assertEqual(entries[1]["test_control"][0]["rows"], [busy])
         self.assertTrue(entries[3]["response_dropped"])
         self.assertEqual(entries[3]["body"]["new_start_date"], self.wire(self.monday + timedelta(days=2), 10))
+
+    def test_restart_keeps_each_tokens_plans_separate(self):
+        storage = self.storage / "server"
+        with running_server(planning="scripted", storage_dir=storage) as server:
+            plan = self.generate(server)
+            download = f"{server.api_base_url}/study-plans/{Path(plan['schedule_csv_url']).name}"
+            status, before, _ = exchange(download)
+            self.assertEqual(status, 200)
+
+        with running_server(planning="scripted", storage_dir=storage) as restarted:
+            download = f"{restarted.api_base_url}/study-plans/{Path(plan['schedule_csv_url']).name}"
+            selected = (f"{restarted.api_base_url}/study-plans?schedule_csv_file="
+                        f"{quote(plan['schedule_csv_file'], safe='')}")
+            # The same token reads and downloads its plan after the restart.
+            self.assertEqual(self.readback_rows(restarted, plan), plan["schedules"])
+            status, after, headers = exchange(download)
+            self.assertEqual((status, after), (200, before))
+            self.assertEqual(headers["Content-Type"], "text/csv; charset=utf-8")
+            self.assertEqual(headers["Cache-Control"], "no-store")
+
+            # Another token sees the plan as absent; a request without a token is rejected.
+            other = bearer(OTHER_DEVICE_TOKEN)
+            self.assertEqual(request_json(f"{restarted.api_base_url}/study-plans", credential=other),
+                             (200, {"plans": []}))
+            self.assertEqual(request_json(selected, credential=other), (200, {"plans": []}))
+            status, body = request_json(download, credential=other)
+            self.assertEqual((status, body["error"]["code"]), (404, "PLAN_NOT_FOUND"))
+            for url in (f"{restarted.api_base_url}/study-plans", selected, download):
+                with self.subTest(url=url):
+                    status, body = request_json(url, credential={})
+                    self.assertEqual((status, body["error"]["code"]), (401, "INVALID_DEVICE_TOKEN"))
+            self.assertEqual([path.name for path in sorted(restarted.output_dir.iterdir())],
+                             [owner_store(restarted).directory.name])
+            self.assertEqual(exchange(download)[1], before)
+
+    def test_request_log_records_token_presence_and_rejections(self):
+        log = self.storage / "requests.jsonl"
+        one_plan = AdmissionLimiter({**{route: RouteLimits(100, 100, 100) for route in DEFAULT_ROUTE_LIMITS},
+                                     "/api/v1/study-plans": RouteLimits(1, 100, 100)})
+        with running_server(planning="scripted", storage_dir=self.storage, request_log=log,
+                            admission=one_plan) as server:
+            plans = f"{server.api_base_url}/study-plans"
+            status, _, headers = exchange(plans, credential={})
+            self.assertEqual(status, 401)
+            self.assertEqual(headers["WWW-Authenticate"], 'Bearer realm="license-planner"')
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            malformed = {"Authorization": f"Bearer {DEVICE_TOKEN.upper()}"}
+            self.assertEqual(request_json(plans, "POST", self.plan_request(), credential=malformed)[0], 401)
+            self.generate(server)
+            status, body, headers = exchange(plans, "POST", self.plan_request())
+            self.assertEqual((status, json.loads(body)["error"]["code"]), (429, "RATE_LIMITED"))
+            self.assertGreater(int(headers["Retry-After"]), 0)
+            self.assertEqual(request_json(f"{server.api_base_url}/health", credential={}), (200, {"status": "ok"}))
+            self.assertEqual(len(list(owner_store(server).directory.glob("*.csv"))), 1)
+
+        entries = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(entry["method"], entry["path"], entry["device_token"], entry["status"])
+                          for entry in entries], [
+            ("GET", "/api/v1/study-plans", "missing", 401), ("POST", "/api/v1/study-plans", "invalid", 401),
+            ("POST", "/api/v1/study-plans", "valid", 200), ("POST", "/api/v1/study-plans", "valid", 429),
+            ("GET", "/api/v1/health", "missing", 200)])
+        self.assertEqual([entry["body"] is None for entry in entries], [True, True, False, True, True])
+        text = log.read_text(encoding="utf-8")
+        self.assertNotIn(DEVICE_TOKEN, text)
+        self.assertNotIn(DEVICE_TOKEN.upper(), text)
 
     def readback_rows(self, server, plan: dict) -> list[dict]:
         status, listing = request_json(f"{server.api_base_url}/study-plans?schedule_csv_file="

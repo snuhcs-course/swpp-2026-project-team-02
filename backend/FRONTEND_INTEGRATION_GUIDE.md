@@ -31,6 +31,115 @@ Check connectivity with `GET /api/v1/health`, which returns
 
 The current MVP uses `computer_specialist_level_2`.
 
+All routes, relative to `/api/v1` ("token" is the [device token](#device-token);
+"slot" is one admission under [request limits](#request-limits-and-public-mode)):
+
+| Method and path | Token | Slot | Success and route-specific errors |
+| --- | --- | --- | --- |
+| `GET /health` | No | No | `200 {"status":"ok"}` |
+| `GET /certifications` | No | No | `200` public certification list |
+| `GET /certifications/{id}/questions` | No | No | `200` [question bank](#question-bank); unknown ID `404 NOT_FOUND` |
+| `OPTIONS` any path | No | No | `204`; CORS headers only for a configured origin |
+| `GET /availability`, `PUT /availability` | No | No | Shared profile ([other endpoints](#other-backend-endpoints)); `404 NOT_FOUND` when `APP_SHARED_AVAILABILITY_ENABLED=0` |
+| `POST /study-plans` | Yes | Generation | `200` [generated plan](#generate-a-plan), saved for this token |
+| `GET /study-plans` | Yes | No | `200 {"plans":[...]}` of this token's plans; with `?schedule_csv_file=` the [exact readback](#select-a-plan) |
+| `GET /study-plans/{filename}` | Yes | No | `200` [CSV download](#download-a-plan-csv) |
+| `DELETE /study-plans/{filename}` | Yes | No | `204` [plan deletion](#delete-a-plan); missing or foreign plan `404 PLAN_NOT_FOUND` |
+| `POST /schedules/adjust` | Yes | Adjustment | `200` result of the automatic, external-cancellation, manual or remaining-work [adjustment](#adjust-the-selected-plan) |
+
+A protected route answers `401 INVALID_DEVICE_TOKEN` before anything else; a
+budgeted POST may then answer `503 SERVICE_UNAVAILABLE` (proxy address missing)
+or `429 RATE_LIMITED` before its body is read. Every error uses the envelope in
+[Error handling and limits](#error-handling-and-limits). Any other path returns
+`404 NOT_FOUND`.
+
+### Device token
+
+Every plan route requires one installation credential:
+`Authorization: Bearer <token>`, where the token is exactly 64 lowercase
+hexadecimal characters (32 random bytes). The scheme name is case-insensitive.
+A well-formed token that the server has not seen before is accepted as a new
+owner; there is no enrollment route. Protected routes are `POST /study-plans`,
+`GET /study-plans` (with or without `schedule_csv_file`),
+`GET /study-plans/{filename}`, `DELETE /study-plans/{filename}` and every mode of `POST /schedules/adjust`,
+including stateless automatic adjustment of supplied rows. Health,
+certifications and questions stay public, and `OPTIONS` preflight needs no token
+(configured origins may send `Authorization` and `Content-Type`).
+
+A missing, empty, repeated or malformed credential, or one header with several
+credentials, returns `401` before the body or filter is read:
+
+```json
+{"error":{"code":"INVALID_DEVICE_TOKEN","message":"A valid device token is required."}}
+```
+
+with `WWW-Authenticate: Bearer realm="license-planner"`. Every protected
+response, successful or not, carries `Cache-Control: no-store`. Keep the token
+out of URLs, request bodies, logs and test evidence; the server stores only a
+SHA-256 digest of it as the owner's directory name and never forwards it to the
+model provider.
+
+Each token sees only its own plans. The plan identifier and
+`schedule_csv_url` keep their existing form and contain no owner information.
+A different token's plan behaves exactly like an absent plan: filtered readback
+returns `{"plans": []}`. Download, deletion and adjustment return `404 PLAN_NOT_FOUND`.
+Plans stored before owner scoping (directly in the plan directory) are not
+reachable through the API. A new token therefore starts with an empty list, and
+reinstalling the app or clearing its data loses access to earlier server plans.
+
+A direct client or test keeps one token per simulated installation in memory
+and sends it as a header only. From a POSIX shell:
+
+```bash
+token="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+curl -fsS -H "Authorization: Bearer $token" http://127.0.0.1:8000/api/v1/study-plans
+```
+
+Reuse the same value for every request about that token's plans, including
+after a server restart; a different value is a different owner.
+
+### Request limits and public mode
+
+The two POST routes are admitted within rolling 60-minute windows, counted
+separately per route for the token owner, the client IP and the whole server
+process:
+
+| POST route | Per token | Per client IP | Whole server |
+| --- | ---: | ---: | ---: |
+| `/study-plans` | 3 | 12 | 24 |
+| `/schedules/adjust` | 12 | 40 | 60 |
+
+All adjustment modes (automatic, external cancellation, manual, remaining work)
+share the adjustment bucket. The token is checked first; an admitted request
+then reserves one slot in each of its three buckets before its body is read and
+keeps it even if it later fails validation, the model or storage. A request
+that exceeds any bucket reserves nothing and returns, before any model or plan
+access:
+
+```json
+{"error":{"code":"RATE_LIMITED","message":"Too many requests. Try again later."}}
+```
+
+with status `429`, `Cache-Control: no-store` and `Retry-After: <seconds>`, a
+positive integer that covers every full bucket. Wait for an explicit user retry;
+do not retry automatically. Token rejections, GET reads and `OPTIONS` use no
+slot. Counters live in process memory and reset when the server restarts.
+
+Two backend settings select public behavior (each exactly `0` or `1`):
+
+- `APP_SHARED_AVAILABILITY_ENABLED` (default `1`). With `0`, `GET` and `PUT
+  /availability` return `404 NOT_FOUND` before the profile or request body is
+  read, with or without a token, and generation and adjustment never fall back
+  to the shared profile.
+- `APP_TRUST_LOCAL_PROXY` (default `0`). With `0`, the client IP is the socket
+  peer and `X-Real-IP`/`X-Forwarded-For` are ignored. With `1`, a request from a
+  loopback peer must carry exactly one valid IP literal in `X-Real-IP` (set by the
+  local proxy, which must overwrite any client value); `X-Forwarded-For` is never
+  used. A loopback POST to either route without one valid `X-Real-IP` returns
+  `503 SERVICE_UNAVAILABLE` (`The service cannot identify the client address. Try
+  again later.`) before admission. A non-loopback peer always uses its socket
+  address.
+
 P10 v2 changes the internal model tool, not the HTTP request: diagnosed plans use
 every date's usable minutes (`usable_date_minutes`) as its total, with
 backend-computed topic budgets/blocks; the model does not choose the workload. The frontend
@@ -83,7 +192,8 @@ secure exam or grading service.
 ## Generate a plan
 
 `POST /api/v1/study-plans` accepts the form values and locally-scored assessment
-results. Dates use `YYYY/MM/DD/HH/MM` and availability times use `HH:MM`.
+results, sent with the installation's [device token](#device-token); the new
+plan belongs to that token. Dates use `YYYY/MM/DD/HH/MM` and availability times use `HH:MM`.
 
 ```json
 {
@@ -157,6 +267,9 @@ Context selection, for generation and adjustment alike:
 - Without request availability, generation reads the shared profile
   (`weekly_availability: null` also does). Adjustment uses the selected plan's
   retained context, then the shared profile; explicit null is `422` there.
+  With `APP_SHARED_AVAILABILITY_ENABLED=0` the profile is never read: generation
+  without request windows returns `422 INVALID_INPUT`, and adjustment uses
+  request or retained context only.
 - Request availability is never saved to the profile or the plan.
 
 A context with no window anywhere is invalid; a valid context whose relevant
@@ -251,7 +364,8 @@ no response fields were added.
 ## Other backend endpoints
 
 `GET /api/v1/availability` and `PUT /api/v1/availability` read and replace the
-single shared, unauthenticated profile. Both return
+single shared, unauthenticated profile when `APP_SHARED_AVAILABILITY_ENABLED=1`
+(the local default); otherwise both return `404 NOT_FOUND`. Both return
 `{"weekly_availability": {...}, "availability_overrides": {...}}` with all seven
 weekdays and `start`, `duration_minutes` and derived `end` on every window; a
 missing profile returns empty lists and `{}`. PUT accepts that wrapper or a
@@ -279,11 +393,12 @@ remains unverified against a real server.
 
 ### Select a plan
 
-`GET /api/v1/study-plans` returns `{"plans": [...]}`, newest modification first.
+`GET /api/v1/study-plans` returns the caller's own plans (see
+[Device token](#device-token)) as `{"plans": [...]}`, newest modification first.
 Each item includes `schedule_csv_file`, `schedule_csv_url`, and `schedules`, and
 `availability_snapshot` when the plan was generated with retained context (it is
 omitted for older plans and when that plan's metadata cannot be read, so the CSV
-stays listable). An empty store returns `{"plans": []}`. Only recognized generated CSVs are listed;
+stays listable). An owner with no plans gets `{"plans": []}`. Only recognized generated CSVs are listed;
 an unreadable or malformed plan produces `500 STORAGE_ERROR`.
 
 To read back one retained plan, add the optional query
@@ -291,7 +406,7 @@ To read back one retained plan, add the optional query
 identifier must be sent as `%2B`). The server then reads only that file, so a
 damaged unrelated plan does not block it. The response keeps the same envelope:
 one item for the selected plan, or `{"plans": []}` when that valid identifier no
-longer exists. A selected plan that is unreadable or malformed still returns
+longer exists or belongs to another token. A selected plan that is unreadable or malformed still returns
 `500 STORAGE_ERROR`. A blank, repeated, or invalid identifier (path, symlink, or
 anything that is not a server-issued identifier) returns `422 INVALID_INPUT`
 without reading files. Without the query, listing behaves as above; other
@@ -317,6 +432,31 @@ existing generation response. Treat the identifier as opaque and retain it with
 the schedule; do not construct a filename. The Android DTO retains this
 field and uses it unchanged for adjustment and exact-identity reload.
 
+### Download a plan CSV
+
+`GET` the plan's `schedule_csv_url` with the owning token to download the stored
+rows as `text/csv; charset=utf-8` with
+`Content-Disposition: attachment; filename="<file name>"` and
+`Cache-Control: no-store`. After a successful adjustment the same URL returns the
+adjusted rows. A valid file name that is absent or belongs to another token
+returns `404 PLAN_NOT_FOUND` (`The selected study plan was not found.`), the same
+response as adjustment; a name that is not a server-issued plan file returns
+`404 NOT_FOUND`. The Android app does not call this route.
+
+### Delete a plan
+
+Send `DELETE` to the returned `schedule_csv_url` with the owning installation's
+`Authorization: Bearer <token>` header and no body. Success is `204` with an
+empty body. The owner’s CSV and metadata are removed and the plan no longer
+appears in the owner’s list. Exported device calendar events are separate copies.
+
+An absent, already deleted or foreign plan returns `404 PLAN_NOT_FOUND`.
+Retrying with the same URL and token after a lost response is safe. Treat `204`
+or `404 PLAN_NOT_FOUND` as confirmation the server copy is gone. Malformed file
+names return `404 NOT_FOUND`, and missing or invalid tokens return
+`401 INVALID_DEVICE_TOKEN`. The route does not charge generation or adjustment
+quota. Configured origins may request `DELETE` in preflight.
+
 ### Adjust the selected plan
 
 `POST /api/v1/schedules/adjust` retains the existing request fields and accepts
@@ -325,7 +465,7 @@ these additional fields:
 | Field | Behavior |
 | --- | --- |
 | `schedule_csv_file` | When present, update this existing plan; when absent, preserve the legacy non-persistent mode |
-| `weekly_availability` | Optional request context under the selection rules above; otherwise the plan's retained context, then the shared profile. An explicit null or a context with no window is invalid |
+| `weekly_availability` | Optional request context under the selection rules above; otherwise the plan's retained context, then the shared profile when enabled. An explicit null or a context with no window is invalid |
 | `availability_overrides` | Optional; replaces the inherited override map for this request only. Null is invalid |
 | `mode` | Omitted or `"automatic"`: the agent-based move. `"manual"`: the deterministic move described below. `"remaining"`: the deterministic remaining-work batch described below, with its own required fields. Anything else returns `422 INVALID_INPUT` |
 | `exam_date` | Saved plan (`schedule_csv_file` present): optional. The server uses the exam timestamp stored when the plan was generated; a supplied value must equal it exactly, and explicit null or a malformed value is rejected. Without `schedule_csv_file`: a valid `YYYY/MM/DD/HH/MM` value is required when moving a `study-N` row; missing, null or malformed returns `422 INVALID_INPUT` before any model call. Never needed for `external-N` removal. |
@@ -590,9 +730,12 @@ answers `422 INVALID_INPUT` (`mode must be ...`); do not retry in another mode.
 
 | Status / code | FE handling |
 | --- | --- |
+| 401 / `INVALID_DEVICE_TOKEN` | The request carried no valid device token; nothing was read, admitted or saved |
+| 429 / `RATE_LIMITED` | A request limit is full; nothing was read or saved. Keep inputs and let the user retry after `Retry-After` seconds |
+| 503 / `SERVICE_UNAVAILABLE` | A proxied server could not identify the client address; nothing was admitted |
 | 422 / `INVALID_INPUT` | Correct invalid fields, duplicate IDs, missing target, or unusable availability; for the fixed no-stored-exam-date message, create a new plan |
 | 422 / manual-move codes | Keep the chosen time for correction or explicitly review the independent outside-window and external-overlap exceptions described above |
-| 404 / `PLAN_NOT_FOUND` | Refresh the plan list; the file may have been pruned |
+| 404 / `PLAN_NOT_FOUND` | On deletion, proceed with local removal. On adjustment, refresh the plan list. Direct download also returns this code for a missing or foreign plan |
 | 409 / `PLAN_CONFLICT` | Reload the plan before resubmitting; never overwrite with stale rows |
 | 500 / `STORAGE_ERROR` | Report storage failure |
 | 502 or 503 / `UPSTREAM_ERROR` | Report agent/configuration failure |
@@ -619,8 +762,9 @@ request and therefore resends its plan-specific availability and exam timestamp
 (five fields); the server checks that timestamp against the stored one. A study
 session with no slot ending by the effective exam timestamp returns `422
 INVALID_INPUT` with `NOT_ENOUGH_TIME` and leaves the stored plan unchanged. The
-store retains up to 100 generated plans on a best-effort basis; pruning a CSV
-also removes its sidecar.
+store retains up to 100 generated plans per device token on a best-effort basis,
+oldest modification first; one token's generation never prunes another token's
+plans, and pruning a CSV also removes its sidecar.
 
 ### Local execution
 
@@ -637,8 +781,20 @@ The request omits `exam_date`, so the server uses the selected plan's stored
 deadline; a plan saved before deadlines were stored returns the recreation
 message instead.
 
+Plans are visible only to the token that generated them, so set `$token` to the
+disposable token used for generation and reuse it for every request about that
+plan. Keep it in a shell variable rather than in files or shared history. A new
+token can be made with:
+
 ```powershell
-$plans = Invoke-RestMethod http://127.0.0.1:8000/api/v1/study-plans
+$bytes = [byte[]]::new(32)
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$token = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+```
+
+```powershell
+$auth = @{ Authorization = "Bearer $token" }
+$plans = Invoke-RestMethod -Headers $auth http://127.0.0.1:8000/api/v1/study-plans
 $selected = $plans.plans | Select-Object -First 1
 if ($null -eq $selected) { throw 'Generate a plan before adjusting.' }
 $failed = $selected.schedules | Where-Object { $_.schedule_id -like 'study-*' } | Select-Object -First 1
@@ -648,7 +804,7 @@ $payload = @{
     schedule_id = $failed.schedule_id
     schedules = @($selected.schedules)
 } | ConvertTo-Json -Depth 10
-Invoke-RestMethod -Method Post `
+Invoke-RestMethod -Method Post -Headers $auth `
     -Uri http://127.0.0.1:8000/api/v1/schedules/adjust `
     -ContentType 'application/json; charset=utf-8' `
     -Body ([System.Text.Encoding]::UTF8.GetBytes($payload))

@@ -29,6 +29,10 @@ import com.swpp.licenseplanner.data.CalendarReadRepository
 import com.swpp.licenseplanner.data.CalendarReadWindow
 import com.swpp.licenseplanner.data.CalendarWriteOutcome
 import com.swpp.licenseplanner.data.ExportNotStarted
+import com.swpp.licenseplanner.data.DemoRemainingStudyRepository
+import com.swpp.licenseplanner.data.DeleteOutcome
+import com.swpp.licenseplanner.data.DeviceTokenSource
+import com.swpp.licenseplanner.data.DeviceTokenStore
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.ManualMove
@@ -86,6 +90,14 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+
+data class PlanDeletion(val ordinal: Int, val status: PlanDeletionStatus)
+
+sealed interface PlanDeletionStatus {
+    data object Deleting : PlanDeletionStatus
+    data object Deleted : PlanDeletionStatus
+    data class Failed(val title: String, val body: String) : PlanDeletionStatus
+}
 
 /** Example-question loading: loaded once per form flow, retried only after failure. */
 sealed interface QuestionLoadState {
@@ -308,7 +320,8 @@ class PlanFormViewModel(
      * which is captured once for the creation form.
      */
     private val currentDate: () -> LocalDate = { LocalDate.now() },
-    private val remainingStudyRepository: RemainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
+    /** Refuses live input, so it never stands in for the live repository. */
+    private val remainingStudyRepository: RemainingStudyRepository = DemoRemainingStudyRepository(),
     private val currentMinute: () -> LocalDateTime = {
         LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).withSecond(0).withNano(0)
     },
@@ -347,6 +360,9 @@ class PlanFormViewModel(
 
     private val _storage = MutableStateFlow(PlanStorage.Loading)
     val storage: StateFlow<PlanStorage> = _storage.asStateFlow()
+
+    private val _planDeletion = MutableStateFlow<PlanDeletion?>(null)
+    val planDeletion: StateFlow<PlanDeletion?> = _planDeletion.asStateFlow()
 
     /** The collection as last saved; it differs from [plans] only while a save is pending or failed. */
     private val _savedPlans = MutableStateFlow<List<SessionPlan>>(emptyList())
@@ -405,6 +421,7 @@ class PlanFormViewModel(
         val replacementOrdinal: Int? = null,
         val keep: KeepFeedback? = null,
         val remaining: RemainingStudyState.Success? = null,
+        val deletionOrdinal: Int? = null,
     )
 
     private var pendingWrite: PendingLocalWrite? = null
@@ -457,12 +474,13 @@ class PlanFormViewModel(
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
     private val exporting get() = _calendarExport.value != null
     private val readingCalendar get() = _calendarRead.value in activeCalendarReads
+    private val deleting get() = _planDeletion.value?.status == PlanDeletionStatus.Deleting
 
     /**
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
      * on the plan it started from.
      */
-    private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
+    private val busy get() = deleting || adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
         _manualReview.value != null || _freeTimeSearch.value != null || _remainingStudy.value.holdsSource
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
@@ -615,7 +633,8 @@ class PlanFormViewModel(
         val feedback = KeepFeedback(nextConflictId++, ordinal, scheduleId)
         _keepFeedback.value = feedback
         updatePlan(ordinal) { candidate }
-        val pending = PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), keep = feedback)
+        val pending = PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value,
+            nextOrdinal = nextOrdinal), keep = feedback)
         _storage.value = PlanStorage.Saving
         viewModelScope.launch { write(pending) }
         return true
@@ -881,7 +900,7 @@ class PlanFormViewModel(
         val ownExport = _calendarExport.value?.source?.planOrdinal == ordinal &&
             _calendarConflict.value?.kind == ConflictKind.Export &&
             _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
-        if (generating || adjusting || reloading || readingCalendar || _questionLoad.value == QuestionLoadState.Loading ||
+        if (deleting || generating || adjusting || reloading || readingCalendar || _questionLoad.value == QuestionLoadState.Loading ||
             _remainingStudy.value.holdsSource || _freeTimeSearch.value != null || noticeReading || _manualReview.value != null ||
             (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
@@ -893,7 +912,7 @@ class PlanFormViewModel(
         _checkIn.value?.save !in setOf(CheckInSave.Saving, CheckInSave.Unsaved) &&
         (_adjustment.value.state as? AdjustmentState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _draftDecision.value == null &&
-        PlanSnapshot(_plans.value, creationDraft = _committedDraft.value) == committedSnapshot
+        PlanSnapshot(_plans.value, creationDraft = _committedDraft.value, nextOrdinal = nextOrdinal) == committedSnapshot
 
     /** Leaves an export only after the global save-first gate succeeds. No read or POST yet. */
     fun startRegeneration(ordinal: Int): Boolean {
@@ -1071,7 +1090,7 @@ class PlanFormViewModel(
                         _plans.update { it + plan }
                         _generatedPlan.value = plan.ordinal
                         _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
-                        completeCreation(PlanSnapshot(_plans.value, creationDraft = null))
+                        completeCreation(PlanSnapshot(_plans.value, nextOrdinal = nextOrdinal))
                     }
                 }
                 is PlanOutcome.DemoShortfall -> {
@@ -1342,7 +1361,8 @@ class PlanFormViewModel(
                     acceptedManualReview = null
                     val result = RemainingStudyState.Success(input, outcome.response.schedules)
                     _remainingStudy.value = result
-                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), remaining = result))
+                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value,
+                        nextOrdinal = nextOrdinal), remaining = result))
                 }
                 AdjustmentOutcome.DemoNoSlot -> _remainingStudy.value = RemainingStudyState.Failure(input, noFit = true)
                 is AdjustmentOutcome.Failure -> {
@@ -1673,7 +1693,7 @@ class PlanFormViewModel(
      */
     fun startCalendarExport(ordinal: Int): Boolean {
         val plan = plan(ordinal) ?: return false
-        if (currentExportBlock(plan) != null) return false
+        if (deleting || currentExportBlock(plan) != null) return false
         val events = CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo)
         val phase = if (events == null) CalendarExportPhase.InvalidRows else CalendarExportPhase.RequestingPermission
         _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty(), plan), phase)
@@ -1795,6 +1815,70 @@ class PlanFormViewModel(
 
     private fun plan(ordinal: Int): SessionPlan? = _plans.value.firstOrNull { it.ordinal == ordinal }
 
+    fun planDeletionBlockReason(ordinal: Int): String? = when {
+        !storageReady && !(_storage.value == PlanStorage.SaveFailure && pendingWrite?.deletionOrdinal == ordinal) ->
+            when (_storage.value) {
+                PlanStorage.Loading -> "저장된 계획을 불러오는 중이에요."
+                PlanStorage.LoadFailure -> "저장된 계획을 불러오지 못했어요."
+                PlanStorage.Saving -> "기기에 저장하는 중이에요."
+                else -> "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
+            }
+        busy || generating || noticeReading || _noticePermission.value != null ||
+            _adjustment.value.manual != null || _checkIn.value != null || _draftDecision.value != null ->
+            "이 계획에서 진행 중인 작업이 끝나면 삭제할 수 있어요."
+        else -> null
+    }
+
+    fun deletePlan(ordinal: Int): Boolean {
+        val source = plan(ordinal) ?: return false
+        if (planDeletionBlockReason(ordinal) != null) return false
+        _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Deleting)
+        viewModelScope.launch {
+            val identity = source.scheduleCsvFile?.takeUnless { source.isDemo }
+            when (val outcome = identity?.let { adjustmentRepository.delete(it) } ?: DeleteOutcome.Gone) {
+                DeleteOutcome.Gone -> {
+                    val candidate = committedSnapshot.copy(plans = committedSnapshot.plans.filterNot { it.ordinal == ordinal })
+                    write(PendingLocalWrite(candidate, deletionOrdinal = ordinal))
+                }
+                is DeleteOutcome.Rejected -> _planDeletion.value = PlanDeletion(ordinal,
+                    PlanDeletionStatus.Failed("계획을 삭제하지 못했어요.", outcome.error.userMessage()))
+                DeleteOutcome.Uncertain -> _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Failed(
+                    "서버에서 삭제됐는지 확인하지 못했어요.", "계획은 그대로예요. 다시 시도해 주세요."))
+            }
+            refreshNoticesWhenIdle()
+        }
+        return true
+    }
+
+    fun dismissDeletionNotice() {
+        if (_planDeletion.value?.status == PlanDeletionStatus.Deleted) _planDeletion.value = null
+    }
+
+    private fun settleDeletion(ordinal: Int, saved: Boolean) {
+        if (!saved) {
+            val serverGone = plan(ordinal)?.let { !it.isDemo && it.scheduleCsvFile != null } == true
+            _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Failed(
+                if (serverGone) "서버에서는 삭제했지만 이 기기에서 지우지 못했어요." else "이 기기에서 계획을 지우지 못했어요.",
+                "다시 시도해 주세요."))
+            return
+        }
+        _plans.value = committedSnapshot.plans
+        _notices.update { it - ordinal }
+        if (_generatedPlan.value == ordinal) _generatedPlan.value = null
+        if (_adjustment.value.planOrdinal == ordinal) {
+            _adjustment.value = AdjustmentSelection()
+            pendingAdjustment = null
+        }
+        if (_keepFeedback.value?.ordinal == ordinal) _keepFeedback.value = null
+        val remainingOrdinal = when (val remaining = _remainingStudy.value) {
+            is RemainingStudyState.Success -> remaining.input.source.ordinal
+            is RemainingStudyState.Failure -> remaining.input.source.ordinal
+            else -> null
+        }
+        if (remainingOrdinal == ordinal) _remainingStudy.value = null
+        _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Deleted)
+    }
+
     /** Changes only the entry [ordinal]; every other plan stays as it is. */
     private fun updatePlan(ordinal: Int, transform: (SessionPlan) -> SessionPlan) =
         _plans.update { plans -> plans.map { if (it.ordinal == ordinal) transform(it) else it } }
@@ -1888,6 +1972,10 @@ class PlanFormViewModel(
     fun retrySave() {
         if (_storage.value != PlanStorage.SaveFailure) return
         val pending = pendingWrite ?: return
+        pending.deletionOrdinal?.let {
+            deletePlan(it)
+            return
+        }
         _storage.value = PlanStorage.Saving
         settleParticipants(pending, saved = null)
         pending.replacementId?.let { id ->
@@ -1916,7 +2004,7 @@ class PlanFormViewModel(
             _draftDecision.value = decision.copy(phase = DraftPhase.Done)
             return true
         }
-        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = draft), decision)
+        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = draft, nextOrdinal = nextOrdinal), decision)
         return true
     }
 
@@ -1933,7 +2021,7 @@ class PlanFormViewModel(
             _draftDecision.value = decision.copy(phase = DraftPhase.Done)
             return true
         }
-        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = null), decision)
+        writeDraft(PlanSnapshot(_savedPlans.value, nextOrdinal = nextOrdinal), decision)
         return true
     }
 
@@ -2047,7 +2135,8 @@ class PlanFormViewModel(
         checkIn: CheckInEditor? = null,
         move: AdjustmentSelection? = null,
         keep: KeepFeedback? = null,
-    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value), checkIn, move, keep = keep))
+    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value, nextOrdinal),
+        checkIn, move, keep = keep))
 
     private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean = write(PendingLocalWrite(snapshot))
 
@@ -2132,6 +2221,7 @@ class PlanFormViewModel(
         pending.replacementId?.let { finishReplacement(it, saved) }
         if (saved && pendingWrite === pending) pendingWrite = null
         _storage.value = if (saved) PlanStorage.Ready else PlanStorage.SaveFailure
+        pending.deletionOrdinal?.let { settleDeletion(it, saved) }
         return saved
     }
 
@@ -2186,17 +2276,19 @@ class PlanFormViewModel(
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val application = checkNotNull(this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
+                // Opened on the first live request's worker thread; demo never reads it.
+                val tokens = DeviceTokenSource { DeviceTokenStore.open(application).token() }
                 PlanFormViewModel(
-                    FlavorRepositories.questionRepository(),
-                    FlavorRepositories.planningRepository(),
-                    FlavorRepositories.adjustmentRepository(),
+                    FlavorRepositories.questionRepository(tokens),
+                    FlavorRepositories.planningRepository(tokens),
+                    FlavorRepositories.adjustmentRepository(tokens),
                     planStore = AtomicFilePlanStore.open(
                         application,
                         PlanStorageScope.of(BuildConfig.DEMO_MODE, BuildConfig.API_BASE_URL),
                     ),
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
                     calendarReadRepository = AndroidCalendarReadRepository.create(application),
-                    remainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
+                    remainingStudyRepository = FlavorRepositories.remainingStudyRepository(tokens),
                 )
             }
         }

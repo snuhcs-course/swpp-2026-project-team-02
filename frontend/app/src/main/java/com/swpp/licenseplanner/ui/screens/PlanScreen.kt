@@ -1,16 +1,7 @@
 package com.swpp.licenseplanner.ui.screens
 
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import com.swpp.licenseplanner.domain.TopicTotal
-import com.swpp.licenseplanner.ui.theme.Divider
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,15 +11,25 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
@@ -42,12 +43,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.DayPlan
@@ -55,11 +65,13 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.TopicTotal
 import com.swpp.licenseplanner.domain.WeekPlan
 import com.swpp.licenseplanner.domain.WeeklyTimeUsage
 import com.swpp.licenseplanner.domain.WeeklyTimeUsageCalculator
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.ExportBlock
+import com.swpp.licenseplanner.ui.PlanDeletionStatus
 import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.RemovedStudySchedule
 import com.swpp.licenseplanner.ui.components.AlertCard
@@ -78,6 +90,7 @@ import com.swpp.licenseplanner.ui.components.Tag
 import com.swpp.licenseplanner.ui.components.TopBar
 import com.swpp.licenseplanner.ui.components.exportBlockText
 import com.swpp.licenseplanner.ui.components.exportButtonText
+import com.swpp.licenseplanner.ui.theme.Divider
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkBody
 import com.swpp.licenseplanner.ui.theme.InkMuted
@@ -172,7 +185,19 @@ fun PlanScreen(
     remainingStudyReason: String? = null,
     initialScheduleId: String? = null,
     onFocusApplied: () -> Unit = {},
+    deletion: PlanDeletionStatus? = null,
+    deletionBlockReason: String? = null,
+    onDelete: () -> Boolean = { false },
 ) {
+    val deleting = deletion == PlanDeletionStatus.Deleting
+    val deleteFailure = deletion as? PlanDeletionStatus.Failed
+    var confirmingDeletion by rememberSaveable(plan.ordinal) { mutableStateOf(false) }
+    BackHandler(enabled = deleting) {}
+    if (confirmingDeletion) {
+        DeletePlanDialog(plan, canDelete = deletionBlockReason == null,
+            onConfirm = { if (onDelete()) confirmingDeletion = false },
+            onCancel = { confirmingDeletion = false })
+    }
     val response = plan.current
     val weeks = remember(response) { PlanGrouping.weeks(response.schedules) }
     val topicTotals = remember(response) { PlanGrouping.topicTotals(response.schedules) }
@@ -198,7 +223,11 @@ fun PlanScreen(
     Scaffold(
         containerColor = Paper,
         contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = { TopBar("내 계획", NavIcon.Back, onBack) { ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT) } },
+        topBar = {
+            TopBar("내 계획", if (deleting) null else NavIcon.Back, onBack) {
+                if (!deleting) ContextHelpButton(ContextHelpTopic.CALENDAR_EXPORT)
+            }
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
@@ -221,8 +250,8 @@ fun PlanScreen(
                 }
             }
             if (alert != null) item { AlertCard(alert.title, alert.body) }
-            item { conflictNotices() }
-            if (storage == PlanStorage.SaveFailure) {
+            if (!deleting) item { conflictNotices() }
+            if (storage == PlanStorage.SaveFailure && (deleteFailure == null || deletionBlockReason != null)) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         StorageAlert(storage, onRetryLoad = {}, onRetrySave = onRetrySave)
@@ -244,6 +273,7 @@ fun PlanScreen(
                         count = weeks.size,
                         onPrevious = { weekIndex-- },
                         onNext = { weekIndex++ },
+                        enabled = !deleting,
                     )
                 }
                 item { WeeklyStudyTotals(week) }
@@ -254,30 +284,72 @@ fun PlanScreen(
                     if (day.sessions.isEmpty()) CompactEmptyDay(day) else DaySection(day, checkIns = checkIns)
                 }
             }
-            if (topicTotals.isNotEmpty()) item { TopicTotalsSection(topicTotals) }
+            if (topicTotals.isNotEmpty()) item { TopicTotalsSection(topicTotals, enabled = !deleting) }
             if (summary != null) item { PlanSummary(summary) }
             item {
                 PrimaryButton(
                     exportButtonText(exportCount),
                     onExport,
-                    enabled = exportBlock == null,
+                    enabled = !deleting && exportBlock == null,
                     subtitle = exportBlock?.let(::exportBlockText) ?: EXPORT_SUBTITLE,
                 )
             }
-            item { SecondaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = remainingStudyReason == null) }
+            item { SecondaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = !deleting && remainingStudyReason == null) }
             remainingStudyReason?.let { item { Note(it) } }
             regenerationReason?.let { item { Note(it) } }
-            item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = regenerationReason == null) }
-            item { SecondaryButton("일정 조정하기", onAdjust) }
+            item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = !deleting && regenerationReason == null) }
+            item { SecondaryButton("일정 조정하기", onAdjust, enabled = !deleting) }
             // With no sessions export is disabled, so starting over is the next step unless a storage retry is.
             val inputActionLeads = week == null && storage == PlanStorage.Ready
             inputAction?.let { action ->
                 val onInput = if (action == PlanInputAction.EditInputs) onEditInputs else onCreate
                 item {
-                    if (inputActionLeads) PrimaryButton(action.label, onInput) else SecondaryButton(action.label, onInput)
+                    if (inputActionLeads) PrimaryButton(action.label, onInput, enabled = !deleting)
+                    else SecondaryButton(action.label, onInput, enabled = !deleting)
                 }
             }
-            item { SecondaryButton("처음으로", onHome) }
+            item { SecondaryButton("처음으로", onHome, enabled = !deleting) }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (deleteFailure != null) AlertCard(deleteFailure.title, deleteFailure.body)
+                    val label = when {
+                        deleting -> "삭제하는 중…"
+                        deleteFailure != null -> "다시 시도"
+                        else -> "계획 삭제"
+                    }
+                    SecondaryButton(label, onClick = {
+                        if (deleteFailure != null) onDelete() else confirmingDeletion = true
+                    }, enabled = !deleting && deletionBlockReason == null)
+                    if (!deleting) deletionBlockReason?.let { Note(it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeletePlanDialog(plan: SessionPlan, canDelete: Boolean, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    Dialog(onDismissRequest = onCancel,
+        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.padding(horizontal = 24.dp).widthIn(max = 342.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp), color = Paper, border = BorderStroke(1.dp, Outline),
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("계획을 삭제할까요?", style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 26.sp), color = Ink)
+                    Text("계획 ${plan.ordinal} · $CERTIFICATION_NAME", style = MaterialTheme.typography.bodyMedium, color = Ink)
+                }
+                val where = if (plan.isDemo || plan.scheduleCsvFile == null) "이 기기에서" else "이 기기와 서버에서"
+                Text("$where 계획과 공부 기록이 지워져요. 휴대폰 캘린더에 추가한 일정은 그대로예요.",
+                    style = MaterialTheme.typography.bodyMedium, color = Ink)
+                PrimaryButton("삭제", onConfirm, enabled = canDelete)
+                TextButton(onCancel, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) {
+                    Text("취소", style = MaterialTheme.typography.labelLarge, color = Ink, textDecoration = TextDecoration.Underline)
+                }
+            }
         }
     }
 }
@@ -298,7 +370,7 @@ private fun WeeklyStudyTotals(week: WeekPlan) {
  * collapsed by default so the week's schedule stays first; the header toggles the topic rows.
  */
 @Composable
-private fun TopicTotalsSection(totals: List<TopicTotal>) {
+private fun TopicTotalsSection(totals: List<TopicTotal>, enabled: Boolean) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val summary = "공부 주제 ${totals.size}개 · 총 ${PlanGrouping.formatDuration(totals.sumOf { it.minutes })}"
     Column(
@@ -314,7 +386,7 @@ private fun TopicTotalsSection(totals: List<TopicTotal>) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(role = Role.Button, onClickLabel = if (expanded) "접기" else "펼치기") { expanded = !expanded }
+                .clickable(enabled = enabled, role = Role.Button, onClickLabel = if (expanded) "접기" else "펼치기") { expanded = !expanded }
                 .semantics(mergeDescendants = true) { stateDescription = if (expanded) "펼침" else "접힘" },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -439,16 +511,17 @@ internal fun PlanSummary(summary: String) {
 }
 
 @Composable
-internal fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
+internal fun WeekNavigator(week: WeekPlan, index: Int, count: Int, onPrevious: () -> Unit, onNext: () -> Unit,
+                           enabled: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        IconButton44(R.drawable.ic_back, "이전 주", onPrevious, enabled = index > 0)
+        IconButton44(R.drawable.ic_back, "이전 주", onPrevious, enabled = enabled && index > 0)
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(weekRange(week), style = MaterialTheme.typography.labelMedium, color = InkBody, textAlign = TextAlign.Center)
             Text("${index + 1} / ${count}주", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
         }
         // The back arrow mirrored serves as the next arrow.
         Row(Modifier.scale(scaleX = -1f, scaleY = 1f)) {
-            IconButton44(R.drawable.ic_back, "다음 주", onNext, enabled = index < count - 1)
+            IconButton44(R.drawable.ic_back, "다음 주", onNext, enabled = enabled && index < count - 1)
         }
     }
 }

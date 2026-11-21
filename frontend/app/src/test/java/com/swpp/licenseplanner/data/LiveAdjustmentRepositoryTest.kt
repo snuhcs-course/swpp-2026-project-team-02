@@ -52,6 +52,34 @@ class LiveAdjustmentRepositoryTest {
     private fun repository(client: OkHttpClient = createApiHttpClient(), base: String = server.url("/api/v1/").toString()) =
         LiveAdjustmentRepository(base, client)
 
+    @Test fun deleteMapsGoneRejectionAndUncertaintyWithoutReplaying() = runBlocking {
+        val gone = """{"error":{"code":"PLAN_NOT_FOUND","message":"gone"}}"""
+        val throttled = """{"error":{"code":"RATE_LIMITED","message":"wait"}}"""
+        val token = "b".repeat(64)
+        val base = server.url("/api/v1/").toString()
+        val repo = repository(createApiHttpClient().withDeviceCredential(base) { token }, base)
+        val examples = listOf(
+            MockResponse().setResponseCode(204) to DeleteOutcome.Gone,
+            MockResponse().setResponseCode(404).setBody(gone) to DeleteOutcome.Gone,
+            MockResponse().setResponseCode(404) to DeleteOutcome.Rejected(ApiError.Configuration),
+            MockResponse().setResponseCode(429).setBody(throttled) to DeleteOutcome.Rejected(ApiError.RateLimited),
+            MockResponse().setResponseCode(503).setHeader("Retry-After", "0") to DeleteOutcome.Uncertain,
+            MockResponse().setResponseCode(200).setBody("unexpected success") to DeleteOutcome.Uncertain,
+            MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST) to DeleteOutcome.Uncertain,
+        )
+        for ((index, example) in examples.withIndex()) {
+            val (response, expected) = example
+            server.enqueue(response)
+            assertEquals(expected, repo.delete(file))
+            assertEquals(index + 1, server.requestCount)
+            val sent = server.takeRequest(1, TimeUnit.SECONDS)!!
+            assertEquals("DELETE", sent.method)
+            assertEquals("/api/v1/study-plans/${file.substringAfterLast('/')}", sent.path)
+            assertEquals("Bearer $token", sent.getHeader("Authorization"))
+            assertEquals(0L, sent.bodySize)
+        }
+    }
+
     private fun adjust(repo: LiveAdjustmentRepository = repository(), with: AdjustmentInput = input) =
         runBlocking { repo.adjust(with) }
 

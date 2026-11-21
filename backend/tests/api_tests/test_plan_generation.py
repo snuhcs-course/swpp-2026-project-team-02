@@ -20,6 +20,7 @@ import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
 from assessment_service import _onboarding_selection
 from license_planner.agent import PlanningAgent
+from test_support.device_tokens import bearer, owner_store
 from test_support.question_banks import custom_question_variant
 
 # Captured classifier traces, replayed with explicitly custom questions so they stay unresolved.
@@ -62,7 +63,8 @@ class PlanGenerationHttpTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = Path(self.temp.name)
+        self.plan_root = Path(self.temp.name)
+        self.store = owner_store(self.plan_root).directory
         self.existing = self.store / "existing-plan.csv"
         self.existing.write_text("schedule_id,start_date,end_date,topic\n", encoding="utf-8")
         self.model_requests = 0
@@ -80,7 +82,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         def no_profile_access(*args, **kwargs):
             raise AssertionError("the saved availability profile must not be read")
 
-        patches =[patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.store),
+        patches =[patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.plan_root),
                    patch.object(api_service, "load_personal_availability", no_profile_access),
                    patch.object(PlanningAgent, "_ask_model", ask_model)]
         for patcher in patches:
@@ -94,7 +96,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
 
     def post(self, payload):
         request = Request(f"{self.base}/study-plans", data=json.dumps(payload).encode(),
-                          headers={"Content-Type": "application/json"}, method="POST")
+                          headers={"Content-Type": "application/json", **bearer()}, method="POST")
         try:
             with urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
@@ -103,7 +105,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 return error.code, json.loads(error.read())
 
     def get(self, path):
-        with urlopen(f"{self.base}{path}", timeout=10) as response:
+        with urlopen(Request(f"{self.base}{path}", headers=bearer()), timeout=10) as response:
             return response.status, json.loads(response.read())
 
     def saved_files(self):

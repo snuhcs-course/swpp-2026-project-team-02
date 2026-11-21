@@ -12,6 +12,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.KeyEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.model.ScheduleRow
+import com.swpp.licenseplanner.data.DeleteOutcome
+import com.swpp.licenseplanner.data.AdjustmentOutcome
+import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.data.ReloadOutcome
@@ -1110,6 +1113,106 @@ class MainFlowUiTest {
         compose.onNodeWithText("내 답 B. 둘째 선택지", useUnmergedTree = true).assertExists()
         compose.onNodeWithText("정답 C. 셋째 선택지", useUnmergedTree = true).assertExists()
         host.capture("question-results")
+    }
+
+    @Test fun cancellingDemoDeletionKeepsThePlanAndConfirmingRemovesIt() = withApp { host ->
+        val source = seedFullPlanForFreeTime(host)
+        clickPlanAction("계획 삭제")
+        show("계획을 삭제할까요?")
+        show("이 기기에서 계획과 공부 기록이 지워져요. 휴대폰 캘린더에 추가한 일정은 그대로예요.")
+        host.capture("delete-demo-confirmation")
+        click("취소")
+        assertEquals(listOf(source), host.snapshot().plans)
+        clickPlanAction("계획 삭제")
+        click("삭제")
+        awaitPlanList()
+        show("계획을 삭제했어요.")
+        show("아직 만든 계획이 없어요")
+        assertTrue(host.snapshot().plans.isEmpty())
+        assertTrue(host.deletedIdentities.isEmpty())
+        assertEquals(0, host.calendarWrites.get())
+        host.capture("delete-empty-list")
+        pressBack()
+        show("무엇을 할까요?")
+    }
+
+    @Test fun liveDeletionOffersRetryAfterServerUncertaintyAndLocalSaveFailure() = withApp { host ->
+        val source = seedFullPlanForFreeTime(host)
+        val identity = "license_planner/output/study_plan_20261121T120000_aaaa.csv"
+        val first = source.copy(isDemo = false, scheduleCsvFile = identity)
+        val second = first.copy(ordinal = 2, scheduleCsvFile = "license_planner/output/study_plan_20261121T130000_bbbb.csv")
+        host.storageScope = PlanStorageScope.of(demo = false, apiBaseUrl = "http://test.invalid/api/v1")
+        host.seedSnapshot(PlanSnapshot(listOf(first, second)))
+        host.recreate()
+        openPlanView(2)
+        host.deleteOutcome = DeleteOutcome.Uncertain
+        val gate = CompletableDeferred<Unit>()
+        host.holdDeletion.set(gate)
+        clickPlanAction("계획 삭제")
+        show("이 기기와 서버에서 계획과 공부 기록이 지워져요. 휴대폰 캘린더에 추가한 일정은 그대로예요.")
+        host.capture("delete-live-confirmation")
+        click("삭제")
+        try {
+            show("삭제하는 중…", lazy = true)
+            compose.onNodeWithText("삭제하는 중…").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("뒤로").assertDoesNotExist()
+            pressBack()
+            awaitPlanView()
+            host.capture("deleting")
+        } finally {
+            host.holdDeletion.set(null)
+            gate.complete(Unit)
+        }
+        show("서버에서 삭제됐는지 확인하지 못했어요.", lazy = true)
+        assertEquals(listOf(first, second), host.snapshot().plans)
+        host.capture("delete-uncertain")
+        host.deleteOutcome = DeleteOutcome.Gone
+        host.failSaves.set(true)
+        clickPlanAction("다시 시도")
+        show("서버에서는 삭제했지만 이 기기에서 지우지 못했어요.", lazy = true)
+        assertEquals(listOf(first, second), host.snapshot().plans)
+        host.capture("delete-local-save-failed")
+        host.failSaves.set(false)
+        clickPlanAction("다시 시도")
+        awaitPlanList()
+        show("계획을 삭제했어요.")
+        assertEquals(listOf(first), host.snapshot().plans)
+        assertEquals(List(3) { second.scheduleCsvFile }, host.deletedIdentities)
+        host.capture("delete-populated-list")
+        pressBack()
+        show("무엇을 할까요?")
+    }
+
+    @Test fun deletionIsDisabledWhileThePlanHasAnAdjustmentInFlight() = withApp { host ->
+        val plan = seedFullPlanForFreeTime(host)
+        val gate = CompletableDeferred<Unit>()
+        host.holdAdjustment.set(gate)
+        compose.runOnIdle {
+            assertTrue(host.viewModel.selectPlan(plan.ordinal))
+            host.viewModel.selectFailedSession(plan.current.schedules.first().scheduleId)
+            assertTrue(host.viewModel.submitAdjustment())
+        }
+        try {
+            show("이 계획에서 진행 중인 작업이 끝나면 삭제할 수 있어요.", lazy = true)
+            compose.onNodeWithText("계획 삭제").assertIsNotEnabled()
+            host.capture("delete-disabled-busy")
+        } finally {
+            gate.complete(Unit)
+        }
+    }
+
+    @Test fun rateLimitKeepsTheAdjustmentSelectionAndDoesNotReplay() = withApp { host ->
+        val plan = seedFullPlanForFreeTime(host)
+        host.adjustmentOutcome = AdjustmentOutcome.Failure(ApiError.RateLimited)
+        adjustShownPlan()
+        val target = PlanGrouping.sessions(plan.current.schedules).first()
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        show(ApiError.RateLimited.adjustmentMessage())
+        assertEquals(target.scheduleId, host.viewModel.adjustment.value.failedScheduleId)
+        assertEquals(plan, host.snapshot().plans.single())
+        assertEquals(1, host.adjustmentCalls.get())
+        host.capture("rate-limit")
     }
 
     @Test fun calendarFreeTimeShowsOnlyTheDateWhereATwentyMinuteRowJoinsStudy() = withApp { host ->

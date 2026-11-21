@@ -69,7 +69,9 @@ python -m scenarios.run_api_availability_integration_test
 ```
 
 It starts an ephemeral local HTTP server and uses a temporary profile file, so it
-does not overwrite `config/user_availability.json`. Schedule adjustment calls
+does not overwrite `config/user_availability.json`. It keeps one disposable
+device token in memory, checks that a tokenless adjustment returns `401`, and
+sends the token only as the `Authorization` header of the plan requests. Schedule adjustment calls
 OpenRouter model `openai/gpt-6-luna` and requires `OPENROUTER_API_KEY`, network
 access, and available credit.
 Results are saved under `scenarios/results/api/`.
@@ -155,7 +157,7 @@ python -m scenarios.run_license_planner_availability_test_cases
 python -m scenarios.run_license_planner_test_cases --case-id license_planner_case_04_personal_availability_api
 ```
 
-The first two commands do not call a model. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `scenarios/results/license_planner_availability/`. The last command starts a temporary local HTTP server and sends the JSON fixture through `POST /api/v1/study-plans`; it makes real OpenRouter `openai/gpt-6-luna` requests, requires `OPENROUTER_API_KEY`, network access, and available credit, and records the HTTP result, tool calls, generated schedule, and an `inference` record (the `selected_model` the case's agent actually requested, or `null` when the case made no model request; model request count; elapsed seconds; and per-response token/cost usage with the provider-returned model, `null` when the provider does not return it) under `scenarios/results/license_planner/`. Omit `--case-id` to run all live scenarios. Add offline availability cases under `scenarios/inputs/license_planner_availability/`.
+The first two commands do not call a model. The availability runner checks JSON persistence, schedule placement, conflicts, missing-time errors, and invalid input; it saves per-case CSVs and traces under `scenarios/results/license_planner_availability/`. The last command starts a temporary local HTTP server, with plans in a temporary directory and request limits raised for that local runner, and sends the JSON fixture through `POST /api/v1/study-plans` with a new disposable device token per case; it makes real OpenRouter `openai/gpt-6-luna` requests, requires `OPENROUTER_API_KEY`, network access, and available credit, and records the HTTP result, tool calls, generated schedule, and an `inference` record (the `selected_model` the case's agent actually requested, or `null` when the case made no model request; model request count; elapsed seconds; and per-response token/cost usage with the provider-returned model, `null` when the provider does not return it) under `scenarios/results/license_planner/`. Omit `--case-id` to run all live scenarios. Add offline availability cases under `scenarios/inputs/license_planner_availability/`.
 
 For diagnosed requests, every date's total is that date's usable minutes (the
 entered windows inside the preparation period minus busy rows); the model does
@@ -268,7 +270,10 @@ custom questions, so the backend tests replay them with each prompt marked as a
 custom question (`test_support/question_banks.py`) and pin
 `topic_errors_then_build_on_last_request` for the classification and deadline
 checks. Adjustment answers with inspect, topic
-inspection and the matching mutation tool. Plans (`plans/`) and the availability
+inspection and the matching mutation tool. Plan routes require a device token
+exactly as on the production server (`FRONTEND_INTEGRATION_GUIDE.md#device-token`),
+and the production request limits apply, starting empty on every fixture start.
+Plans (`plans/<owner digest>/`, one directory per token) and the availability
 profile (`user_availability.json`) live in a temporary directory removed on
 exit: `GET`/`PUT /availability` never read or write `config/user_availability.json`. Reading an OpenRouter key or model setting, or sending a
 provider request, raises an error. A client that sends a captured trace's
@@ -300,10 +305,10 @@ Options for controlled-live device checks (all off by default):
 | Option | Effect |
 | --- | --- |
 | `--planning scripted` | The following describes its model proposal; P10 can rebalance the returned topic labels and block count. Instead of replaying `--case-id`, the fixed model asks for `analyze_exam_results {}` and then builds one 60-minute session per date with at least 60 usable minutes, cycling through the required topics, all taken from that request's own period, availability and overrides. Works for any dates; a request with custom questions (which need classification) or with fewer such dates than topics fails with `UPSTREAM_ERROR`. |
-| `--storage-dir DIR` | Keep `DIR/plans/` and `DIR/user_availability.json` across restarts (restart/readback checks). |
+| `--storage-dir DIR` | Keep `DIR/plans/` and `DIR/user_availability.json` across restarts (restart/readback checks); a client must reuse the same token to read its plans after a restart. |
 | `--profile-seed FILE` | Copy this availability JSON to the isolated profile when the profile does not exist yet. |
 | `--now YYYY/MM/DD/HH/MM` | Freeze the Korea-local clock that manual moves compare against (`MANUAL_MOVE_IN_PAST`). Plan generation and automatic adjustment are unaffected. |
-| `--request-log FILE` | Append one JSON line per request: `time`, `method`, `path`, `status`, request `body`, `response`, and any test switch used. |
+| `--request-log FILE` | Append one JSON line per request: `time`, `method`, `path`, `device_token` (`valid`, `invalid` or `missing`; never the value), `status`, request `body` (`null` when a rejection left it unread), `response`, and any test switch used. |
 | `--test-control FILE` | Test scaffolding, not server behavior. A JSON object re-read on every request: `adjust_delay_seconds` (sleep before each `POST /schedules/adjust`), `drop_next_adjust_response` (apply and save the next adjustment, then close the connection without a response; consumed once), `inject_busy_schedules` (rows appended to the next `POST /study-plans` `busy_schedules`; consumed once; the log keeps the original body). |
 
 ```bash

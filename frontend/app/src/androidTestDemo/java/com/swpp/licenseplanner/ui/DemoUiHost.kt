@@ -18,9 +18,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.AdjustmentInput
+import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.AtomicFilePlanStore
 import com.swpp.licenseplanner.data.DemoAdjustmentRepository
+import com.swpp.licenseplanner.data.DeleteOutcome
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.PlanSnapshot
@@ -74,6 +76,11 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     val planningCalls = AtomicInteger()
     val questionCalls = AtomicInteger()
     val reloadCalls = AtomicInteger()
+    val deletedIdentities = java.util.concurrent.CopyOnWriteArrayList<String>()
+    var deleteOutcome: DeleteOutcome = DeleteOutcome.Gone
+    var adjustmentOutcome: AdjustmentOutcome? = null
+    val holdAdjustment = AtomicReference<CompletableDeferred<Unit>?>(null)
+    val holdDeletion = AtomicReference<CompletableDeferred<Unit>?>(null)
     val calendarReads = AtomicInteger()
     val calendarWrites = AtomicInteger()
     val planningRequests = java.util.concurrent.CopyOnWriteArrayList<StudyPlanRequest>()
@@ -94,6 +101,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     /** While set, every save waits for it to complete before writing or being refused. */
     val holdSaves = AtomicReference<CompletableDeferred<Unit>?>(null)
     val viewModel: PlanFormViewModel get() = checkNotNull(current.value)
+    /** Demo repositories never read the device credential; reading it fails the test. */
+    private val noDeviceCredential = com.swpp.licenseplanner.data.DeviceTokenSource { throw AssertionError("demo read the device credential") }
 
     @Suppress("DEPRECATION")
     fun start() {
@@ -126,16 +135,24 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
         val today = LocalDate.of(2026, 11, 16)
         val adjustment = DemoAdjustmentRepository { today.atStartOfDay() }
         val countedAdjustment = object : AdjustmentRepository by adjustment {
-            override suspend fun adjust(input: AdjustmentInput) = adjustment.adjust(input).also {
-                adjustmentInputs += input
-                adjustmentCalls.incrementAndGet()
+            override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
+                holdAdjustment.get()?.await()
+                return (adjustmentOutcome ?: adjustment.adjust(input)).also {
+                    adjustmentInputs += input
+                    adjustmentCalls.incrementAndGet()
+                }
             }
             override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
                 reloadCalls.incrementAndGet()
                 return reloadOutcome ?: adjustment.reload(scheduleCsvFile)
             }
+            override suspend fun delete(scheduleCsvFile: String): DeleteOutcome {
+                deletedIdentities += scheduleCsvFile
+                holdDeletion.get()?.await()
+                return deleteOutcome
+            }
         }
-        val planning = FlavorRepositories.planningRepository()
+        val planning = FlavorRepositories.planningRepository(noDeviceCredential)
         val countedPlanning = object : PlanningRepository {
             override suspend fun generate(request: StudyPlanRequest): PlanOutcome {
                 holdPlanning.get()?.await()
@@ -164,7 +181,7 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = PlanFormViewModel(
                 questionRepository = object : com.swpp.licenseplanner.data.QuestionRepository {
-                    override suspend fun load(certificationId: String) = FlavorRepositories.questionRepository().load(certificationId).also {
+                    override suspend fun load(certificationId: String) = FlavorRepositories.questionRepository(noDeviceCredential).load(certificationId).also {
                         questionCalls.incrementAndGet()
                     }
                 },

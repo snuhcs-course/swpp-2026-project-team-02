@@ -29,6 +29,8 @@ EXAM_DATE_FORMAT = "%Y/%m/%d/%H/%M"
 CONTEXT_METADATA_VERSION = 2
 _CONTEXT_METADATA_KEYS = {"version", "exam_date", "preparation_start", "availability_snapshot"}
 STUDY_PLAN_OUTPUT_LOCK = Lock()
+DEVICE_TOKEN = re.compile(r"[0-9a-f]{64}")
+MISSING_PLAN_MESSAGE = "The selected study plan was not found."
 
 
 class PlanNotFoundError(Exception):
@@ -63,16 +65,47 @@ class PlanMetadata:
     availability: AvailabilityContext | None = None
 
 
+def owner_digest(token: str) -> str:
+    """Owner directory name for one device token; the raw token is never stored."""
+    if not isinstance(token, str) or not DEVICE_TOKEN.fullmatch(token):
+        raise ValueError("device token must be 64 lowercase hexadecimal characters")
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
 def plan_fields(identifier: str) -> dict[str, str]:
     return {"schedule_csv_file": identifier,
             "schedule_csv_url": f"/api/v1/study-plans/{identifier.removeprefix(PLAN_PREFIX)}"}
 
 
 class StudyPlanStore:
-    """Single-process optimistic updates; never hold the lock during LLM calls."""
+    """Single-process optimistic updates; never hold the lock during LLM calls.
 
-    def __init__(self, directory: Path):
+    A store from ``for_owner`` holds one device owner's plans in its own
+    directory directly under the plan root; plans at the root itself have no
+    owner and are never reached through an owner store.
+    """
+
+    def __init__(self, directory: Path, *, owner_root: Path | None = None):
         self.directory = directory
+        self._owner_root = owner_root
+
+    @classmethod
+    def for_owner(cls, root: Path, token: str) -> StudyPlanStore:
+        resolved = Path(root).resolve()
+        return cls(resolved / owner_digest(token), owner_root=resolved)
+
+    def check_owner_directory(self) -> None:
+        """Refuse an owner directory that is a symlink or no longer directly under its root."""
+        if self._owner_root is None:
+            return
+        try:
+            invalid = self.directory.is_symlink() or (
+                self.directory.exists() and (not self.directory.is_dir()
+                                             or self.directory.resolve().parent != self._owner_root))
+        except OSError as error:
+            raise PlanStorageError("Could not access study plan storage") from error
+        if invalid:
+            raise PlanStorageError("Study plan storage is invalid")
 
     def _resolve(self, identifier: str) -> Path:
         if not isinstance(identifier, str) or not identifier.startswith(PLAN_PREFIX):
@@ -80,6 +113,7 @@ class StudyPlanStore:
         filename = identifier[len(PLAN_PREFIX):]
         if not STUDY_PLAN_FILENAME.fullmatch(filename):
             raise ValueError("Invalid schedule_csv_file")
+        self.check_owner_directory()
         path = self.directory / filename
         if path.is_symlink() or path.resolve().parent != self.directory.resolve():
             raise ValueError("Invalid schedule_csv_file")
@@ -89,7 +123,7 @@ class StudyPlanStore:
         try:
             return path.read_bytes()
         except FileNotFoundError as error:
-            raise PlanNotFoundError("Selected study plan no longer exists") from error
+            raise PlanNotFoundError(MISSING_PLAN_MESSAGE) from error
         except OSError as error:
             raise PlanStorageError("Could not read study plan") from error
 
@@ -168,10 +202,29 @@ class StudyPlanStore:
                 raise FileNotFoundError("Study plan CSV not found") from error
             try:
                 return self._read(path).decode("utf-8"), filename
-            except PlanNotFoundError as error:
-                raise FileNotFoundError("Study plan CSV not found") from error
             except UnicodeError as error:
                 raise PlanStorageError("Stored study plan is not UTF-8") from error
+
+    def delete(self, identifier: str) -> None:
+        """Remove a plan under the same lock used by updates and pruning."""
+        with STUDY_PLAN_OUTPUT_LOCK:
+            try:
+                path = self._resolve(identifier)
+            except ValueError as error:
+                raise FileNotFoundError("Study plan CSV not found") from error
+            metadata = self._metadata_path(path)
+            try:
+                found = True
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    found = False
+                # A retry can finish cleaning up metadata left by a failed unlink.
+                metadata.unlink(missing_ok=True)
+            except OSError as error:
+                raise PlanStorageError("Could not delete study plan") from error
+            if not found:
+                raise PlanNotFoundError(MISSING_PLAN_MESSAGE)
 
     def _retained_availability(self, path: Path) -> dict | None:
         """Response form of a plan's retained context; None when absent or unreadable.
@@ -207,6 +260,7 @@ class StudyPlanStore:
                     except PlanNotFoundError:
                         return []
                     return [self._plan_item(identifier, path, content)]
+                self.check_owner_directory()
                 if not self.directory.exists():
                     return []
                 paths = [p for p in self.directory.iterdir()
@@ -257,6 +311,7 @@ class StudyPlanStore:
         with STUDY_PLAN_OUTPUT_LOCK:
             try:
                 self.directory.mkdir(parents=True, exist_ok=True)
+                self.check_owner_directory()
                 timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%f%z")
                 filename = f"study_plan_{timestamp}_{uuid4().hex[:8]}.csv"
                 path = self.directory / filename

@@ -188,6 +188,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val freeTimeSearch by viewModel.freeTimeSearch.collectAsStateWithLifecycle()
     var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val deletion by viewModel.planDeletion.collectAsStateWithLifecycle()
+    LaunchedEffect(deletion) {
+        if (deletion?.status == PlanDeletionStatus.Deleted) nav.fromHome(Routes.PLAN_LIST)
+    }
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
     val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
@@ -461,16 +465,26 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         screen(nav, Routes.PLAN_LIST) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
+            fun back() {
+                if (!nav.canGoBack(entry)) return
+                viewModel.dismissDeletionNotice()
+                nav.goBack(entry)
+            }
+            BackHandler(onBack = ::back)
             PlanListScreen(
                 plans = plans,
                 savedPlans = savedPlans,
                 storage = planStorage,
-                onOpen = { nav.go(Routes.plan(it)) },
-                onCreate = ::createPlan,
-                onBack = { nav.goBack(entry) },
+                onOpen = { ordinal ->
+                    viewModel.dismissDeletionNotice()
+                    nav.go(Routes.plan(ordinal))
+                },
+                onCreate = { viewModel.dismissDeletionNotice(); createPlan() },
+                onBack = ::back,
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
                 conflictNotices = noticeCounts,
+                deletionNotice = deletion?.status == PlanDeletionStatus.Deleted,
             )
         }
         screen(nav, Routes.ADJUST) { entry ->
@@ -618,7 +632,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             val ordinal = entry.arguments?.getInt(Routes.PLAN_ORDINAL)
             val plan = plans.firstOrNull { it.ordinal == ordinal }
             if (plan == null) {
-                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
+                LaunchedEffect(entry) {
+                    if (viewModel.planDeletion.value?.status != PlanDeletionStatus.Deleted) nav.goBackAfterResume(entry)
+                }
             } else {
                 PlanScreen(
                     plan = plan,
@@ -633,7 +649,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onCreate = ::createPlan,
                     onHome = { nav.goBack(entry, Routes.HOME) },
                     onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },
-                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans,
+                        if (deletion?.status == PlanDeletionStatus.Deleting) PlanStorage.Saving else storage),
                     storage = storage,
                     onRetrySave = viewModel::retrySave,
                     conflictNotices = { selectedNotices(plan.ordinal) },
@@ -641,6 +658,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
                     initialScheduleId = remainingFocus,
                     onFocusApplied = { remainingFocus = null },
+                    deletion = deletion?.takeIf { it.ordinal == plan.ordinal }?.status,
+                    deletionBlockReason = viewModel.planDeletionBlockReason(plan.ordinal),
+                    onDelete = { viewModel.deletePlan(plan.ordinal) },
                 )
             }
         }

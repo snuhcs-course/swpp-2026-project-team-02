@@ -273,7 +273,9 @@ demo instrumentation contacts no server. It loads the 18 onboarding questions, s
 subjects, verifies that a no-fit automatic move leaves the saved plan intact,
 and confirms a one-time manual move outside the study windows. It checks the
 chosen start, exam deadline and other rows, then reads the plan back by its
-exact identity. The backend is
+exact identity with the saved device credential. A separate credential cannot
+read it. A second case generates a plan, deletes it through the app's ViewModel
+and verifies its local and server copies are gone. The backend is
 `backend/test_support/fixed_live_e2e_server.py`: the real API handler,
 scheduler, adjustment loop and plan store with fixed model replies and no
 OpenRouter access (see `backend/README.md`). Its default case,
@@ -386,8 +388,10 @@ device; it cannot reach a backend. A debug build is signed with the local debug
 certificate, not the release certificate, so installing it over a release build
 (or the reverse) fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate
 test device or profile, or uninstall the old app only after accepting the loss of
-its device-local plans. The public server is shared and unauthenticated; plans
-created there are visible to anyone who lists them.
+its device-local plans. A server without device scoping is shared: plans created
+there are visible to anyone who lists them. Check [the deployment
+guide](../deploy/README.md) for whether the public server enforces device tokens
+(see [Device credential](#device-credential)).
 
 ### Live release builds
 
@@ -428,6 +432,56 @@ had to treat as an unknown result. The extra connection per request is
 acceptable for local use. Nothing else changed: there is still no automatic
 retry, and a lost or timed-out adjustment still needs 최신 계획 불러오기 (see
 [Plan adjustment](#plan-adjustment)).
+
+### Device credential
+
+The live build sends one installation credential with every API request:
+`Authorization: Bearer <token>`, where the token is 32 random bytes from
+`SecureRandom` written as 64 lowercase hexadecimal characters. It is created on
+the first live API request after a fresh install, saved atomically (`AtomicFile`)
+as its own file in the app's private no-backup directory, separate from the plan
+snapshots, and reused for questions, generation, adjustment, remaining-work
+re-planning and plan reload. It never appears in a URL, a JSON body, the error
+details or logs. The token is read once per process under a lock, so concurrent
+first requests share one durably saved value; a value that is not saved is never
+sent. If the file cannot be read or saved, or holds anything but a valid token,
+the request is not sent, the screen shows 이 기기의 서버 요청 정보를 준비하지
+못했어요 …, and the saved plans stay viewable. The file is never overwritten in
+that case.
+
+The credential goes only to the configured API origin. A redirect to the same
+origin keeps it; a redirect to a different scheme, host or port is stopped
+before anything is sent there, so neither the token nor the request body
+leaves the API origin. That failure uses the existing unknown-failure handling
+(an adjustment then needs 최신 계획 불러오기), and nothing is retried automatically.
+
+A device-scoped backend keeps each token's plans apart, so the server lists,
+reads and adjusts only the plans created with this installation's token.
+
+- **In-place update** (a newer APK installed over the old one with the same
+  signature) keeps the token file and the local plan list. Plans saved before
+  the server required a token stay viewable from the local copy; when reload or
+  adjustment finds no matching server plan, the existing missing-plan handling
+  applies.
+- **Clearing app data or reinstalling** removes the token and the local plan
+  list. The next launch creates a new token, which cannot reach the old token's
+  server plans. No sign-in or recovery screen is offered.
+- **Demo** reads no token and sends no request.
+- **Testers** using scripts or `curl` against a device-scoped backend create
+  their own random 64-character lowercase hex token per disposable client, keep
+  it in memory, and send it only as the `Authorization` header. Do not copy an
+  installation's token or record it in evidence. Cleartext HTTP lets a party on
+  the network path observe and replay the token.
+
+HTTP 429 `RATE_LIMITED` shows 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.
+and HTTP 401 `INVALID_DEVICE_TOKEN` shows 이 기기의 서버 요청을 확인할 수 없어요.
+앱이 최신 버전인지 확인해 주세요. on question loading, generation, adjustment,
+remaining-work re-planning and reload. Only those exact status/code pairs are
+recognized; any other 401 or 429 keeps the generic wording. Inputs, rows and
+selection are kept, nothing is retried automatically, a confirmed rejection adds
+no reload requirement, and a rejected reload keeps the plan's existing reload
+requirement without marking it missing. `Retry-After` is not used for a
+scheduled retry.
 
 ### Validation errors
 
@@ -517,7 +571,8 @@ created before this storage existed, cannot be recovered from the server,
 whose list lacks the original creation inputs. Form input that was not
 explicitly saved as a draft, navigation and the moved-session tag are not saved.
 
-**Snapshot versions.** Saving writes snapshot version 5, including plan-scoped
+**Snapshot versions.** Saving writes snapshot version 6, which retains the next
+plan number even when the newest plan is deleted. Version 5 added plan-scoped
 timing-only conflict digests. Each entry keeps that plan's study-session reports (status and actual minutes) by study-row ID;
 identical IDs in two plans never share a report, and a report whose row is no
 longer in the plan is kept but not shown as a current session's. Next to the
@@ -564,12 +619,17 @@ outcome write fails, the result stays unsaved in memory and local retry writes t
 same plan plus draft removal without another generation. Ending the process before
 that succeeds restores the earlier saved draft, not the unsaved result or request.
 
-Version 1, 2, 3 and 4 lists saved by earlier builds still load (versions 1 and 2
-as plans without reports; v3 retains reports, v4 also retains drafts), without
-keeps, and the file is not rewritten until the next save of the list, which writes version 5. An older
-build cannot read a newer version and shows the load failure above without
-changing the file, so downgrading after a version 5 save needs a compatible
-backup of the earlier file; nothing is converted back automatically.
+Versions 1 through 5 still load. Versions 1 and 2 load without reports, v3
+retains reports, v4 also retains drafts, and v5 retains conflict decisions.
+Older snapshots use the highest saved plan number plus one. The next save
+writes version 6. To downgrade after a version 6 save, use a compatible backup.
+
+To delete a plan, scroll to 「계획 삭제」 in its plan view and confirm. Live
+mode removes the server copy before saving the removal on this device. Demo
+plans and live plans with no server file are deleted locally. The plan stays
+visible if the server outcome is uncertain or the local save fails. 「다시 시도」
+can finish the removal when the server already reports the plan gone. Events
+previously exported to the phone calendar stay there.
 
 At start the app reads the saved list before anything can change it. While it
 reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or
@@ -667,6 +727,8 @@ build. What follows depends on the failure:
 | Live failure | Message | Next step |
 | --- | --- | --- |
 | 422, 500, 502, 503, other statuses | 422: Korean explanation of a recognized cause (see [Validation errors](#validation-errors)), or 요청 정보를 확인하지 못했어요; other errors use app-defined wording | 다시 시도 resends the identical request; choosing another session builds a new one |
+| 429 `RATE_LIMITED` | 요청이 너무 많아요. 잠시 후 다시 시도해 주세요. | 다시 시도 when the learner chooses; no reload requirement is added and nothing is sent automatically |
+| 401 `INVALID_DEVICE_TOKEN`, or the device credential cannot be read or saved | 이 기기의 서버 요청을 확인할 수 없어요. 앱이 최신 버전인지 확인해 주세요. (for the local storage failure: 이 기기의 서버 요청 정보를 준비하지 못했어요 …) | As for 429; nothing was processed |
 | 404 without `PLAN_NOT_FOUND` (wrong URL or old server) | API 경로를 찾을 수 없어요 … (HTTP 404) | 다시 시도, as above; the plan is not treated as deleted |
 | 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted, also after a restart; 목록으로 or 새 계획 만들기 |
 | 409 `PLAN_CONFLICT` | 서버의 계획이 변경되었어요 … | 최신 계획 불러오기 |
@@ -943,14 +1005,11 @@ edited or removed can no longer be recognized and is imported like any other
 busy event; the app does not guess from titles or times and never changes or
 deletes calendar events.
 
-**Demo planner.** The demo planner keeps its usual workload and one session per
-enabled day in that day's first window, with the usual session length (60
-minutes, or the whole window if shorter). On each day it uses the earliest
-start where the whole session fits outside every imported interval (intervals
-are start-inclusive, end-exclusive, so an event ending at 18:00 does not block
-a session starting then). It never splits or shortens a session to fit between
-events; a day without such a gap gets no session, and too few usable days give
-the usual labeled demo shortfall. Imported rows appear in the plan as
+**Demo planner.** The demo planner subtracts imported busy intervals from the
+effective study windows and fills each free stretch of at least 30 continuous
+minutes. Touching windows can form one stretch across midnight. An event ending
+at 18:00 allows study to start at 18:00. Shorter stretches stay empty and are
+excluded from the shortfall's usable-minute count. Imported rows appear in the plan as
 `external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
 are not counted or exported as study sessions.
 

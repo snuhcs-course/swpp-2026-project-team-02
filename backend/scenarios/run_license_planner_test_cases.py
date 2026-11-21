@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import threading
 import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
@@ -18,6 +20,7 @@ from license_planner.agent import PlanningAgent
 from license_planner.csv_io import parse_datetime
 from license_planner.user_availability import parse_weekly_availability
 from openrouter_client import inference_summary
+from test_support.admission import roomy_admission
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INPUT_DIR = PROJECT_ROOT / "scenarios" / "inputs" / "license_planner"
@@ -43,11 +46,12 @@ def load_cases() -> list[dict[str, Any]]:
 
 
 def post_plan(api_url: str, request_payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """Send one JSON request through POST /api/v1/study-plans."""
+    """Send one JSON request through POST /api/v1/study-plans as a new disposable device."""
     request = urllib.request.Request(
         api_url,
         data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json; charset=utf-8"},
+        headers={"Content-Type": "application/json; charset=utf-8",
+                 "Authorization": f"Bearer {secrets.token_hex(32)}"},
         method="POST",
     )
     try:
@@ -150,9 +154,14 @@ def main() -> int:
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
     config = {**DEFAULT_API_CONFIG, "port": 0}
+    # Every case is a new device on one loopback address, so the per-IP and service
+    # limits are raised for this local runner; the plans go to a temporary directory.
+    plan_dir = TemporaryDirectory(prefix="license-planner-cases-")
     recording = patch.object(api_service, "PlanningAgent", RecordingPlanningAgent)
+    plan_output = patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", Path(plan_dir.name))
     recording.start()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(config))
+    plan_output.start()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(config, roomy_admission()))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     api_url = f"http://127.0.0.1:{server.server_address[1]}/api/v1/study-plans"
@@ -184,7 +193,9 @@ def main() -> int:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        plan_output.stop()
         recording.stop()
+        plan_dir.cleanup()
 
     summary_name = (f"{args.case_id}_integration_summary.json" if args.case_id
                     else "license_planner_test_summary.json")

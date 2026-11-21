@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.ui
 
 import com.swpp.licenseplanner.data.ApiError
+import com.swpp.licenseplanner.data.errorForStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -243,5 +244,46 @@ class ErrorMessagesTest {
         assertEquals("서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.", ApiError.ServerFailure(409).userMessage())
         assertEquals("네트워크에 연결되지 않았거나 서버가 응답하지 않아요. 연결 상태를 확인한 뒤 다시 시도해 주세요.", ApiError.Connection.userMessage())
         assertEquals("서버 응답을 읽을 수 없어요. 다시 시도해 주세요.", ApiError.InvalidResponse("x").userMessage())
+    }
+
+    private val identity = "이 기기의 서버 요청을 확인할 수 없어요. 앱이 최신 버전인지 확인해 주세요."
+    private val quota = "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."
+    private fun envelope(code: String) = """{"error":{"code":"$code","message":"server detail"}}"""
+
+    @Test fun onlyTheExactIdentityAndQuotaPairsAreRecognizedOnEveryRoute() {
+        for (planErrors in listOf(false, true)) {
+            assertEquals(ApiError.DeviceTokenRejected, errorForStatus(401, envelope("INVALID_DEVICE_TOKEN"), planErrors))
+            assertEquals(ApiError.RateLimited, errorForStatus(429, envelope("RATE_LIMITED"), planErrors))
+            for ((status, body) in listOf(
+                401 to envelope("RATE_LIMITED"), 429 to envelope("INVALID_DEVICE_TOKEN"), 401 to envelope("invalid_device_token"),
+                401 to "not json", 429 to "", 429 to """{"error":{"message":"Too many requests."}}""",
+                403 to envelope("INVALID_DEVICE_TOKEN"), 503 to envelope("RATE_LIMITED"),
+            )) {
+                val error = errorForStatus(status, body, planErrors)
+                assertFalse(error == ApiError.DeviceTokenRejected || error == ApiError.RateLimited)
+                assertFalse(error.userMessage() == identity || error.userMessage() == quota)
+            }
+        }
+    }
+
+    @Test fun identityAndQuotaRejectionsUseFixedKoreanCopyOnEverySurface() {
+        for ((error, copy) in listOf(ApiError.DeviceTokenRejected to identity, ApiError.RateLimited to quota)) {
+            assertEquals(copy, error.userMessage())
+            assertEquals(copy, error.adjustmentMessage())
+            assertEquals("화면에는 이전 계획이 남아 있어요. $copy", error.reloadMessage())
+            assertEquals(copy, remainingFailureMessage(error))
+            assertFalse(error.requiresReload())
+            assertFalse(error.developerMessage().contains("server detail"))
+        }
+        assertEquals("HTTP 401: INVALID_DEVICE_TOKEN", ApiError.DeviceTokenRejected.developerMessage())
+        assertEquals("HTTP 429: RATE_LIMITED", ApiError.RateLimited.developerMessage())
+    }
+
+    @Test fun anUnavailableDeviceCredentialIsADefiniteSetupFailure() {
+        val error = ApiError.DeviceTokenUnavailable
+        assertTrue(error.userMessage().contains("저장된 계획은 그대로 볼 수 있어요"))
+        assertEquals(error.userMessage(), error.adjustmentMessage())
+        assertEquals(error.userMessage(), remainingFailureMessage(error))
+        assertFalse(error.requiresReload())
     }
 }

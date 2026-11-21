@@ -7,12 +7,14 @@ import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
+import java.io.IOException
 import java.time.Duration
 
 /**
@@ -25,6 +27,35 @@ class LiveAdjustmentRepository(
     private val client: OkHttpClient = createApiHttpClient(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : AdjustmentRepository {
+    private val deletionClient by lazy {
+        client.newBuilder().followRedirects(false).retryOnConnectionFailure(false).build()
+    }
+
+    override suspend fun delete(scheduleCsvFile: String): DeleteOutcome = withContext(io) {
+        val filename = scheduleCsvFile.removePrefix("license_planner/output/")
+        if (filename == scheduleCsvFile || !planFilename.matches(filename)) {
+            return@withContext DeleteOutcome.Rejected(ApiError.InvalidInput(null))
+        }
+        val request = Request.Builder().url(apiUrl(baseUrl, "/study-plans/$filename"))
+            .header("Connection", "close").delete(OneShotBody("".toRequestBody())).build()
+        try {
+            deletionClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    204 -> DeleteOutcome.Gone
+                    in 400..499 -> {
+                        val error = errorForStatus(response.code, response.body.string(), planErrors = true)
+                        if (error == ApiError.PlanNotFound) DeleteOutcome.Gone else DeleteOutcome.Rejected(error)
+                    }
+                    else -> DeleteOutcome.Uncertain
+                }
+            }
+        } catch (_: DeviceTokenUnavailableException) {
+            DeleteOutcome.Rejected(ApiError.DeviceTokenUnavailable)
+        } catch (_: IOException) {
+            DeleteOutcome.Uncertain
+        }
+    }
+
     override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
         // The ViewModel never submits a live plan without identity; never fabricate one.
         val file = input.scheduleCsvFile?.takeIf { it.isNotBlank() }
@@ -168,5 +199,6 @@ class LiveAdjustmentRepository(
         const val RESCHEDULED_STUDY = "rescheduled_study"
         const val MANUAL = "manual"
         private const val MISSING_IDENTITY = "이 계획에는 서버 계획 파일 정보가 없어 조정할 수 없어요."
+        private val planFilename = Regex("study_plan_[0-9A-Fa-fT+_-]+\\.csv")
     }
 }
