@@ -4,6 +4,7 @@ import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
 import com.swpp.licenseplanner.domain.LocalTopics
+import com.swpp.licenseplanner.domain.StudySessions
 import com.swpp.licenseplanner.domain.WireDateTime
 import java.time.Duration
 import java.time.LocalDate
@@ -17,7 +18,9 @@ sealed interface DemoResult {
 
 /**
  * Deterministic local demonstration planner. Like a live plan, it fills every free minute of the
- * entered windows inside the preparation period, outside imported busy rows, and splits those
+ * entered windows inside the preparation period, outside imported busy rows, that lies in continuous
+ * free time of at least [StudySessions.MIN_MINUTES], measured across touching windows and midnight;
+ * shorter free time stays empty, so every study session meets that minimum. It splits those
  * minutes in the backend's budget proportions: one reserved minute per topic, the rest by weight
  * `2 - score/100` with largest-remainder rounding (ties: lower score, then catalog order).
  *
@@ -133,7 +136,8 @@ object DemoPlanner {
     /**
      * Free time in time order: every effective window starting on a date from preparation start up
      * to (excluding) the exam date, clipped to the preparation period and cut by busy intervals.
-     * Touching ends do not overlap; only positive whole-minute pieces remain.
+     * Touching ends do not overlap; only positive whole-minute pieces remain. Pieces that touch form
+     * one continuous stretch, and a stretch shorter than [StudySessions.MIN_MINUTES] is left out.
      */
     private fun freeSegments(
         request: StudyPlanRequest,
@@ -152,7 +156,19 @@ object DemoPlanner {
             }
             date = date.plusDays(1)
         }
-        return result.sortedBy { it.first }
+        return usable(result.sortedBy { it.first })
+    }
+
+    /** The time-ordered [pieces] whose continuous stretch lasts at least [StudySessions.MIN_MINUTES]. */
+    private fun usable(pieces: List<Pair<LocalDateTime, LocalDateTime>>): List<Pair<LocalDateTime, LocalDateTime>> {
+        val stretches = mutableListOf<MutableList<Pair<LocalDateTime, LocalDateTime>>>()
+        for (piece in pieces) {
+            val last = stretches.lastOrNull()
+            if (last != null && piece.first <= last.maxOf { it.second }) last += piece else stretches += mutableListOf(piece)
+        }
+        return stretches.filter { stretch ->
+            Duration.between(stretch.first().first, stretch.maxOf { it.second }).toMinutes() >= StudySessions.MIN_MINUTES
+        }.flatten()
     }
 
     private fun withoutBusy(

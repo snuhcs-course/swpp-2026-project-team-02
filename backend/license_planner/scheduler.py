@@ -10,6 +10,8 @@ from .catalog import Certification
 from .models import PlanRequest, ProblemResult, StudyBlock, TopicStatistics
 from .settings import FIRST_SCHEDULE_ID, STUDY_SCHEDULE_ID_PREFIX
 
+MIN_STUDY_SESSION_MINUTES = 30  # Shortest continuous free time that can hold a study session.
+
 
 def summarize_topic_results(results: tuple[ProblemResult, ...]) -> tuple[TopicStatistics, ...]:
     """Aggregate earned/possible points by topic, weakest topic first."""
@@ -45,7 +47,7 @@ def _free_segments(start: datetime, end: datetime, busy_periods) -> list[tuple[d
     return [(left, right) for left, right in segments if left < right]
 
 
-def _free_segments_by_day(request: PlanRequest) -> dict[date, list[tuple[datetime, datetime]]]:
+def _entered_free_segments_by_day(request: PlanRequest) -> dict[date, list[tuple[datetime, datetime]]]:
     """Free intervals per date from preparation_start through exam_date, busy periods removed.
 
     Each date uses the shared resolver's absolute windows (including the
@@ -76,14 +78,58 @@ def _segment_minutes(start: datetime, end: datetime) -> int:
     return int((end - start).total_seconds() // 60)
 
 
+def _split_usable_segments(request: PlanRequest) -> tuple[dict[date, list[tuple[datetime, datetime]]], int]:
+    """Keep only continuous free time of at least MIN_STUDY_SESSION_MINUTES.
+
+    Touching or overlapping pieces form one segment across window and
+    midnight boundaries; only the whole segment's length decides whether it is
+    usable.  A kept segment still contributes each minute to its own date.
+    Returns the usable pieces per date and the whole minutes left out because
+    they lay in shorter segments.
+    """
+    entered = _entered_free_segments_by_day(request)
+    pieces = sorted((start, end, day) for day, segments in entered.items() for start, end in segments)
+    chains: list[tuple[datetime, datetime, list[tuple[datetime, datetime, date]]]] = []
+    for start, end, day in pieces:
+        if chains and start <= chains[-1][1]:
+            chain_start, chain_end, members = chains[-1]
+            members.append((start, end, day))
+            chains[-1] = (chain_start, max(chain_end, end), members)
+        else:
+            chains.append((start, end, [(start, end, day)]))
+    usable: dict[date, list[tuple[datetime, datetime]]] = {day: [] for day in entered}
+    dropped = 0
+    for chain_start, chain_end, chain in chains:
+        if _segment_minutes(chain_start, chain_end) < MIN_STUDY_SESSION_MINUTES:
+            dropped += _segment_minutes(chain_start, chain_end)
+            continue
+        for start, end, day in chain:
+            day_pieces = usable[day]
+            if day_pieces and start <= day_pieces[-1][1]:
+                day_pieces[-1] = (day_pieces[-1][0], max(end, day_pieces[-1][1]))
+            else:
+                day_pieces.append((start, end))
+    return usable, dropped
+
+
+def _free_segments_by_day(request: PlanRequest) -> dict[date, list[tuple[datetime, datetime]]]:
+    """Usable free intervals per date, shared by capacity checks and placement."""
+    return _split_usable_segments(request)[0]
+
+
+def short_segment_minutes(request: PlanRequest) -> int:
+    """Whole entered free minutes left empty because their segment is under the session minimum."""
+    return _split_usable_segments(request)[1]
+
+
 def usable_minutes_by_date(request: PlanRequest) -> dict[date, int]:
-    """Whole free minutes per date, using the same segments as placement."""
+    """Whole usable free minutes per date, using the same segments as placement."""
     return {day: sum(_segment_minutes(start, end) for start, end in segments)
             for day, segments in _free_segments_by_day(request).items()}
 
 
 def available_minutes(request: PlanRequest) -> int:
-    """Total whole free minutes between preparation_start and exam_date."""
+    """Total whole usable free minutes between preparation_start and exam_date."""
     return sum(usable_minutes_by_date(request).values())
 
 
@@ -94,8 +140,12 @@ def generate_schedule(request: PlanRequest, cert: Certification,
 
     Minutes come from the backend's budgets for diagnosed plans or the Agent's
     legacy proposal when no topic statistics exist. This function validates
-    date/topic/time constraints and packs the plan into free windows; it applies
-    no fixed session length or daily block-count limit.
+    date/topic/time constraints and packs the plan into free segments of at
+    least MIN_STUDY_SESSION_MINUTES continuous minutes; shorter free segments
+    stay empty. Topic blocks inside a segment may be any positive length, and no
+    daily block-count limit applies. Diagnosed plans fill each usable segment.
+    Legacy proposals can fill them partially, but every resulting session must
+    still meet the minimum.
     """
     if request.preparation_start is None or request.exam_date is None:
         raise ValueError("preparation_start and exam_date are required before generating a dated schedule")
@@ -174,4 +224,22 @@ def generate_schedule(request: PlanRequest, cert: Certification,
                     break
         if any(remaining_by_topic.values()):
             raise ValueError(f"NOT_ENOUGH_TIME: planned minutes do not fit available windows on {day}")
+    if not topic_statistics:
+        _validate_proposed_sessions(blocks)
     return blocks
+
+
+def _validate_proposed_sessions(blocks: list[StudyBlock]) -> None:
+    session_start = blocks[0].start_datetime
+    for index, block in enumerate(blocks):
+        end = block.end_datetime
+        if index + 1 < len(blocks) and end == blocks[index + 1].start_datetime:
+            continue
+        if _segment_minutes(session_start, end) < MIN_STUDY_SESSION_MINUTES:
+            raise ValueError(
+                f"Proposed placement leaves a study session shorter than {MIN_STUDY_SESSION_MINUTES} minutes "
+                f"at {session_start:%Y/%m/%d %H:%M}. Revise the date's allocation so each continuous "
+                "study session meets the minimum."
+            )
+        if index + 1 < len(blocks):
+            session_start = blocks[index + 1].start_datetime

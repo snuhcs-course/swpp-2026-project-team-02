@@ -99,4 +99,35 @@ class FreeTimeTest {
         assertEquals(listOf("study-3", "study-2", "study-10"), result.map { it.sourceId })
         assertEquals("2026/11/17/10/10", result.first().row.startDate)
     }
+    @Test fun suggestionsSkipIsolatedShortGapsAndMayFollowStudy() {
+        val short = row("study-1", "2026-11-10T19:00", 20)
+        val rows = listOf(short, row("study-2", "2026-11-18T18:00", 30))
+        // Tuesday keeps only an isolated 18:00–18:20 gap; Wednesday is free after 18:00 once study-2 ends.
+        val busy = listOf(occurrence("2026-11-17T10:00", 480), occurrence("2026-11-17T18:20", 130),
+            occurrence("2026-11-18T10:00", 480))
+        val result = FreeTime.suggest(availability, rows, short.scheduleId, busy, prep, exam, now)
+        assertEquals(listOf(at("2026-11-18T18:30") to at("2026-11-18T18:50")), result.map { it.start to it.end })
+    }
+    @Test fun suggestionMayStartOffTheTenMinuteMarkWhereStudyEnds() {
+        val short = row("study-1", "2026-11-10T19:00", 20)
+        val rows = listOf(short, row("study-2", "2026-11-17T10:00", 25))
+        val result = FreeTime.suggest(availability, rows, short.scheduleId, emptyList(), prep, exam, now)
+        assertEquals(listOf(at("2026-11-17T10:25")), result.map { it.start })
+    }
+    @Test fun batchShortContributionSkipsAnIsolatedGapAndJoinsAnEarlierPlacement() {
+        val rows = listOf(target, row("study-2", "2026-11-11T19:00", 20))
+        val instructions = listOf(RemainingSession("study-1", 60, "study-3"), RemainingSession("study-2", 20, "study-4"))
+        val busy = listOf(occurrence("2026-11-17T00:00", 1020), occurrence("2026-11-17T17:20", 40))
+        val result = FreeTime.placeBatch(availability, rows, instructions, busy, prep, exam, now, now)!!
+        // 17:00–17:20 would be a 20-minute session; after the 60-minute placement it forms 80 minutes.
+        assertEquals(listOf("2026/11/17/18/00", "2026/11/17/19/00"), result.map { it.row.startDate })
+        assertEquals(listOf(80L), StudySessions.runs(PlanGrouping.sessions(result.map { it.row }))
+            .map { java.time.Duration.between(it.start, it.end).toMinutes() })
+    }
+    @Test fun batchShortContributionWithNowhereToJoinDoesNotFit() {
+        val short = row("study-1", "2026-11-10T19:00", 20)
+        val busy = listOf(occurrence("2026-11-17T00:00", 1080), occurrence("2026-11-17T18:20", 340))
+        assertNull(FreeTime.placeBatch(availability, listOf(short), listOf(RemainingSession("study-1", 20, "study-1")),
+            busy, prep, at("2026-11-18T00:00"), now, now))
+    }
 }

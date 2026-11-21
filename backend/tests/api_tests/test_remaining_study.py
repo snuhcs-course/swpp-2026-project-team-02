@@ -38,8 +38,9 @@ INSTRUCTIONS = [{"schedule_id": "study-1", "remaining_minutes": 60, "replacement
                 {"schedule_id": "study-4", "remaining_minutes": 10, "replacement_schedule_id": "study-7"}]
 EXPECTED = {
     "study-2": ROWS[1], "external-3": ROWS[2], "study-6": ROWS[4],
-    # Tuesday's freed half hour takes the 10-minute remainder; the hour waits for the week after the empty week.
-    "study-7": {"schedule_id": "study-7", "start_date": "2026/11/17/18/30", "end_date": "2026/11/17/18/40",
+    # The hour waits for the week after the empty week; the 10-minute remainder is too short to stand alone in
+    # Tuesday's freed half hour, so it extends that hour into one 70-minute session.
+    "study-7": {"schedule_id": "study-7", "start_date": "2026/11/30/19/00", "end_date": "2026/11/30/19/10",
                 "topic": TOPIC},
     "study-1": {"schedule_id": "study-1", "start_date": "2026/11/30/18/00", "end_date": "2026/11/30/19/00",
                 "topic": TOPIC},
@@ -151,7 +152,7 @@ class RemainingStudyApiTests(unittest.TestCase):
                                  "replacement_schedule_id": "study-7"}]))
         self.assertEqual(status, 200, second)
         self.assertEqual(next(r for r in second["schedules"] if r["schedule_id"] == "study-7")["start_date"],
-                         "2026/11/17/18/30")
+                         "2026/11/30/19/00")
         self.assert_only_selected_csv_changed(self.plan)
 
     def test_automatic_and_manual_requests_keep_their_contracts(self):

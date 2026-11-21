@@ -5,7 +5,10 @@ from typing import Any
 
 from .catalog import CERTIFICATIONS, get_certification
 from .models import InsufficientCapacityError, PlanRequest, ProblemResult, ToolTrace
-from .scheduler import available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date
+from .scheduler import (
+    MIN_STUDY_SESSION_MINUTES, available_minutes, generate_schedule, short_segment_minutes,
+    summarize_topic_results, usable_minutes_by_date,
+)
 from .settings import DATETIME_FORMAT
 from .topic_budget import POLICY_VERSION, PLACEMENT_POLICY_VERSION, rebalance_topic_minutes, validate_topic_budget
 
@@ -13,7 +16,7 @@ from .topic_budget import POLICY_VERSION, PLACEMENT_POLICY_VERSION, rebalance_to
 def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool) -> None:
     """입력 값: 일정 요청, 필수 토픽 수, 토픽 수가 확정 값인지 여부
     출력 값: 없음
-    기능: 토픽마다 최소 1분을 줄 수 없으면 NOT_ENOUGH_TIME 오류를 발생시킵니다.
+    기능: 연속 30분 이상인 빈 시간만 세어 토픽마다 최소 1분을 줄 수 없으면 NOT_ENOUGH_TIME 오류를 발생시킵니다.
     """
     if (request.preparation_start is None or request.exam_date is None
             or request.weekly_availability is None or request.preparation_start >= request.exam_date):
@@ -27,9 +30,13 @@ def check_topic_capacity(request: PlanRequest, topic_count: int, *, exact: bool)
         topics = f"이미 확인된 학습 주제 {topic_count}개에 주제마다 최소 1분씩"
     else:
         topics = "학습 주제 1개에도 최소 1분을"
+    short = short_segment_minutes(request)
+    short_note = (f"공부 일정은 연속 {MIN_STUDY_SESSION_MINUTES}분 이상이어야 해서 "
+                  f"{MIN_STUDY_SESSION_MINUTES}분보다 짧은 빈 시간 {short}분은 포함하지 않았습니다. "
+                  if short else "")
     raise InsufficientCapacityError(
         f"NOT_ENOUGH_TIME: 준비 시작부터 시험일까지 공부할 수 있는 시간이 {usable}분이라 "
-        f"{topics} 배정할 수 없습니다. "
+        f"{topics} 배정할 수 없습니다. {short_note}"
         "공부 가능 시간을 늘리거나, 준비를 더 일찍 시작하거나, 시험일을 늦춰 주세요."
     )
 
@@ -248,6 +255,7 @@ class PlannerTools:
         return {"study_block_count": len(self.schedule),
                 "total_planned_minutes": total_minutes,
                 "usable_minutes": available_minutes(self.request),
+                "short_segment_minutes": short_segment_minutes(self.request),
                 "daily_topic_minutes": normalized_plan,
                 "topic_budget": topic_budget,
                 "topic_budget_policy": POLICY_VERSION if topic_budget is not None else None,

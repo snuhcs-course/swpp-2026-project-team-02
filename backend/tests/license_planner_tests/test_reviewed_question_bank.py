@@ -211,7 +211,8 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
         request = build_plan_request(payload(results_for(bank_questions(), computer_general_missed),
                                              exam_date="2026/10/19/18/07"), require_assessment=True)
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 7분이라 진단된 학습 주제 8개에"):
+        with self.assertRaisesRegex(InsufficientCapacityError,
+                                    "시간이 0분이라 진단된 학습 주제 8개에.*연속 30분 이상.*빈 시간 7분"):
             check_initial_capacity(request)
 
     def test_original_five_question_request_uses_reviewed_topics(self):

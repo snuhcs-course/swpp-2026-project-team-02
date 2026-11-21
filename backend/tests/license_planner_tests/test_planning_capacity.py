@@ -11,7 +11,8 @@ from license_planner.models import (
     AssessmentItem, BusyPeriod, InsufficientCapacityError, PlanRequest, ProblemResult,
 )
 from license_planner.scheduler import (
-    available_minutes, generate_schedule, summarize_topic_results, usable_minutes_by_date,
+    MIN_STUDY_SESSION_MINUTES, available_minutes, generate_schedule, short_segment_minutes,
+    summarize_topic_results, usable_minutes_by_date,
 )
 from license_planner.tools import PlannerTools, check_initial_capacity
 from license_planner.user_availability import parse_weekly_availability
@@ -43,9 +44,19 @@ def make_request(*, start, exam, windows, busy_periods=(), questions=1, problem_
     )
 
 
-def one_minute_request(**kwargs):
-    return make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 1),
+def capacity_request(capacity, **kwargs):
+    """A Monday request whose only usable segment starts at 18:00 and lasts ``capacity`` minutes."""
+    return make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18) + timedelta(minutes=capacity),
                         windows={"monday": [{"start": "18:00", "end": "20:00"}]}, **kwargs)
+
+
+def thirty_minute_request(**kwargs):
+    return capacity_request(30, **kwargs)
+
+
+def extra_topic_results(count, first_problem_id=100):
+    """Reviewed results for ``count`` distinct internal topics outside the catalog."""
+    return tuple(ProblemResult(first_problem_id + index, f"보충 주제 {index}", 1, 0) for index in range(count))
 
 
 def mapping(*topics, questions=1):
@@ -87,21 +98,22 @@ def run_agent(request, replies, max_steps=6):
 
 
 class UsableCapacityTests(unittest.TestCase):
-    def test_clipped_day_with_overlapping_busy_periods_has_thirty_minutes(self):
+    def test_clipped_day_with_overlapping_busy_periods_uses_only_the_long_segment(self):
         request = make_request(
-            start=at(MONDAY, 18, 30), exam=at(MONDAY, 19, 30),
-            windows={"monday": [{"start": "18:00", "end": "20:00"}]},
+            start=at(MONDAY, 18, 30), exam=at(MONDAY, 20, 30),
+            windows={"monday": [{"start": "18:00", "end": "21:00"}]},
             busy_periods=[busy("1", at(MONDAY, 18, 45), at(MONDAY, 19, 5)),
                           busy("2", at(MONDAY, 19), at(MONDAY, 19, 15))])
         stats = summarize_topic_results((ProblemResult(1, CHARTS, 1, 0),))
 
-        self.assertEqual(available_minutes(request), 30)
-        self.assertEqual(usable_minutes_by_date(request), {MONDAY: 30})
-        blocks = generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 30)))
+        self.assertEqual(available_minutes(request), 75)
+        self.assertEqual(usable_minutes_by_date(request), {MONDAY: 75})
+        self.assertEqual(short_segment_minutes(request), 15)
+        blocks = generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 75)))
         self.assertEqual([(b.start_datetime, b.end_datetime) for b in blocks],
-                         [(at(MONDAY, 18, 30), at(MONDAY, 18, 45)), (at(MONDAY, 19, 15), at(MONDAY, 19, 30))])
-        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: 31 planned minutes exceed 30"):
-            generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 31)))
+                         [(at(MONDAY, 19, 15), at(MONDAY, 20, 30))])
+        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: 76 planned minutes exceed 75"):
+            generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 76)))
 
     def test_nested_and_adjacent_busy_periods_are_subtracted_once(self):
         windows = {"monday": [{"start": "18:00", "end": "21:00"}]}
@@ -148,6 +160,129 @@ class UsableCapacityTests(unittest.TestCase):
                     generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 1)))
 
 
+def study_sessions(blocks):
+    """Lengths in minutes of maximal runs of back-to-back study blocks."""
+    runs = []
+    for block in sorted(blocks, key=lambda item: item.start_datetime):
+        if runs and runs[-1][1] == block.start_datetime:
+            runs[-1][1] = block.end_datetime
+        else:
+            runs.append([block.start_datetime, block.end_datetime])
+    return [int((end - start).total_seconds() // 60) for start, end in runs]
+
+
+def diagnosed_tools(request):
+    """Planner tools after a successful analysis of the request's reviewed results."""
+    tools = PlannerTools(request)
+    analysis = tools.call("analyze_exam_results", {})
+    assert isinstance(analysis, dict), analysis
+    return tools
+
+
+class MinimumStudySessionTests(unittest.TestCase):
+    REVIEWED = (ProblemResult(1, CHARTS, 1, 0), ProblemResult(2, BASICS, 1, 1))
+
+    def build(self, *, start, exam, windows, busy_periods=()):
+        tools = diagnosed_tools(make_request(start=start, exam=exam, windows=windows, busy_periods=busy_periods,
+                                             questions=0, problem_results=self.REVIEWED))
+        result = tools.call("build_study_schedule", {})
+        self.assertIsInstance(result, dict, result)
+        return result, tools.schedule
+
+    def test_the_minimum_is_thirty_minutes(self):
+        self.assertEqual(MIN_STUDY_SESSION_MINUTES, 30)
+
+    def test_short_free_segment_stays_empty(self):
+        result, blocks = self.build(start=at(MONDAY, 0), exam=at(MONDAY, 23),
+                                    windows={"monday": [{"start": "19:00", "end": "21:00"}]},
+                                    busy_periods=[busy("1", at(MONDAY, 19, 20), at(MONDAY, 19, 40))])
+
+        self.assertEqual(result["total_planned_minutes"], 80)
+        self.assertEqual(result["short_segment_minutes"], 20)
+        self.assertTrue(all(at(MONDAY, 19, 40) <= b.start_datetime and b.end_datetime <= at(MONDAY, 21)
+                            for b in blocks))
+        self.assertEqual(study_sessions(blocks), [80])
+
+    def test_short_topic_blocks_form_one_session(self):
+        request = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 35),
+                               windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        stats = summarize_topic_results(self.REVIEWED)
+        blocks = generate_schedule(request, CERT, stats, minutes(("2026/10/19", CHARTS, 20),
+                                                                 ("2026/10/19", BASICS, 15)),
+                                   preserve_topic_order=True)
+
+        self.assertEqual([(b.topic, b.start_datetime, b.end_datetime) for b in blocks], [
+            (CHARTS, at(MONDAY, 18), at(MONDAY, 18, 20)), (BASICS, at(MONDAY, 18, 20), at(MONDAY, 18, 35))])
+        self.assertEqual(study_sessions(blocks), [35])
+
+    def test_touching_windows_form_one_usable_segment(self):
+        windows = {"monday": [{"start": "19:00", "end": "19:20"}, {"start": "19:20", "end": "20:00"}]}
+        request = make_request(start=at(MONDAY, 0), exam=at(MONDAY, 23), windows=windows)
+        self.assertEqual(usable_minutes_by_date(request), {MONDAY: 60})
+        self.assertEqual(short_segment_minutes(request), 0)
+
+        result, blocks = self.build(start=at(MONDAY, 0), exam=at(MONDAY, 23), windows=windows)
+        self.assertEqual(result["total_planned_minutes"], 60)
+        self.assertEqual(study_sessions(blocks), [60])
+
+    def test_segment_across_midnight_is_measured_whole_and_split_by_date(self):
+        tuesday = MONDAY + timedelta(days=1)
+        windows = {"monday": [{"start": "23:45", "duration_minutes": 30}]}
+        request = make_request(start=at(MONDAY, 0), exam=at(tuesday, 12), windows=windows)
+        self.assertEqual(usable_minutes_by_date(request), {MONDAY: 15, tuesday: 15})
+
+        result, blocks = self.build(start=at(MONDAY, 0), exam=at(tuesday, 12), windows=windows)
+        self.assertEqual(result["daily_topic_minutes"][0]["date"], "2026/10/19")
+        self.assertEqual(sum(row["minutes"] for row in result["daily_topic_minutes"]), 30)
+        self.assertEqual(study_sessions(blocks), [30])
+
+    def test_calendar_event_splits_a_window_into_two_long_sessions(self):
+        result, blocks = self.build(start=at(MONDAY, 0), exam=at(MONDAY, 23),
+                                    windows={"monday": [{"start": "19:00", "duration_minutes": 120}]},
+                                    busy_periods=[busy("1", at(MONDAY, 20), at(MONDAY, 20, 30))])
+
+        self.assertEqual(result["total_planned_minutes"], 90)
+        self.assertEqual(study_sessions(blocks), [60, 30])
+        self.assertFalse(any(b.start_datetime < at(MONDAY, 20, 30) and at(MONDAY, 20) < b.end_datetime
+                             for b in blocks))
+
+    def test_calendar_event_leaving_a_short_remainder_leaves_the_date_empty(self):
+        next_monday = MONDAY + timedelta(days=7)
+        result, blocks = self.build(start=at(MONDAY, 0), exam=at(next_monday, 23),
+                                    windows={"monday": [{"start": "19:00", "duration_minutes": 120}]},
+                                    busy_periods=[busy("1", at(MONDAY, 19), at(MONDAY, 20, 40))])
+
+        self.assertEqual({row["date"] for row in result["daily_topic_minutes"]}, {"2026/10/26"})
+        self.assertFalse(any(b.start_datetime.date() == MONDAY for b in blocks))
+        self.assertEqual(study_sessions(blocks), [120])
+
+    def test_free_time_only_in_short_segments_reports_the_session_minimum(self):
+        request = make_request(start=at(MONDAY, 0), exam=at(MONDAY + timedelta(days=14), 0),
+                               windows={"monday": [{"start": "18:00", "end": "18:20"}],
+                                        "wednesday": [{"start": "19:00", "end": "19:20"}]})
+
+        with self.assertRaisesRegex(InsufficientCapacityError,
+                                    "시간이 0분이라 .*연속 30분 이상이어야 .*빈 시간 80분") as raised:
+            run_agent(request, [])
+        self.assertEqual(raised.exception.ask_model.call_count, 0)
+
+    def test_summary_reports_minutes_left_out_of_short_segments(self):
+        request = make_request(start=at(MONDAY, 0), exam=at(MONDAY, 23),
+                               windows={"monday": [{"start": "18:00", "end": "21:00"}]},
+                               busy_periods=[busy("1", at(MONDAY, 18, 20), at(MONDAY, 18, 40)),
+                                             busy("2", at(MONDAY, 19, 40), at(MONDAY, 20, 40))])
+        replies = [model_reply(("analyze_exam_results", {"problem_topics": mapping(CHARTS)}),
+                               ("build_study_schedule", {}))]
+
+        (tools, summary), _ = run_agent(request, replies, max_steps=1)
+
+        self.assertEqual(study_sessions(tools.schedule), [60])
+        self.assertEqual(summary, "1개 학습 주제에 학습 일정 1개, 총 60분을 배치했습니다. "
+                                  "준비 기간의 공부 가능 시간은 총 60분입니다. "
+                                  "입력한 시간 중 40분은 30분보다 짧게 끊긴 빈 시간이라 일정에서 제외했습니다.")
+        self.assertNotIn("여유", summary)
+
+
 class EffectiveWindowCapacityTests(unittest.TestCase):
     """Capacity and placement use the same date-specific absolute windows."""
 
@@ -165,12 +300,15 @@ class EffectiveWindowCapacityTests(unittest.TestCase):
     def test_busy_interval_in_the_spill_is_subtracted_once(self):
         tuesday = MONDAY + timedelta(days=1)
         meeting = busy("7", at(tuesday, 0, 10), at(tuesday, 0, 20))
+        # 23:00-00:10 is one 70-minute segment; the 00:20-00:30 remainder is too short to use.
         self.assertEqual(self.capacity(at(MONDAY, 0), at(tuesday, 12), self.OVERNIGHT, (meeting,)),
-                         {MONDAY: 60, tuesday: 20})
+                         {MONDAY: 60, tuesday: 10})
 
     def test_preparation_start_and_exam_clip_the_spill(self):
         tuesday = MONDAY + timedelta(days=1)
-        self.assertEqual(self.capacity(at(tuesday, 0, 10), at(tuesday, 12), self.OVERNIGHT), {tuesday: 20})
+        self.assertEqual(self.capacity(at(MONDAY, 23, 50), at(tuesday, 12), self.OVERNIGHT),
+                         {MONDAY: 10, tuesday: 30})
+        self.assertEqual(self.capacity(at(tuesday, 0, 10), at(tuesday, 12), self.OVERNIGHT), {})
         self.assertEqual(self.capacity(at(MONDAY, 0), at(tuesday, 0), self.OVERNIGHT), {MONDAY: 60})
 
     def test_overnight_allocation_is_placed_on_each_civil_date(self):
@@ -180,15 +318,16 @@ class EffectiveWindowCapacityTests(unittest.TestCase):
                                busy_periods=(meeting,))
         stats = summarize_topic_results((ProblemResult(1, BASICS, 1, 0),))
         blocks = generate_schedule(request, CERT, stats, minutes(
-            (MONDAY.strftime("%Y/%m/%d"), BASICS, 60), (tuesday.strftime("%Y/%m/%d"), BASICS, 20)))
+            (MONDAY.strftime("%Y/%m/%d"), BASICS, 60), (tuesday.strftime("%Y/%m/%d"), BASICS, 10)))
 
         self.assertEqual([(block.start_datetime, block.end_datetime) for block in blocks], [
             (at(MONDAY, 23), at(tuesday, 0)),
             (at(tuesday, 0), at(tuesday, 0, 10)),
-            (at(tuesday, 0, 20), at(tuesday, 0, 30)),
         ])
-        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
-            generate_schedule(request, CERT, stats, minutes((MONDAY.strftime("%Y/%m/%d"), BASICS, 61)))
+        self.assertEqual(available_minutes(request), 70)
+        for day, amount in ((MONDAY, 61), (tuesday, 11)):
+            with self.subTest(day=day), self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
+                generate_schedule(request, CERT, stats, minutes((day.strftime("%Y/%m/%d"), BASICS, amount)))
 
     def test_each_week_uses_its_own_replacement(self):
         windows = {"weekly_availability": {"wednesday": [{"start": "19:00", "end": "20:00"}]},
@@ -214,8 +353,8 @@ class EffectiveWindowCapacityTests(unittest.TestCase):
 
 
 class InitialCapacityTests(unittest.TestCase):
-    def test_question_inputs_require_only_one_minute_before_topic_mapping(self):
-        check_initial_capacity(one_minute_request(questions=5))
+    def test_question_inputs_require_only_one_usable_segment_before_topic_mapping(self):
+        check_initial_capacity(thirty_minute_request(questions=5))
 
         no_minutes = make_request(start=at(MONDAY, 17), exam=at(MONDAY, 18),
                                   windows={"monday": [{"start": "18:00", "end": "20:00"}]})
@@ -233,31 +372,28 @@ class InitialCapacityTests(unittest.TestCase):
         self.assertEqual(raised.exception.ask_model.call_count, 0)
 
     def test_legacy_topic_results_use_their_exact_distinct_topics(self):
-        results = (ProblemResult(1, CHARTS, 1, 0), ProblemResult(2, CHARTS, 1, 1), ProblemResult(3, BASICS, 1, 0))
-        request = one_minute_request(questions=0, problem_results=results)
+        results = (ProblemResult(1, CHARTS, 1, 0), ProblemResult(2, CHARTS, 1, 1), ProblemResult(3, BASICS, 1, 0),
+                   *extra_topic_results(29))
+        request = thirty_minute_request(questions=0, problem_results=results)
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "학습 주제 2개에") as raised:
+        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 30분이라 진단된 학습 주제 31개에") as raised:
             run_agent(request, [])
         self.assertEqual(raised.exception.ask_model.call_count, 0)
-        two_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), problem_results=results,
-                                   questions=0, windows={"monday": [{"start": "18:00", "end": "20:00"}]})
-        check_initial_capacity(two_minutes)
+        check_initial_capacity(capacity_request(31, questions=0, problem_results=results))
 
     def test_mixed_input_uses_resolved_topics_as_a_lower_bound(self):
-        resolved = tuple(ProblemResult(problem_id, topic, 1, 0)
-                         for problem_id, topic in ((11, CHARTS), (12, BASICS), (13, FUNCTIONS)))
-        two_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), problem_results=resolved,
-                                   windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        resolved = (*(ProblemResult(problem_id, topic, 1, 0)
+                      for problem_id, topic in ((11, CHARTS), (12, BASICS), (13, FUNCTIONS))),
+                    *extra_topic_results(28))
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 2분이라 이미 확인된 학습 주제 3개에") as raised:
-            run_agent(two_minutes, [])
+        with self.assertRaisesRegex(InsufficientCapacityError,
+                                    "시간이 30분이라 이미 확인된 학습 주제 31개에") as raised:
+            run_agent(thirty_minute_request(problem_results=resolved), [])
         self.assertEqual(raised.exception.ask_model.call_count, 0)
-        three_minutes = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 3), problem_results=resolved,
-                                     windows={"monday": [{"start": "18:00", "end": "20:00"}]})
-        check_initial_capacity(three_minutes)
+        check_initial_capacity(capacity_request(31, problem_results=resolved))
 
     def test_unresolved_question_overlapping_a_resolved_topic_needs_no_extra_minute(self):
-        request = one_minute_request(problem_results=(ProblemResult(11, CHARTS, 1, 1),))
+        request = thirty_minute_request(problem_results=(ProblemResult(11, CHARTS, 1, 1),))
         check_initial_capacity(request)
         tools = PlannerTools(request)
 
@@ -268,42 +404,38 @@ class InitialCapacityTests(unittest.TestCase):
         self.assertEqual((result["total_possible_score"], result["total_earned_score"]), (2, 1))
 
     def test_overlapping_result_partitions_are_rejected_before_the_model(self):
-        request = one_minute_request(problem_results=(ProblemResult(1, CHARTS, 1, 0),))
+        request = thirty_minute_request(problem_results=(ProblemResult(1, CHARTS, 1, 0),))
 
         with self.assertRaisesRegex(ValueError, r"both topic-resolved and unresolved: \[1\]") as raised:
             run_agent(request, [])
         self.assertEqual(raised.exception.ask_model.call_count, 0)
 
     def test_no_result_fallback_uses_the_selected_catalog_topics(self):
-        def request_until(minute):
-            return make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, minute), questions=0,
-                                windows={"monday": [{"start": "18:00", "end": "20:00"}]})
-
-        with self.assertRaisesRegex(InsufficientCapacityError, f"학습 주제 {len(CERT.topics)}개에"):
-            check_initial_capacity(request_until(len(CERT.topics) - 1))
-        check_initial_capacity(request_until(len(CERT.topics)))
+        with self.assertRaisesRegex(InsufficientCapacityError, f"시간이 0분이라 진단된 학습 주제 {len(CERT.topics)}개에"):
+            check_initial_capacity(capacity_request(20, questions=0))
+        check_initial_capacity(thirty_minute_request(questions=0))
 
 
 class AnalyzedTopicCapacityTests(unittest.TestCase):
-    def test_one_minute_suffices_for_one_mapped_topic(self):
-        tools = PlannerTools(one_minute_request())
+    def test_one_thirty_minute_segment_suffices_for_one_mapped_topic(self):
+        tools = PlannerTools(thirty_minute_request())
 
         self.assertIsInstance(tools.call("analyze_exam_results", {"problem_topics": mapping(CHARTS)}), dict)
         result = tools.call("build_study_schedule", {"daily_topic_minutes": minutes(("2026/10/19", CHARTS, 1))})
         self.assertIsInstance(result, dict, result)
         self.assertEqual([(b.topic, b.start_datetime, b.end_datetime) for b in tools.schedule],
-                         [(CHARTS, at(MONDAY, 18), at(MONDAY, 18, 1))])
+                         [(CHARTS, at(MONDAY, 18), at(MONDAY, 18, 30))])
 
     def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
+        known = extra_topic_results(29)
         for topics in ((CHARTS, BASICS), (CHARTS, BASICS, FUNCTIONS)):
-            for capacity in (len(topics) - 1, len(topics)):
-                request = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, capacity),
-                                       windows={"monday": [{"start": "18:00", "end": "20:00"}]})
-                tools = PlannerTools(request)
-                with self.subTest(topics=len(topics), capacity=capacity):
-                    if capacity < len(topics):
+            required = len(topics) + len(known)
+            for capacity in (required - 1, required):
+                tools = PlannerTools(capacity_request(capacity, problem_results=known))
+                with self.subTest(topics=required, capacity=capacity):
+                    if capacity < required:
                         with self.assertRaisesRegex(InsufficientCapacityError,
-                                                    f"시간이 {capacity}분이라 .*학습 주제 {len(topics)}개에"):
+                                                    f"시간이 {capacity}분이라 .*학습 주제 {required}개에"):
                             tools.call("analyze_exam_results", {"problem_topics": mapping(*topics)})
                         with self.assertRaises(InsufficientCapacityError):
                             tools.call("build_study_schedule", {"daily_topic_minutes": minutes(
@@ -314,7 +446,7 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
                                                          {"problem_topics": mapping(*topics)}), dict)
 
     def test_incomplete_mapping_is_an_ordinary_tool_error(self):
-        tools = PlannerTools(one_minute_request(questions=2))
+        tools = PlannerTools(thirty_minute_request(questions=2))
 
         result = tools.call("analyze_exam_results", {"problem_topics": mapping(CHARTS, BASICS)[:1]})
 
@@ -327,8 +459,8 @@ class AnalyzedTopicCapacityTests(unittest.TestCase):
                             ("build_study_schedule", {"daily_topic_minutes": minutes(
                                 ("2026/10/19", CHARTS, 1), ("2026/10/19", BASICS, 1))}))
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "학습 주제 2개에") as raised:
-            run_agent(one_minute_request(), [reply, reply])
+        with self.assertRaisesRegex(InsufficientCapacityError, "학습 주제 31개에") as raised:
+            run_agent(thirty_minute_request(problem_results=extra_topic_results(29)), [reply, reply])
         self.assertEqual(raised.exception.ask_model.call_count, 1)
 
     def test_oversized_diagnosed_proposal_is_ignored_and_the_usable_hour_is_filled(self):
@@ -562,6 +694,21 @@ class ProposalGuidanceTests(unittest.TestCase):
             rows.append(("2026/10/19", rename, each))
         return minutes(*rows)
 
+    def test_legacy_short_final_session_is_rejected_and_can_be_corrected(self):
+        request = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 21), questions=0,
+                               windows={"monday": [{"start": "18:00", "end": "19:00"},
+                                                   {"start": "19:20", "end": "20:40"}]})
+        replies = [model_reply(("analyze_exam_results", {})),
+                   model_reply(("build_study_schedule", {"daily_topic_minutes": self.legacy_plan(each=10)})),
+                   model_reply(("build_study_schedule", {"daily_topic_minutes": self.legacy_plan(each=12)}))]
+
+        (tools, _), sent = run_recording_agent(request, replies)
+
+        error = function_responses(sent[2])["build_study_schedule"]["result"]
+        self.assertIn("SCHEDULE_ERROR: Proposed placement leaves a study session shorter than 30 minutes", error)
+        self.assertNotIn("NOT_ENOUGH_TIME", error)
+        self.assertEqual(tools.schedule[-1].end_datetime, at(MONDAY, 19, 56))
+
     def test_varied_invalid_legacy_proposals_can_be_corrected_on_the_last_request(self):
         proposals = [
             self.legacy_plan(skip=FUNCTIONS),
@@ -604,11 +751,10 @@ class ProposalGuidanceTests(unittest.TestCase):
             self.assertEqual(len(raised.exception.sent), request_count)
 
     def test_independent_insufficiency_still_stops_after_guided_analysis(self):
-        request = make_request(start=at(MONDAY, 18), exam=at(MONDAY, 18, 2), questions=3,
-                               windows={"monday": [{"start": "18:00", "end": "20:00"}]})
+        request = thirty_minute_request(questions=3, problem_results=extra_topic_results(28))
         replies = [model_reply(("analyze_exam_results", {"problem_topics": mapping(BASICS, FUNCTIONS, CHARTS, questions=3)}))]
 
-        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 2분이라 .*학습 주제 3개에") as raised:
+        with self.assertRaisesRegex(InsufficientCapacityError, "시간이 30분이라 .*학습 주제 31개에") as raised:
             run_recording_agent(request, replies)
         self.assertEqual(len(raised.exception.sent), 1)
         self.assertEqual(build_parameters(raised.exception.sent[0])["properties"], {})

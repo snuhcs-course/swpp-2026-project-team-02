@@ -84,4 +84,39 @@ class RemainingStudyTest {
             assertTrue(runCatching { RemainingStudy.calculate(bad) }.isFailure)
         }
     }
+
+    private fun external(id: Int, start: String, end: String) = ScheduleRow("external-$id", start, end, "")
+    private fun unreported(vararg rows: ScheduleRow, exam: String = fixture.original.examDate) =
+        SessionPlan.register(1, fixture.original.copy(examDate = exam), StudyPlanResponse(rows.toList()), true)
+    private fun placeAll(source: SessionPlan, now: LocalDateTime = fixture.now) =
+        RemainingStudy.place(source, RemainingStudy.calculate(source), now.plusMinutes(1), now)
+
+    @Test fun shortRemainderSkipsAnIsolatedGapAndJoinsAnEarlierPlacement() {
+        val source = unreported(fixture.row(1, "2026/11/12/18/00", "2026/11/12/19/00"),
+            fixture.row(2, "2026/11/12/19/00", "2026/11/12/19/20"),
+            external(1, "2026/11/16/18/00", "2026/11/16/18/20"), external(2, "2026/11/16/18/40", "2026/11/16/22/00"))
+        val placed = placeAll(source)!!.associateBy { it.scheduleId }
+        // Monday's 18:20–18:40 gap would be a 20-minute session; Tuesday's placement can be joined.
+        assertEquals("2026/11/17/18/00" to "2026/11/17/19/00", placed.getValue("study-1").let { it.startDate to it.endDate })
+        assertEquals("2026/11/17/19/00" to "2026/11/17/19/20", placed.getValue("study-2").let { it.startDate to it.endDate })
+    }
+
+    @Test fun shortRemainderWithNowhereToJoinDoesNotFit() {
+        val source = unreported(fixture.row(1, "2026/11/12/18/00", "2026/11/12/18/20"),
+            external(1, "2026/11/16/18/20", "2026/11/16/22/00"), exam = "2026/11/17/00/00")
+        assertNull(placeAll(source))
+    }
+
+    @Test fun removingASourceMayNotLeaveALaterSessionShort() {
+        val now = LocalDateTime.of(2026, 11, 16, 18, 1)
+        val rows = arrayOf(fixture.row(1, "2026/11/16/18/00", "2026/11/16/18/40"),
+            fixture.row(2, "2026/11/16/18/40", "2026/11/16/18/55"))
+        val done = mapOf("study-2" to StudyCheckIn(StudyCheckInStatus.Done, 15))
+        // Rejoining the 15-minute study-2 keeps one 55-minute session.
+        val rejoined = placeAll(unreported(*rows).copy(checkIns = done), now)!!.single { it.scheduleId == "study-1" }
+        assertEquals("2026/11/16/18/55" to "2026/11/16/19/35", rejoined.startDate to rejoined.endDate)
+        // With study-2 boxed in, every placement would leave it as a 15-minute session.
+        val boxed = unreported(*rows, external(1, "2026/11/16/18/55", "2026/11/16/19/30")).copy(checkIns = done)
+        assertNull(placeAll(boxed, now))
+    }
 }

@@ -145,15 +145,18 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(self.model_requests, 0)
         self.assertEqual(self.saved_files(), [])
 
-    def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
-        recorded = RECORDED["one_minute_with_three_assessed_topics"]
-        self.script(recorded)
+    def test_free_time_only_in_short_segments_stops_before_model_call(self):
+        payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
+        payload["exam_date"] = "2026/10/19/18/20"
 
-        status, body = self.post(recorded["request"])
+        status, body = self.post(payload)
 
-        self.assert_infeasible(status, body, "학습 주제 3개에")
-        self.assertIn("시간이 1분이라", body["error"]["message"])
-        self.assertEqual(self.model_requests, 2)
+        self.assert_infeasible(status, body, "학습 주제 1개에도")
+        message = body["error"]["message"]
+        self.assertIn("시간이 0분이라", message)
+        self.assertIn("연속 30분 이상", message)
+        self.assertIn("20분", message)
+        self.assertEqual(self.model_requests, 0)
 
     def test_recorded_traces_end_at_the_first_build_and_are_saved(self):
         for key in ("topic_errors_then_build_on_last_request", "capacity_errors_then_build_on_last_request"):

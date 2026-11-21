@@ -114,9 +114,11 @@ revision or configuration the server is running.
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
-- **How much available time a plan uses:** plans now use every usable entered
-  minute (the entered windows minus calendar conflicts), and the backend, not the
-  model, sets each date's total; a missed session usually needs a manual move.
+- **How much available time a plan uses:** assessed live plans and demo plans
+  fill entered windows after subtracting calendar conflicts and discarding free
+  stretches shorter than 30 continuous minutes. The backend sets each date's
+  total for assessed live plans. Automatic adjustment and app-suggested times
+  follow the same session minimum. A manual move may form a shorter session.
   An earlier evaluation observed about 60% median use. Review
   rounds from the HE branch were not merged. User testing still needs to establish whether
   learners mean the entered time as a limit or a target and how they prefer to

@@ -58,7 +58,11 @@ object RemainingStudy {
         return RemainingWork(contributions, total)
     }
 
-    /** Complete whole-session first fit; null means no complete placement under this ordering. */
+    /**
+     * Complete whole-session first fit; null means no complete placement under this ordering.
+     * Each remainder must sit in a study session of at least [StudySessions.MIN_MINUTES], and once
+     * the last one is placed no session from the lower bound on may have been cut below it.
+     */
     fun place(plan: SessionPlan, work: RemainingWork, replanFrom: LocalDateTime, now: LocalDateTime): List<ScheduleRow>? {
         val context = AvailabilityWire.context(plan.original) ?: return null
         val preparation = WireDateTime.parseOrNull(plan.original.preparationStart) ?: return null
@@ -66,7 +70,12 @@ object RemainingStudy {
         val lower = maxOf(preparation, replanFrom, now.withSecond(0).withNano(0).plusMinutes(1))
         val sources = work.instructions.map { it.scheduleId }.toSet()
         val candidate = plan.current.schedules.filterNot { it.scheduleId in sources }.toMutableList()
-        for (contribution in work.contributions.filter { it.remainingMinutes > 0 }) {
+        val original = PlanGrouping.sessions(plan.current.schedules)
+        val pending = work.contributions.filter { it.remainingMinutes > 0 }
+        val placedIds = mutableSetOf<String>()
+        for ((index, contribution) in pending.withIndex()) {
+            placedIds += contribution.replacementId
+            val futureFrom = if (index == pending.lastIndex) lower else null
             var date = lower.toLocalDate()
             var placed: ScheduleRow? = null
             while (date.atStartOfDay() < exam && placed == null) {
@@ -75,13 +84,19 @@ object RemainingStudy {
                     val until = minOf(exam, window.end)
                     while (start.plusMinutes(contribution.remainingMinutes.toLong()) <= until) {
                         val end = start.plusMinutes(contribution.remainingMinutes.toLong())
-                        val blockers = PlanGrouping.sessions(candidate).filter { it.start < end && start < it.end }
-                        if (blockers.isEmpty()) {
-                            placed = contribution.source.copy(scheduleId = contribution.replacementId,
-                                startDate = WireDateTime.format(start), endDate = WireDateTime.format(end))
+                        val busy = PlanGrouping.sessions(candidate)
+                        val blockers = busy.filter { it.start < end && start < it.end }
+                        if (blockers.isNotEmpty()) {
+                            start = blockers.maxOf { it.end }
+                            continue
+                        }
+                        val row = contribution.source.copy(scheduleId = contribution.replacementId,
+                            startDate = WireDateTime.format(start), endDate = WireDateTime.format(end))
+                        if (StudySessions.keepsSessions(PlanGrouping.sessions(candidate + row), placedIds, original, futureFrom)) {
+                            placed = row
                             break
                         }
-                        start = blockers.maxOf { it.end }
+                        start = StudySessions.nextEnd(start, busy) ?: break
                     }
                     if (placed != null) break
                 }

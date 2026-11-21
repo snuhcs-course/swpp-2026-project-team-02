@@ -1,12 +1,14 @@
 """도구가 사용하는 결정적 일정 조정 규칙입니다."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, time, timedelta
 
 from study_availability import AvailabilityContext, as_context
 
 from .models import ScheduleEntry, WeeklyAvailability
 from .settings import EXTERNAL_ID_PREFIX, FIRST_STUDY_ID, STUDY_ID_PREFIX
+from .study_sessions import keeps_study_sessions, next_entry_end, session_containing
 
 NOT_ENOUGH_TIME_MESSAGE = "NOT_ENOUGH_TIME: no available study slot remains before the exam date."
 
@@ -43,10 +45,12 @@ def intervals_overlap(start_a: datetime, end_a: datetime,
 def _find_available_start(candidate_start: datetime, duration: timedelta,
                           other_entries: tuple[ScheduleEntry, ...],
                           availability: AvailabilityContext | WeeklyAvailability,
-                          exam_date: datetime | None = None) -> datetime:
-    """입력 값: 가장 이른 시작 시각, 지속 시간, 기존 일정, 선택된 가능 시간 문맥
-    출력 값: 가능 시간 안에서 충돌하지 않는 시작 시각
+                          exam_date: datetime | None = None,
+                          accept: Callable[[datetime], bool] | None = None) -> datetime:
+    """입력 값: 가장 이른 시작 시각, 지속 시간, 기존 일정, 선택된 가능 시간 문맥, 선택적 시작 시각 판정 함수
+    출력 값: 가능 시간 안에서 충돌하지 않고 판정을 통과한 시작 시각
     기능: 공용 해석기의 날짜별 절대 구간(자정을 넘는 구간 포함)을 순회해 첫 배치 가능 슬롯을 찾습니다.
+    판정에 실패한 빈 슬롯 다음에는 그 뒤에 끝나는 일정(공부 일정 끝 포함)의 종료 시각을 후보로 이어서 봅니다.
     """
     context = as_context(availability)
     windows = [window for week in (context.base, *(week for _, week in context.overrides))
@@ -75,9 +79,15 @@ def _find_available_start(candidate_start: datetime, duration: timedelta,
                 conflict = next((entry for entry in other_entries
                                  if intervals_overlap(slot_start, slot_start + duration,
                                                       entry.start_datetime, entry.end_datetime)), None)
-                if conflict is None:
+                if conflict is not None:
+                    slot_start = max(slot_start, conflict.end_datetime)
+                    continue
+                if accept is None or accept(slot_start):
                     return slot_start
-                slot_start = max(slot_start, conflict.end_datetime)
+                next_start = next_entry_end(slot_start, other_entries)
+                if next_start is None:
+                    break
+                slot_start = next_start
         current_date += timedelta(days=1)
         candidate_start = max(candidate_start, datetime.combine(current_date, time()))
     if exam_date is not None:
@@ -91,6 +101,7 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
     """입력 값: 전체 일정 튜플, 실패한 공부 일정 ID, 선택적 주간 가능 시간
     출력 값: 해당 공부 일정이 이동된 새 일정 튜플
     기능: 주제 순서, 사용자 가능 시간, 다른 일정 충돌을 고려해 기존 기간 길이로 이동합니다.
+    옮긴 일정이 이어진 공부 시간 30분 이상에 속하는 가장 이른 위치를 고릅니다.
     """
     target = next((entry for entry in schedule if entry.schedule_id == schedule_id), None)
     if target is None:
@@ -106,8 +117,16 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
                   and entry.topic.casefold() == target.topic.casefold()]
     candidate_start = max(target.end_datetime,
                           max((entry.end_datetime for entry in same_topic), default=target.end_datetime))
+    # The failed target's own session is past, so only sessions after it are protected.
+    protected_from = max(candidate_start, session_containing(schedule, target)[1])
+
+    def keeps_sessions(start: datetime) -> bool:
+        moved = ScheduleEntry(target.schedule_id, start, start + duration, target.topic)
+        return keeps_study_sessions((*other_entries, moved), {target.schedule_id}, schedule, protected_from)
+
     if availability is not None:
-        candidate_start = _find_available_start(candidate_start, duration, other_entries, availability, exam_date)
+        candidate_start = _find_available_start(candidate_start, duration, other_entries, availability, exam_date,
+                                                accept=keeps_sessions)
     else:
         while True:
             candidate_end = candidate_start + duration
@@ -116,9 +135,15 @@ def move_study_entry(schedule: tuple[ScheduleEntry, ...], schedule_id: str,
             conflict = next((entry for entry in other_entries
                              if intervals_overlap(candidate_start, candidate_end,
                                                   entry.start_datetime, entry.end_datetime)), None)
-            if conflict is None:
+            if conflict is not None:
+                candidate_start = conflict.end_datetime
+                continue
+            if keeps_sessions(candidate_start):
                 break
-            candidate_start = conflict.end_datetime
+            next_start = next_entry_end(candidate_start, other_entries)
+            if next_start is None:
+                raise ValueError(NOT_ENOUGH_TIME_MESSAGE)
+            candidate_start = next_start
 
     # Both searches only return a slot whose full duration ends by the exam date.
     moved = ScheduleEntry(target.schedule_id, candidate_start, candidate_start + duration, target.topic)

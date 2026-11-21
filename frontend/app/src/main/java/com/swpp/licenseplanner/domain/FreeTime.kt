@@ -25,18 +25,29 @@ object FreeTime {
         return floor.plusMinutes(if (minutes == 0 && value != floor) 10 else minutes.toLong())
     }
 
+    /**
+     * Earliest conflict-free start that [accept] allows. Candidates are whole 10-minute marks and the
+     * [studyEnds] of study rows, so a short session can follow existing study directly.
+     */
     fun earliestStart(band: FreeTimeBand, blocked: List<StudyInterval>, lowerBound: LocalDateTime,
-                      duration: Int, exam: LocalDateTime, fromDate: LocalDate, toDate: LocalDate): LocalDateTime? {
+                      duration: Int, exam: LocalDateTime, fromDate: LocalDate, toDate: LocalDate,
+                      studyEnds: List<LocalDateTime> = emptyList(),
+                      accept: (LocalDateTime) -> Boolean = { true }): LocalDateTime? {
         require(duration > 0)
+        fun candidateFrom(atOrAfter: LocalDateTime): LocalDateTime =
+            (studyEnds.filter { it >= atOrAfter } + roundUp10(atOrAfter)).min()
         var origin = fromDate.minusDays(1)
         while (origin <= toDate) {
-            var start = roundUp10(maxOf(lowerBound, fromDate.atStartOfDay(),
+            var start = candidateFrom(maxOf(lowerBound, fromDate.atStartOfDay(),
                 origin.atStartOfDay().plusMinutes(band.startMinute.toLong())))
             val end = minOf(exam, origin.atStartOfDay().plusMinutes(band.endMinute.toLong()))
             while (start.toLocalDate() <= toDate && start.plusMinutes(duration.toLong()) <= end) {
                 val overlaps = blocked.filter { it.overlaps(start, start.plusMinutes(duration.toLong())) }
-                if (overlaps.isEmpty()) return start
-                start = roundUp10(overlaps.maxOf { it.end })
+                start = when {
+                    overlaps.isNotEmpty() -> candidateFrom(overlaps.maxOf { it.end })
+                    accept(start) -> return start
+                    else -> candidateFrom(start.plusMinutes(1))
+                }
             }
             origin = origin.plusDays(1)
         }
@@ -47,6 +58,9 @@ object FreeTime {
         PlanGrouping.sessions(rows).map { StudyInterval(it.start, it.end) } +
             occurrences.map { StudyInterval(it.start, it.end) }
 
+    private fun studyEnds(sessions: List<PlanSession>): List<LocalDateTime> =
+        sessions.filterNot { it.isExternal }.map { it.end }
+
     fun suggest(availability: StudyAvailability, rows: List<ScheduleRow>, targetId: String,
                 occurrences: List<CalendarOccurrence>, preparationStart: LocalDateTime,
                 examDate: LocalDateTime, now: LocalDateTime, limit: Int = 3): List<FreeTimeSuggestion> {
@@ -55,11 +69,19 @@ object FreeTime {
         val lower = maxOf(roundUp10(now), preparationStart)
         // The target's own slot is free for it; only its unchanged start is not a suggestion.
         val blocked = blocked(rows.filterNot { it.scheduleId == targetId }, occurrences)
+        val original = PlanGrouping.sessions(rows)
+        val others = original.filterNot { it.scheduleId == targetId }
+        // As in an automatic move, the target's own session counts as past.
+        val protectedFrom = maxOf(lower, StudySessions.runContaining(original, target)?.end ?: target.end)
+        val keepsSessions = { start: LocalDateTime ->
+            val moved = target.copy(start = start, end = start.plusMinutes(target.durationMinutes))
+            StudySessions.keepsSessions(others + moved, setOf(targetId), original, protectedFrom)
+        }
         val result = mutableListOf<FreeTimeSuggestion>()
         var date = lower.toLocalDate()
         while (date <= examDate.toLocalDate() && result.size < limit) {
-            fun first(from: LocalDateTime) =
-                earliestStart(band, blocked, from, target.durationMinutes.toInt(), examDate, date, date)
+            fun first(from: LocalDateTime) = earliestStart(band, blocked, from, target.durationMinutes.toInt(),
+                examDate, date, date, studyEnds(others), keepsSessions)
             first(lower)?.let { if (it == target.start) first(target.start.plusMinutes(1)) else it }?.let { start ->
                 val end = start.plusMinutes(target.durationMinutes)
                 result += FreeTimeSuggestion(start, end, !availability.fitsOneWindow(start, end))
@@ -75,16 +97,29 @@ object FreeTime {
         val band = band(availability) ?: return null
         val sources = instructions.map { it.scheduleId }.toSet()
         val blocked = blocked(rows.filterNot { it.scheduleId in sources }, occurrences).toMutableList()
-        val lower = roundUp10(maxOf(preparationStart, replanFrom, now.plusMinutes(1)))
+        val bound = maxOf(preparationStart, replanFrom, now.plusMinutes(1))
+        val lower = roundUp10(bound)
         val originals = rows.associateBy { it.scheduleId }
         val ordered = instructions.sortedWith(compareBy<RemainingSession> { originals.getValue(it.scheduleId).startDate }
             .thenBy { originals.getValue(it.scheduleId).endDate }.thenBy { it.scheduleId.removePrefix("study-").toLong() })
-        return ordered.map { instruction ->
+        val original = PlanGrouping.sessions(rows)
+        val study = original.filterNot { it.isExternal || it.scheduleId in sources }.toMutableList()
+        val placedIds = mutableSetOf<String>()
+        return ordered.mapIndexed { index, instruction ->
+            val source = originals.getValue(instruction.scheduleId)
+            placedIds += instruction.replacementScheduleId
+            // Sessions cut by removing the sources are checked once every remainder is placed.
+            val futureFrom = if (index == ordered.lastIndex) bound else null
+            fun session(start: LocalDateTime) = PlanSession(instruction.replacementScheduleId, start,
+                start.plusMinutes(instruction.remainingMinutes.toLong()), source.topic)
             val start = earliestStart(band, blocked, lower, instruction.remainingMinutes, examDate,
-                lower.toLocalDate(), examDate.toLocalDate()) ?: return null
+                lower.toLocalDate(), examDate.toLocalDate(), studyEnds(study)) { at ->
+                StudySessions.keepsSessions(study + session(at), placedIds, original, futureFrom)
+            } ?: return null
             val end = start.plusMinutes(instruction.remainingMinutes.toLong())
             blocked += StudyInterval(start, end)
-            PlacedSession(instruction.scheduleId, originals.getValue(instruction.scheduleId).copy(
+            study += session(start)
+            PlacedSession(instruction.scheduleId, source.copy(
                 scheduleId = instruction.replacementScheduleId, startDate = WireDateTime.format(start),
                 endDate = WireDateTime.format(end)), !availability.fitsOneWindow(start, end))
         }

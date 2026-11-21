@@ -12,6 +12,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.view.KeyEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.swpp.licenseplanner.data.model.ScheduleRow
+import com.swpp.licenseplanner.data.PlanSnapshot
+import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.data.ReloadOutcome
 import com.swpp.licenseplanner.data.PlanStorageScope
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
@@ -1052,6 +1054,32 @@ class MainFlowUiTest {
     private fun pressBack() {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
+    }
+
+    @Test fun calendarFreeTimeShowsOnlyTheDateWhereATwentyMinuteRowJoinsStudy() = withApp { host ->
+        val source = seedFullPlanForFreeTime(host)
+        val request = source.original.copy(weeklyAvailability = mapOf(
+            "tuesday" to listOf(TimeWindow("18:40", "19:00")),
+            "wednesday" to listOf(TimeWindow("18:00", "18:30")),
+        ))
+        val rows = listOf(
+            ScheduleRow("study-1", "2026/11/16/18/00", "2026/11/16/18/20", "놓친 공부"),
+            ScheduleRow("study-2", "2026/11/18/18/00", "2026/11/18/18/30", "다른 공부"),
+        )
+        val plan = source.copy(original = request, current = source.current.copy(schedules = rows))
+        host.seedSnapshot(PlanSnapshot(listOf(plan)))
+        host.recreate()
+        openPlanView()
+        adjustShownPlan()
+        clickSession(PlanGrouping.sessions(rows).first())
+        click("선택한 일정 조정하기")
+        show("옮길 수 있는 시간이 없어요")
+        click("캘린더에서 빈 시간 찾기")
+        waitForText("캘린더에서 빈 시간")
+        compose.onNodeWithText("11월 18일 (수) 18:30–18:50", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("20분 · 입력한 공부 시간 밖", substring = true).assertCountEquals(1)
+        assertEquals(plan, host.snapshot().plans.single())
+        host.capture("calendar-free-time-twenty-minutes")
     }
 
     @Test

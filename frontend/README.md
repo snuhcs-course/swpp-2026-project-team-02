@@ -59,10 +59,10 @@ implemented.
   available/assigned time, and a link from an adjustment's original position to
   its destination. The HE branch's review rounds were not merged.
 - The topic budgets from `feat/p10-topic-budget` are merged. Diagnosed live
-  plans use every usable entered minute: the backend, not the model, sets each
-  date's total and splits it across topics by score. The demo planner fills the
-  same free minutes locally. Android displays the returned study rows through
-  the existing plan screen.
+  plans use every free minute in continuous stretches of at least 30 minutes.
+  The backend sets each date's total and splits it across topics by score. The
+  demo planner fills the same free minutes locally. Android displays the
+  returned study rows through the existing plan screen.
 - **Remaining study re-plan.** The [backend batch endpoint](../backend/FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
   is implemented on this branch. The Android flow is available for new and
   reopened plans. Its review shows scheduled, actual and remaining minutes
@@ -322,8 +322,10 @@ about the model or the deployed server.
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
 calculation, not backend or AI output. Demo workload: like a live plan, it
-fills every free minute of the entered windows inside the preparation period,
-outside imported busy rows. It splits those minutes across the topics on the
+fills free stretches of at least 30 continuous minutes inside the entered
+windows and preparation period, outside imported busy rows. Adjacent topic
+blocks form one session and can each be shorter than 30 minutes. It splits
+those minutes across the topics on the
 score screen in the backend's proportions: one reserved minute per topic, the
 rest by weight `2 - score/100` with largest-remainder rounding. It then places
 the weakest topic first in time order, splitting a topic only where a free
@@ -468,7 +470,10 @@ When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
 「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
 With entered windows, the no-fit footer also offers 「캘린더에서 빈 시간 찾기」.
 This explicit action requests read permission if needed and lists up to three free
-times on different dates, at whole 10-minute starts. The usual band runs from the
+times on different dates. Starts are on whole 10-minute marks or directly after
+a study row. Automatic moves and suggestions must form a continuous study
+session of at least 30 minutes and must preserve the minimum for affected
+future sessions. A manual move may form a shorter session. The usual band runs from the
 earliest entered start to the latest entered end across the base and override
 weeks, on any date. Times avoid other study rows, retained external rows and
 eligible device-calendar occurrences, stay after preparation/current time and end
@@ -1425,7 +1430,10 @@ After a no-fit, 「캘린더에서 빈 시간 찾기」 requests read permission
 explicit tap and previews a complete batch in the same usual band as single-session
 search. It excludes kept rows, calendar occurrences and earlier placements, and
 starts no earlier than preparation, `replan_from` and the next current minute,
-rounded up to 10 minutes. A missing fit proposes no partial batch. The preview
+rounded up to 10 minutes. Each placement must form a continuous session of at
+least 30 minutes and may join an existing study row or an earlier placement.
+The batch must preserve the minimum for affected future sessions. A missing
+fit proposes no partial batch. The preview
 shows every topic/date/time/minutes and one-time outside-window labels.
 
 「이번 한 번만 이 시간으로 다시 계획하기」 re-reads the calendar and recomputes

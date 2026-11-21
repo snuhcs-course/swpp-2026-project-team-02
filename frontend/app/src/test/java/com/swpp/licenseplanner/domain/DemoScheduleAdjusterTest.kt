@@ -208,4 +208,45 @@ class DemoScheduleAdjusterTest {
         assertEquals(DemoManualAdjustment.Rejected(ManualMoveRejection.InPast), move(true, true, now.minusMinutes(1)))
     }
 
+    @Test
+    fun shortTargetSkipsAnIsolatedGapAndJoinsStudy() {
+        val plan = request(mapOf("monday" to w("18:00", "21:00")))
+        val rows = listOf(
+            ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/18/20", "함수"),
+            ScheduleRow("external-1", "2026/10/19/18/40", "2026/10/19/19/30", ""),
+            ScheduleRow("study-2", "2026/10/19/19/30", "2026/10/19/19/45", "차트"),
+        )
+        val result = DemoScheduleAdjuster.adjust(plan, rows, "study-1")
+        // 18:20–18:40 would be a 20-minute session; after study-2 the session lasts 35 minutes.
+        assertEquals(ScheduleRow("study-1", "2026/10/19/19/45", "2026/10/19/20/05", "함수"), result.row("study-1"))
+    }
+
+    @Test
+    fun noSlotWhenEveryGapWouldFormAShortSession() {
+        val plan = request(mapOf("monday" to w("18:00", "18:40")), exam = "2026/10/20/00/00")
+        val rows = listOf(ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/18/20", "함수"))
+        assertEquals(DemoAdjustment.NoSlot, DemoScheduleAdjuster.adjust(plan, rows, "study-1"))
+    }
+
+    @Test
+    fun theTargetsOwnShortenedSessionDoesNotBlockTheMove() {
+        val plan = request(mapOf("monday" to w("18:00", "21:00")))
+        val rows = listOf(
+            ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/18/45", "함수"),
+            ScheduleRow("study-2", "2026/10/19/18/45", "2026/10/19/19/00", "차트"),
+            ScheduleRow("external-1", "2026/10/19/19/00", "2026/10/19/19/30", ""),
+        )
+        // Moving the missed target cuts its own session to the 15-minute study-2; that session counts as past.
+        val result = DemoScheduleAdjuster.adjust(plan, rows, "study-1")
+        assertEquals(ScheduleRow("study-1", "2026/10/19/19/30", "2026/10/19/20/15", "함수"), result.row("study-1"))
+    }
+
+    @Test
+    fun manualMoveMayFormAShortSession() {
+        val rows = listOf(ScheduleRow("study-1", "2026/10/19/18/00", "2026/10/19/18/15", "함수"))
+        val moved = DemoScheduleAdjuster.moveManually(tuesday, rows, "study-1",
+            WireDateTime.parseOrNull("2026/10/20/18/30")!!, now, confirmOutsideAvailability = false)
+        assertEquals(ScheduleRow("study-1", "2026/10/20/18/30", "2026/10/20/18/45", "함수"),
+            (moved as DemoManualAdjustment.Moved).schedules.single())
+    }
 }

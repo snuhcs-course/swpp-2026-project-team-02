@@ -7,6 +7,8 @@ import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.LocalTopics
+import com.swpp.licenseplanner.domain.PlanGrouping
+import com.swpp.licenseplanner.domain.StudySessions
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
@@ -47,6 +49,10 @@ class DemoPlannerTest {
         Duration.between(WireDateTime.parseOrNull(row.startDate)!!, WireDateTime.parseOrNull(row.endDate)!!).toMinutes()
 
     private fun totalMinutes(rows: List<ScheduleRow>) = rows.sumOf { minutesOf(it) }
+
+    /** Lengths of the continuous study sessions the rows form. */
+    private fun sessionMinutes(rows: List<ScheduleRow>): List<Long> =
+        StudySessions.runs(PlanGrouping.sessions(rows)).map { Duration.between(it.start, it.end).toMinutes() }
 
     private fun minutesByTopic(rows: List<ScheduleRow>): Map<String, Long> =
         rows.groupBy { it.topic }.mapValues { (_, topicRows) -> totalMinutes(topicRows) }
@@ -159,20 +165,71 @@ class DemoPlannerTest {
     }
 
     @Test
-    fun shortfallWhenFreeMinutesAreFewerThanTopics() {
-        // Two free minutes for three topics.
+    fun shortfallCountsOnlyFreeTimeLongEnoughForASession() {
+        // Two free minutes for three topics are too short for a session, so none are usable.
         val tight = busy(1, "2026/10/05/18/00", "2026/10/05/19/58")
-        assertEquals(DemoResult.Shortfall(required = 3, available = 2), mondayPlan(tight, exam = LocalDate.of(2026, 10, 6)))
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0), mondayPlan(tight, exam = LocalDate.of(2026, 10, 6)))
         val req = request(allCorrect, CurrentLevel.ADVANCED, mondayOnly, LocalDate.of(2026, 10, 6)).copy(busySchedules = listOf(tight))
-        assertEquals(PlanOutcome.DemoShortfall(3, 2), runBlocking { DemoPlanningRepository().generate(req) })
+        assertEquals(PlanOutcome.DemoShortfall(3, 0), runBlocking { DemoPlanningRepository().generate(req) })
 
         // A window fully covered by an imported event leaves nothing.
         assertEquals(DemoResult.Shortfall(required = 3, available = 0),
             mondayPlan(busy(1, "2026/10/05/00/00", "2026/10/06/00/00"), exam = LocalDate.of(2026, 10, 6)))
 
-        // One minute per topic is enough.
-        val rows = study(mondayPlan(busy(1, "2026/10/05/18/00", "2026/10/05/19/57"), exam = LocalDate.of(2026, 10, 6)))
-        assertEquals(listOf(1L, 1L, 1L), rows.map { minutesOf(it) })
+        // One 30-minute stretch is enough and forms one session.
+        val rows = study(mondayPlan(busy(1, "2026/10/05/18/00", "2026/10/05/19/30"), exam = LocalDate.of(2026, 10, 6)))
+        assertEquals(listOf(10L, 10L, 10L), rows.map { minutesOf(it) })
+        assertEquals(listOf(30L), sessionMinutes(rows))
+    }
+
+    @Test
+    fun freeTimeShorterThanASessionStaysEmpty() {
+        // The first Monday keeps only 19:40–20:00 free; the second Monday is untouched.
+        val result = mondayPlan(busy(1, "2026/10/05/18/00", "2026/10/05/19/40"))
+        val rows = study(result)
+        assertTrue(rows.none { it.startDate.startsWith("2026/10/05/") })
+        assertEquals(120L, totalMinutes(rows))
+        assertEquals(listOf(120L), sessionMinutes(rows))
+
+        // With only that Monday before the exam, the short remainder is not counted.
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0),
+            mondayPlan(busy(1, "2026/10/05/18/00", "2026/10/05/19/40"), exam = LocalDate.of(2026, 10, 6)))
+    }
+
+    @Test
+    fun shortGapBesideALongerOneLeavesOnlyLongSessions() {
+        // 18:00–18:20 and 18:40–20:00 are free on the first Monday.
+        val rows = study(mondayPlan(busy(1, "2026/10/05/18/20", "2026/10/05/18/40")))
+        assertTrue(rows.none { it.startDate == "2026/10/05/18/00" })
+        assertEquals("2026/10/05/18/40", rows.first().startDate)
+        assertEquals(200L, totalMinutes(rows))
+        assertTrue(sessionMinutes(rows).all { it >= StudySessions.MIN_MINUTES })
+    }
+
+    @Test
+    fun touchingWindowsFormOneStretch() {
+        fun plan(vararg windows: TimeWindow) = DemoPlanner.plan(request(exam = LocalDate.of(2026, 10, 6))
+            .copy(weeklyAvailability = mapOf("monday" to windows.toList())))
+        val touching = study(plan(TimeWindow(start = "18:00", durationMinutes = 20), TimeWindow(start = "18:20", durationMinutes = 20)))
+        assertEquals(40L, totalMinutes(touching))
+        assertEquals(listOf(40L), sessionMinutes(touching))
+
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0),
+            plan(TimeWindow(start = "18:00", durationMinutes = 20), TimeWindow(start = "19:00", durationMinutes = 20)))
+    }
+
+    @Test
+    fun windowsTouchingAcrossMidnightFormOneStretch() {
+        // Sunday 2026-10-11 23:50–00:10 continues into Monday's 00:10–00:30.
+        val base = request(exam = LocalDate.of(2026, 10, 13))
+        val alone = mapOf("sunday" to listOf(TimeWindow(start = "23:50", durationMinutes = 20)))
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0), DemoPlanner.plan(base.copy(weeklyAvailability = alone)))
+
+        val joined = study(DemoPlanner.plan(base.copy(weeklyAvailability = alone +
+            ("monday" to listOf(TimeWindow(start = "00:10", durationMinutes = 20))))))
+        assertEquals("2026/10/11/23/50", joined.first().startDate)
+        assertEquals("2026/10/12/00/30", joined.last().endDate)
+        assertEquals(listOf(40L), sessionMinutes(joined))
     }
 
     @Test
