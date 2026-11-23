@@ -25,7 +25,7 @@ data class RemainingWork(val contributions: List<RemainingContribution>, val tot
 object RemainingStudy {
     private val studyId = Regex("study-([0-9]+)")
 
-    fun calculate(plan: SessionPlan): RemainingWork {
+    fun calculate(plan: SessionPlan, onlyScheduleId: String? = null): RemainingWork {
         val rows = plan.current.schedules
         require(rows.map { it.scheduleId }.toSet().size == rows.size) { "중복된 일정이 있어요." }
         val current = rows.filterNot { it.scheduleId.startsWith("external-") }
@@ -36,7 +36,8 @@ object RemainingStudy {
             (plan.checkIns.keys + plan.keptConflicts.keys).mapNotNull {
                 if (studyId.matches(it)) suffix(it) else null
             }).maxOrNull() ?: 0L
-        val sorted = current.sortedWith(compareBy<ScheduleRow> { it.startDate }.thenBy { it.endDate }.thenBy { suffix(it.scheduleId) })
+        val sorted = current.filter { onlyScheduleId == null || it.scheduleId == onlyScheduleId }
+            .sortedWith(compareBy<ScheduleRow> { it.startDate }.thenBy { it.endDate }.thenBy { suffix(it.scheduleId) })
         var total = 0L
         val contributions = sorted.map { row ->
             val start = requireNotNull(WireDateTime.parseOrNull(row.startDate)) { "일정 시간을 읽을 수 없어요." }

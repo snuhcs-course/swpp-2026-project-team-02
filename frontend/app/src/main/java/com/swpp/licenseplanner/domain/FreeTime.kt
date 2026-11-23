@@ -63,9 +63,11 @@ object FreeTime {
 
     fun suggest(availability: StudyAvailability, rows: List<ScheduleRow>, targetId: String,
                 occurrences: List<CalendarOccurrence>, preparationStart: LocalDateTime,
-                examDate: LocalDateTime, now: LocalDateTime, limit: Int = 3): List<FreeTimeSuggestion> {
+                examDate: LocalDateTime, now: LocalDateTime, limit: Int = 3,
+                remainingMinutes: Int? = null): List<FreeTimeSuggestion> {
         val band = band(availability) ?: return emptyList()
         val target = PlanGrouping.sessions(rows).singleOrNull { it.scheduleId == targetId } ?: return emptyList()
+        val duration = remainingMinutes ?: target.durationMinutes.toInt()
         val lower = maxOf(roundUp10(now), preparationStart)
         // The target's own slot is free for it; only its unchanged start is not a suggestion.
         val blocked = blocked(rows.filterNot { it.scheduleId == targetId }, occurrences)
@@ -74,16 +76,16 @@ object FreeTime {
         // As in an automatic move, the target's own session counts as past.
         val protectedFrom = maxOf(lower, StudySessions.runContaining(original, target)?.end ?: target.end)
         val keepsSessions = { start: LocalDateTime ->
-            val moved = target.copy(start = start, end = start.plusMinutes(target.durationMinutes))
+            val moved = target.copy(start = start, end = start.plusMinutes(duration.toLong()))
             StudySessions.keepsSessions(others + moved, setOf(targetId), original, protectedFrom)
         }
         val result = mutableListOf<FreeTimeSuggestion>()
         var date = lower.toLocalDate()
         while (date <= examDate.toLocalDate() && result.size < limit) {
-            fun first(from: LocalDateTime) = earliestStart(band, blocked, from, target.durationMinutes.toInt(),
+            fun first(from: LocalDateTime) = earliestStart(band, blocked, from, duration,
                 examDate, date, date, studyEnds(others), keepsSessions)
             first(lower)?.let { if (it == target.start) first(target.start.plusMinutes(1)) else it }?.let { start ->
-                val end = start.plusMinutes(target.durationMinutes)
+                val end = start.plusMinutes(duration.toLong())
                 result += FreeTimeSuggestion(start, end, !availability.fitsOneWindow(start, end))
             }
             date = date.plusDays(1)

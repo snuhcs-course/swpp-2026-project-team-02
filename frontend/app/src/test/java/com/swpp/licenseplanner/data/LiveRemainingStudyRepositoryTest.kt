@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.data
 import com.swpp.licenseplanner.data.model.*
 import com.swpp.licenseplanner.domain.RemainingStudy
 import com.swpp.licenseplanner.domain.RemainingStudyFixtures
+import com.swpp.licenseplanner.domain.WireDateTime
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonObject
 import okhttp3.mockwebserver.MockResponse
@@ -121,6 +122,36 @@ class LiveRemainingStudyRepositoryTest {
             it.copy(startDate = "2026/11/17/09/00", endDate = "2026/11/17/09/40") else it }
         enqueue(valid.copy(schedules = shifted, scheduleCsv = remainingCsv(shifted)))
         assertTrue((runBlocking { repository.replan(confirmed) } as AdjustmentOutcome.Failure).error is ApiError.InvalidResponse)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun oneReportedSessionSendsOnlyItsFreshRowAndOnlyIncludesOutsideConsentWhenNeeded() {
+        val work = RemainingStudy.calculate(source, "study-3")
+        val repository = LiveRemainingStudyRepository(server.url("/api/v1").toString())
+        for ((time, outside) in listOf("2026/11/17/18/00" to false, "2026/11/17/10/00" to true)) {
+            val start = requireNotNull(WireDateTime.parseOrNull(time))
+            val followUp = input.copy(work = work, followUpScheduleId = "study-3",
+                destinations = mapOf("study-3" to start), confirmOutside = outside)
+            val row = source.current.schedules.single { it.scheduleId == "study-3" }
+            val rows = source.current.schedules.filterNot { it == row } + row.copy(scheduleId = "study-51",
+                startDate = time, endDate = WireDateTime.format(start.plusHours(1)))
+            enqueue(valid.copy(schedules = rows, scheduleCsv = remainingCsv(rows)))
+            assertTrue(runBlocking { repository.replan(followUp) } is AdjustmentOutcome.Success)
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/api/v1/schedules/adjust", request.path)
+            val json = ApiJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+            val expectedKeys = setOf("mode", "schedule_csv_file", "schedules", "weekly_availability",
+                "availability_overrides", "preparation_start", "exam_date", "replan_from", "remaining_sessions")
+            assertEquals(if (outside) expectedKeys + "confirm_outside_availability" else expectedKeys, json.keys)
+            val dto = ApiJson.decodeFromJsonElement(RemainingStudyRequest.serializer(), json)
+            assertEquals(RemainingStudyRequest(scheduleCsvFile = source.scheduleCsvFile!!, schedules = source.current.schedules,
+                weeklyAvailability = source.original.weeklyAvailability, availabilityOverrides = source.original.availabilityOverrides,
+                preparationStart = source.original.preparationStart, examDate = source.original.examDate,
+                replanFrom = WireDateTime.format(input.replanFrom),
+                remainingSessions = listOf(RemainingSession("study-3", 60, "study-51", time)),
+                confirmOutsideAvailability = true.takeIf { outside }), dto)
+        }
         assertEquals(2, server.requestCount)
     }
 

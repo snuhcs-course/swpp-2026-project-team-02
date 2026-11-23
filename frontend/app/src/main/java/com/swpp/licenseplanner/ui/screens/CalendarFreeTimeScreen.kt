@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.data.AvailabilityWire
 import com.swpp.licenseplanner.domain.FreeTime
+import com.swpp.licenseplanner.domain.FreeTimeSuggestion
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WireDateTime
@@ -55,16 +56,36 @@ internal fun freeTimeFallback(remaining: Boolean): String =
     if (remaining) REMAINING_STUDY_FALLBACK else "'시간 직접 옮기기'에서 직접 고를 수 있어요."
 
 @Composable
-private fun FreeTimeStatus(phase: FreeTimePhase, source: SessionPlan, remaining: Boolean = false) {
+private fun FreeTimeStatus(phase: FreeTimePhase, source: SessionPlan, remaining: Boolean = false, followUp: Boolean = false) {
     val fallback = freeTimeFallback(remaining)
     when (phase) {
         FreeTimePhase.RequestingPermission, FreeTimePhase.AwaitingPermission, FreeTimePhase.Reading ->
             FreeTimeInfo("캘린더에서 빈 시간을 찾는 중이에요", "평소 공부하는 시간대(${bandLabel(source)})에서 캘린더 일정과 다른 공부 일정을 피한 시간을 찾고 있어요.")
         FreeTimePhase.PermissionDenied -> AlertCard("캘린더를 확인하지 못했어요", "캘린더 권한이 없어 빈 시간을 찾지 못했어요. $fallback")
         FreeTimePhase.Unavailable -> AlertCard("캘린더를 읽지 못했어요", "캘린더를 읽을 수 없어 빈 시간을 확인하지 못했어요. $fallback")
-        FreeTimePhase.NoTime -> AlertCard(if (remaining) "남은 공부를 모두 배치할 빈 시간이 없어요" else "시험 전까지 빈 시간이 없어요",
-            "평소 공부하는 시간대(${bandLabel(source)})에 캘린더가 비어 있는 시간이 없어요. $fallback")
+        FreeTimePhase.NoTime -> when {
+            followUp -> AlertCard("이어 공부할 수 있는 빈 시간이 없어요",
+                "시험 전 평소 공부 시간대에 30분 이상 연속으로 공부할 수 있는 시간을 찾지 못했어요. $fallback")
+            remaining -> AlertCard("남은 공부를 모두 배치할 빈 시간이 없어요",
+                "평소 공부하는 시간대(${bandLabel(source)})에 캘린더가 비어 있는 시간이 없어요. $fallback")
+            else -> AlertCard("시험 전까지 빈 시간이 없어요",
+                "평소 공부하는 시간대(${bandLabel(source)})에 캘린더가 비어 있는 시간이 없어요. $fallback")
+        }
         FreeTimePhase.Results -> Unit
+    }
+}
+
+@Composable
+private fun FreeTimeChoice(suggestion: FreeTimeSuggestion, selected: Boolean, onClick: () -> Unit, topic: String? = null) {
+    val label = freeTimeLabel(suggestion.start, suggestion.end)
+    val details = "${Duration.between(suggestion.start, suggestion.end).toMinutes()}분 · " +
+        if (suggestion.outsideWindows) "입력한 공부 시간 밖 · 이번 한 번만" else "입력한 공부 시간 안"
+    ChoiceCard(selected, onClick, choiceLabel = listOfNotNull(topic, label, details).joinToString(" · ")) {
+        Column {
+            topic?.let { Text(it, style = MaterialTheme.typography.titleSmall, color = Ink) }
+            Text(label, style = MaterialTheme.typography.titleSmall, color = Ink)
+            Note(details)
+        }
     }
 }
 
@@ -88,15 +109,7 @@ fun CalendarFreeTimeScreen(search: FreeTimeSearch, onSelect: (Int) -> Unit, onCo
         if (results) {
             Note("시험일 전 빈 시간")
             search.suggestions.forEachIndexed { index, suggestion ->
-                val label = freeTimeLabel(suggestion.start, suggestion.end)
-                val details = "${Duration.between(suggestion.start, suggestion.end).toMinutes()}분 · " +
-                    if (suggestion.outsideWindows) "입력한 공부 시간 밖 · 이번 한 번만" else "입력한 공부 시간 안"
-                ChoiceCard(search.selected == index, { onSelect(index) }, choiceLabel = "$label · $details") {
-                    Column {
-                        Text(label, style = MaterialTheme.typography.titleSmall, color = Ink)
-                        Note(details)
-                    }
-                }
+                FreeTimeChoice(suggestion, search.selected == index, { onSelect(index) })
             }
             Note("캘린더 일정과 다른 공부 일정을 피했어요. 입력한 공부 시간은 바뀌지 않아요.")
             SecondaryButton("시간 직접 옮기기", onManual)
@@ -105,22 +118,35 @@ fun CalendarFreeTimeScreen(search: FreeTimeSearch, onSelect: (Int) -> Unit, onCo
 }
 
 @Composable
-fun RemainingCalendarFreeTimeScreen(search: RemainingStudyState.CalendarSearch, onConfirm: () -> Unit,
+fun RemainingCalendarFreeTimeScreen(search: RemainingStudyState.CalendarSearch, onSelect: (Int) -> Unit, onConfirm: () -> Unit,
                                     onRetry: () -> Unit, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    AppScreen("남은 공부 다시 계획하기", onNav = onBack, footer = {
+    val followUp = search.input.followUpScheduleId?.let { search.input.work.contributions.single() }
+    AppScreen(if (followUp == null) "남은 공부 다시 계획하기" else "빈 시간에 이어서 공부하기", onNav = onBack, footer = {
         when (search.phase) {
-            FreeTimePhase.Results -> PrimaryButton("이번 한 번만 이 시간으로 다시 계획하기", onConfirm)
+            FreeTimePhase.Results -> if (followUp == null) PrimaryButton("이번 한 번만 이 시간으로 다시 계획하기", onConfirm)
+                else {
+                    val chosen = search.selected?.let(search.suggestions::getOrNull)
+                    PrimaryButton(if (chosen?.outsideWindows == true) "이번 한 번만 이 시간에 공부하기" else "이 시간에 이어서 공부하기",
+                        onConfirm, enabled = chosen != null)
+                }
             FreeTimePhase.Unavailable -> PrimaryButton("다시 찾기", onRetry)
             else -> Unit
         }
         SecondaryButton("계획으로 돌아가기", onBack)
     }) {
         if (search.input.source.isDemo) Note("로컬 시연 계산 · 서버나 AI를 사용하지 않아요.")
-        Heading("캘린더 빈 시간으로 다시 계획")
+        Heading(if (followUp == null) "캘린더 빈 시간으로 다시 계획" else "캘린더에서 빈 시간",
+            followUp?.let { "${it.source.topic} · 남은 공부 ${it.remainingMinutes}분" })
+        if (search.changed && (search.phase == FreeTimePhase.Results || followUp != null && search.phase == FreeTimePhase.NoTime)) {
+            FreeTimeInfo("캘린더가 바뀌어 시간을 다시 찾았어요", if (followUp == null)
+                "새 일정과 겹치지 않도록 시간을 다시 배치했어요. 바뀐 시간을 확인하고 다시 눌러 주세요." else "바뀐 시간을 확인해 주세요.")
+        }
         if (search.phase == FreeTimePhase.Results) {
-            Heading("남은 시간 ${search.input.work.totalMinutes}분 · 일정 ${search.placements.size}개")
-            if (search.changed) FreeTimeInfo("캘린더가 바뀌어 시간을 다시 찾았어요", "새 일정과 겹치지 않도록 시간을 다시 배치했어요. 바뀐 시간을 확인하고 다시 눌러 주세요.")
+            if (followUp == null) Heading("남은 시간 ${search.input.work.totalMinutes}분 · 일정 ${search.placements.size}개")
+            else search.suggestions.forEachIndexed { index, suggestion ->
+                FreeTimeChoice(suggestion, search.selected == index, { onSelect(index) }, followUp.source.topic)
+            }
             for (placed in search.placements) {
                 MutedBox {
                     Text(placed.row.topic, style = MaterialTheme.typography.titleSmall, color = Ink)
@@ -133,6 +159,6 @@ fun RemainingCalendarFreeTimeScreen(search: RemainingStudyState.CalendarSearch, 
             if (search.input.work.contributions.any { it.report != null && it.remainingMinutes > 0 }) {
                 Note("다시 배치하는 일정의 이전 공부 기록은 그대로 저장되지만 현재 계획에서는 표시되지 않아요. 새 일정은 기록 없음으로 시작해요.")
             }
-        } else FreeTimeStatus(search.phase, search.input.source, remaining = true)
+        } else FreeTimeStatus(search.phase, search.input.source, remaining = true, followUp = followUp != null)
     }
 }

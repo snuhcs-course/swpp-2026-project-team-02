@@ -14,7 +14,7 @@ class DemoRemainingStudyRepository(
 ) : RemainingStudyRepository {
     override suspend fun replan(input: RemainingStudyInput): AdjustmentOutcome {
         if (!input.source.isDemo || input.work.instructions.isEmpty() ||
-            runCatching { RemainingStudy.calculate(input.source) }.getOrNull() != input.work) {
+            runCatching { RemainingStudy.calculate(input.source, input.followUpScheduleId) }.getOrNull() != input.work) {
             return AdjustmentOutcome.Failure(ApiError.InvalidInput(null))
         }
         val rows = if (input.destinations != null) {

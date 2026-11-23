@@ -678,6 +678,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
                     canSearchFreeTime = viewModel.canSearchRemainingFreeTime(),
                     onSearchFreeTime = { viewModel.startRemainingFreeTimeSearch() },
+                    onFreeTimeSelect = viewModel::selectFollowUpTime,
                     onFreeTimeConfirm = { viewModel.confirmRemainingFreeTime() },
                     onFreeTimeRetry = viewModel::retryRemainingFreeTimeSearch,
                     onRetrySave = viewModel::retrySave,
@@ -693,16 +694,15 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     })
             }
         }
-        // The report editor sits above the plan or saved-plan screen it was opened from, so closing
-        // it returns to the same week with the adjustment selection untouched. A confirmed save
-        // closes it; popping is idempotent, so a repeated empty frame cannot leave that screen.
+        // A saved report either closes the editor or offers a follow-up. The follow-up
+        // flow sits immediately above the plan view, even when the report began in adjustment.
         screen(nav, Routes.CHECK_IN) { entry ->
             val editor by viewModel.checkIn.collectAsStateWithLifecycle()
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val current = editor
             val plan = current?.let { open -> plans.firstOrNull { it.ordinal == open.planOrdinal } }
-            LaunchedEffect(current?.save) {
-                if (current?.save == CheckInSave.Saved) viewModel.closeCheckIn()
+            LaunchedEffect(current?.save, current?.followUp) {
+                if (current?.save == CheckInSave.Saved && current.followUp == null) viewModel.closeCheckIn()
             }
             if (current == null || plan == null) {
                 LaunchedEffect(Unit) {
@@ -710,6 +710,16 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     nav.goBackAfterResume(entry)
                 }
             } else {
+                fun returnToPlan() {
+                    val route = Routes.plan(plan.ordinal)
+                    val fromAdjustment = nav.previousBackStackEntry?.destination?.route == Routes.ADJUST
+                    if (!nav.popBackStack(route, inclusive = false)) {
+                        nav.navigate(route) {
+                            popUpTo(if (fromAdjustment) Routes.ADJUST else Routes.CHECK_IN) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
                 StudyCheckInScreen(
                     plan = plan,
                     editor = current,
@@ -717,7 +727,18 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onMinutes = viewModel::setCheckInMinutes,
                     onSave = { viewModel.saveCheckIn() },
                     onRetrySave = viewModel::retrySave,
-                    onClose = { if (nav.canGoBack(entry)) viewModel.closeCheckIn() },
+                    onClose = {
+                        if (nav.canGoBack(entry)) {
+                            viewModel.closeCheckIn()
+                            if (current.followUp != null) returnToPlan()
+                        }
+                    },
+                    onFollowUp = {
+                        if (nav.canGoBack(entry) && viewModel.startCheckInFollowUp()) {
+                            returnToPlan()
+                            nav.go(Routes.REMAINING_STUDY)
+                        }
+                    },
                 )
             }
         }

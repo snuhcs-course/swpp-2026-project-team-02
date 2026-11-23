@@ -24,16 +24,19 @@ class RemainingStudyViewModelTest {
         keptConflicts = mapOf("study-70" to setOf("b".repeat(64))))
     private val draft = CreationDraft(TestFixtures.completeState(), CreationStep.AVAILABILITY, 0, null)
 
-    private inner class Store(val disk: MemoryPlanBytes) : LocalPlanStore {
-        val real = BytesPlanStore(disk, scope, dispatcher)
+    private inner class Store(val disk: MemoryPlanBytes, planScope: String, private var snapshot: PlanSnapshot?) : LocalPlanStore {
+        val real = BytesPlanStore(disk, planScope, dispatcher)
         var count = 0
         var gate: CompletableDeferred<Unit>? = null
         val fail = mutableSetOf<Int>()
-        override suspend fun load() = real.load()
+        override suspend fun load() = snapshot?.let { PlanStoreLoad.Loaded(it) } ?: real.load()
         override suspend fun save(snapshot: PlanSnapshot): Boolean {
             val number = ++count
             gate?.await()
-            return if (number in fail) false else real.save(snapshot)
+            if (number in fail) return false
+            if (this.snapshot == null) return real.save(snapshot)
+            this.snapshot = snapshot
+            return true
         }
     }
 
@@ -46,7 +49,17 @@ class RemainingStudyViewModelTest {
             inputs += input
             gate?.await()
             error?.let { return AdjustmentOutcome.Failure(it) }
-            val rows = RemainingStudy.place(input.source, input.work, input.replanFrom, fixture.now) ?: return AdjustmentOutcome.DemoNoSlot
+            val rows = if (input.destinations == null) {
+                RemainingStudy.place(input.source, input.work, input.replanFrom, fixture.now) ?: return AdjustmentOutcome.DemoNoSlot
+            } else {
+                val source = input.source
+                val result = RemainingDestinations.validateDestinations(source.current.schedules, input.work.instructions, input.destinations,
+                    requireNotNull(AvailabilityWire.context(source.original)),
+                    requireNotNull(WireDateTime.parseOrNull(source.original.preparationStart)),
+                    requireNotNull(WireDateTime.parseOrNull(source.original.examDate)), input.replanFrom, fixture.now, input.confirmOutside)
+                check(result.code == null) { "unexpected destination rejection: ${result.code}" }
+                result.rows
+            }
             return AdjustmentOutcome.Success(alter(StudyPlanResponse(rows, remainingCsv(rows), scheduleCsvFile = input.source.scheduleCsvFile,
                 availabilitySnapshot = AvailabilitySnapshot(input.source.original.weeklyAvailability, input.source.original.availabilityOverrides))))
         }
@@ -79,9 +92,12 @@ class RemainingStudyViewModelTest {
     @Before fun before() = Dispatchers.setMain(dispatcher)
     @After fun after() = Dispatchers.resetMain()
 
-    private fun TestScope.open(snapshot: PlanSnapshot = PlanSnapshot(listOf(a, b), creationDraft = draft), disk: MemoryPlanBytes? = null): Opened {
-        val bytes = disk ?: MemoryPlanBytes(PlanSnapshotCodec.encode(snapshot, scope).encodeToByteArray())
-        val store = Store(bytes)
+    private fun TestScope.open(snapshot: PlanSnapshot = PlanSnapshot(listOf(a, b), creationDraft = draft),
+                               disk: MemoryPlanBytes? = null, inMemory: Boolean = false): Opened {
+        val demo = snapshot.plans.firstOrNull()?.isDemo == true
+        val planScope = if (demo) PlanStorageScope.DEMO else scope
+        val bytes = disk ?: MemoryPlanBytes(PlanSnapshotCodec.encode(snapshot, planScope).encodeToByteArray())
+        val store = Store(bytes, planScope, snapshot.takeIf { inMemory })
         val batch = Batch()
         val other = Other()
         val calendar = Calendar()
@@ -90,7 +106,8 @@ class RemainingStudyViewModelTest {
         }, object : PlanningRepository {
             override suspend fun generate(request: StudyPlanRequest): PlanOutcome = error("unexpected generation")
         }, other, today = fixture.now.toLocalDate(), planStore = store, calendarReadRepository = calendar,
-            calendarExportRepository = calendar, remainingStudyRepository = batch, currentMinute = { fixture.now },
+            calendarExportRepository = calendar, remainingStudyRepository = if (demo) DemoRemainingStudyRepository { fixture.now } else batch,
+            currentMinute = { fixture.now },
             currentDate = { fixture.now.toLocalDate() })
         advanceUntilIdle()
         assertEquals(PlanStorage.Ready, vm.storage.value)
@@ -98,7 +115,201 @@ class RemainingStudyViewModelTest {
     }
 
     private suspend fun restored(opened: Opened): PlanSnapshot =
-        (BytesPlanStore(MemoryPlanBytes(opened.store.disk.committed), scope, dispatcher).load() as PlanStoreLoad.Loaded).snapshot
+        (opened.store.load() as PlanStoreLoad.Loaded).snapshot
+
+    private fun TestScope.saveFollowUpReport(opened: Opened, status: StudyCheckInStatus, minutes: String? = null) {
+        val vm = opened.vm
+        assertTrue(vm.startCheckIn(1, "study-4"))
+        vm.chooseCheckInStatus(status)
+        minutes?.let(vm::setCheckInMinutes)
+        assertTrue(vm.saveCheckIn())
+        advanceUntilIdle()
+        assertEquals(CheckInSave.Saved, vm.checkIn.value?.save)
+    }
+
+    private fun TestScope.searchFollowUp(opened: Opened, granted: Boolean = true): RemainingStudyState.CalendarSearch {
+        val vm = opened.vm
+        assertTrue(vm.startCheckInFollowUp())
+        val search = vm.remainingStudy.value as RemainingStudyState.CalendarSearch
+        vm.onRemainingFreeTimePermission(granted, search.id)
+        advanceUntilIdle()
+        return vm.remainingStudy.value as RemainingStudyState.CalendarSearch
+    }
+
+    @Test fun missedReportOffersOnlyItsOwnTimeAndLaterKeepsTheSavedCollection() = runTest(dispatcher) {
+        val today = fixture.row(4, "2026/11/16/16/00", "2026/11/16/17/00")
+        val source = a.copy(current = a.current.copy(schedules = a.current.schedules.dropLast(1) + today))
+        val o = open(PlanSnapshot(listOf(source, b), creationDraft = draft))
+        saveFollowUpReport(o, StudyCheckInStatus.Missed)
+        val followUp = requireNotNull(o.vm.checkIn.value?.followUp)
+        assertEquals(today, followUp.source)
+        assertEquals(60, followUp.remainingMinutes)
+        assertEquals("study-61", followUp.replacementId)
+        assertEquals(0, o.calendar.reads)
+        assertTrue(o.batch.inputs.isEmpty())
+        assertEquals(0, o.other.mutations)
+        val saved = restored(o)
+        val bytes = o.store.disk.committed!!.copyOf()
+        o.vm.closeCheckIn()
+        assertNull(o.vm.checkIn.value)
+        assertFalse(o.vm.startCheckInFollowUp())
+        assertArrayEquals(bytes, o.store.disk.committed)
+        assertEquals(source.current, saved.plans.first().current)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Missed, 0), saved.plans.first().checkInFor(today.scheduleId))
+        assertEquals(b, saved.plans[1])
+        assertEquals(draft, saved.creationDraft)
+        assertTrue(o.vm.startRemainingStudy(1))
+    }
+
+    @Test fun partlyOffersOnlyPositiveRemaindersAndDoneOffersNone() = runTest(dispatcher) {
+        val o = open()
+        for ((status, minutes) in listOf(StudyCheckInStatus.Partly to "40", StudyCheckInStatus.Partly to "60",
+                StudyCheckInStatus.Partly to "75", StudyCheckInStatus.Done to "40")) {
+            saveFollowUpReport(o, status, minutes)
+            assertEquals(20.takeIf { status == StudyCheckInStatus.Partly && minutes == "40" },
+                o.vm.checkIn.value?.followUp?.remainingMinutes)
+            o.vm.closeCheckIn()
+        }
+        assertEquals(0, o.calendar.reads)
+        assertTrue(o.batch.inputs.isEmpty())
+    }
+
+    @Test fun noWindowsLegacyAndReloadRequiredPlansStillSaveTheReportWithoutAnOffer() = runTest(dispatcher) {
+        val withoutWindows = a.copy(original = a.original.copy(weeklyAvailability = emptyMap()))
+        val legacy = a.copy(scheduleCsvFile = null, current = a.current.copy(scheduleCsvFile = null))
+        for (source in listOf(withoutWindows, legacy, a.copy(recovery = PlanRecovery.ReloadRequired))) {
+            val o = open(PlanSnapshot(listOf(source)), inMemory = source == withoutWindows)
+            saveFollowUpReport(o, StudyCheckInStatus.Missed)
+            assertNull(o.vm.checkIn.value?.followUp)
+            assertEquals(StudyCheckIn(StudyCheckInStatus.Missed, 0), restored(o).plans.single().checkInFor("study-4"))
+            assertEquals(0, o.calendar.reads)
+            assertTrue(o.batch.inputs.isEmpty())
+        }
+    }
+
+    @Test fun followUpSendsOneChosenTimeAndKeepsTheOriginalReportAndOtherRows() = runTest(dispatcher) {
+        val o = open()
+        saveFollowUpReport(o, StudyCheckInStatus.Missed)
+        val search = searchFollowUp(o)
+        val dates = listOf("2026/11/16/18/00", "2026/11/17/18/00", "2026/11/18/18/00")
+        assertEquals(dates, search.suggestions.map { WireDateTime.format(it.start) })
+        assertTrue(search.suggestions.all { it.end == it.start.plusHours(1) && !it.outsideWindows })
+        assertEquals(a.current.schedules.last().topic, search.input.work.contributions.single().source.topic)
+        assertFalse(o.vm.confirmRemainingFreeTime())
+        assertFalse(o.vm.startCheckIn(2, "study-1"))
+        assertFalse(o.vm.selectPlan(2))
+        o.vm.selectFollowUpTime(1)
+        assertTrue(o.vm.confirmRemainingFreeTime()); assertFalse(o.vm.confirmRemainingFreeTime())
+        advanceUntilIdle()
+        val sent = o.batch.inputs.single()
+        assertEquals(listOf(RemainingSession("study-4", 60, "study-61")), sent.work.instructions)
+        assertEquals(mapOf("study-4" to search.suggestions[1].start), sent.destinations)
+        assertFalse(sent.confirmOutside)
+        assertEquals(2, o.calendar.reads)
+        assertEquals(0, o.calendar.writes)
+        val plan = restored(o).plans.first()
+        val new = plan.current.schedules.single { it.scheduleId == "study-61" }
+        assertEquals(dates[1], new.startDate)
+        assertEquals(a.current.schedules.dropLast(1), plan.current.schedules.filterNot { it == new })
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Missed, 0), plan.checkIns["study-4"])
+        assertNull(plan.checkInFor("study-61"))
+    }
+
+    @Test fun shortRemainderNeedsAdjacentStudyAndDemoSavesItLocally() = runTest(dispatcher) {
+        val original = fixture.plan().let { plan ->
+            plan.copy(current = plan.current.copy(schedules = plan.current.schedules +
+                fixture.row(5, "2026/11/18/18/00", "2026/11/18/18/30")))
+        }
+        val o = open(PlanSnapshot(listOf(original)))
+        saveFollowUpReport(o, StudyCheckInStatus.Partly, "40")
+        val search = searchFollowUp(o)
+        assertTrue(search.input.source.isDemo)
+        val suggestion = search.suggestions.single()
+        assertEquals("2026/11/18/18/30", WireDateTime.format(suggestion.start))
+        assertEquals("2026/11/18/18/50", WireDateTime.format(suggestion.end))
+        o.vm.selectFollowUpTime(0)
+        assertTrue(o.vm.confirmRemainingFreeTime()); advanceUntilIdle()
+        assertEquals(MoveSave.Saved, (o.vm.remainingStudy.value as RemainingStudyState.Success).save)
+        assertEquals("2026/11/18/18/30", restored(o).plans.single().current.schedules.single { it.scheduleId == "study-6" }.startDate)
+        assertTrue(o.batch.inputs.isEmpty())
+        assertEquals(0, o.other.mutations)
+        assertEquals(0, o.calendar.writes)
+    }
+
+    @Test fun changedCalendarDiscardsTheSelectionAndRequiresNewConfirmation() = runTest(dispatcher) {
+        val o = open()
+        saveFollowUpReport(o, StudyCheckInStatus.Missed)
+        val search = searchFollowUp(o)
+        val chosen = search.suggestions.first()
+        o.calendar.outcome = CalendarReadOutcome.Loaded(CalendarBusySnapshot(emptyList(), 0, 0,
+            listOf(CalendarOccurrence("new event", null, chosen.start, chosen.end, false))))
+        o.vm.selectFollowUpTime(0)
+        assertTrue(o.vm.confirmRemainingFreeTime()); advanceUntilIdle()
+        val updated = o.vm.remainingStudy.value as RemainingStudyState.CalendarSearch
+        assertTrue(updated.changed)
+        assertNull(updated.selected)
+        assertFalse(chosen in updated.suggestions)
+        assertTrue(o.batch.inputs.isEmpty())
+        assertFalse(o.vm.confirmRemainingFreeTime())
+        o.vm.selectFollowUpTime(0)
+        assertTrue(o.vm.confirmRemainingFreeTime()); advanceUntilIdle()
+        assertEquals(1, o.batch.inputs.size)
+        assertEquals(3, o.calendar.reads)
+    }
+
+    @Test fun denialUnreadableCalendarAndNoSuitableTimeKeepTheReportAndPlan() = runTest(dispatcher) {
+        for (phase in listOf(FreeTimePhase.PermissionDenied, FreeTimePhase.Unavailable, FreeTimePhase.NoTime)) {
+            val o = open()
+            saveFollowUpReport(o, StudyCheckInStatus.Partly, "40")
+            val saved = restored(o)
+            if (phase == FreeTimePhase.Unavailable) o.calendar.outcome = CalendarReadOutcome.Unavailable
+            val search = searchFollowUp(o, granted = phase != FreeTimePhase.PermissionDenied)
+            assertEquals(phase, search.phase)
+            assertTrue(search.suggestions.isEmpty())
+            assertFalse(o.vm.confirmRemainingFreeTime())
+            assertTrue(o.vm.closeRemainingStudy())
+            assertEquals(if (phase == FreeTimePhase.PermissionDenied) 0 else 1, o.calendar.reads)
+            assertEquals(saved, restored(o))
+            assertTrue(o.batch.inputs.isEmpty())
+        }
+    }
+
+    @Test fun leavingAReadingFollowUpDiscardsItsLateResults() = runTest(dispatcher) {
+        val o = open()
+        saveFollowUpReport(o, StudyCheckInStatus.Missed)
+        o.calendar.gate = CompletableDeferred()
+        assertTrue(o.vm.startCheckInFollowUp())
+        val search = o.vm.remainingStudy.value as RemainingStudyState.CalendarSearch
+        o.vm.onRemainingFreeTimePermission(true, search.id)
+        runCurrent()
+        assertTrue(o.vm.closeRemainingStudy())
+        saveFollowUpReport(o, StudyCheckInStatus.Partly, "40")
+        assertTrue(o.vm.startCheckInFollowUp())
+        o.calendar.gate!!.complete(Unit); advanceUntilIdle()
+        val current = o.vm.remainingStudy.value as RemainingStudyState.CalendarSearch
+        assertNotEquals(search.id, current.id)
+        assertEquals(FreeTimePhase.RequestingPermission, current.phase)
+        assertEquals(20L, current.input.work.totalMinutes)
+        assertTrue(o.batch.inputs.isEmpty())
+    }
+
+    @Test fun lostFollowUpResponseRequiresReloadAndDoesNotAutomaticallyResend() = runTest(dispatcher) {
+        val o = open()
+        saveFollowUpReport(o, StudyCheckInStatus.Missed)
+        searchFollowUp(o)
+        o.batch.error = ApiError.Connection
+        o.vm.selectFollowUpTime(0)
+        assertTrue(o.vm.confirmRemainingFreeTime()); advanceUntilIdle()
+        assertTrue(o.vm.closeRemainingStudy())
+        assertEquals(PlanRecovery.ReloadRequired, restored(o).plans.first().recovery)
+        assertFalse(o.vm.startRemainingStudy(1))
+        assertTrue(o.vm.selectPlan(1))
+        o.other.rows = a.current.schedules
+        assertTrue(o.vm.reloadPlan()); advanceUntilIdle()
+        assertEquals(1, o.other.reloads)
+        assertEquals(1, o.batch.inputs.size)
+        assertTrue(o.vm.startRemainingStudy(1))
+    }
 
     @Test fun reviewCancelAndZeroWorkWriteNothingAndCallNothing() = runTest(dispatcher) {
         val o = open()

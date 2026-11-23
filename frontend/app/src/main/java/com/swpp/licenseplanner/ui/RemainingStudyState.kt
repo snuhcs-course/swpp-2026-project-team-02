@@ -18,7 +18,8 @@ sealed interface RemainingStudyState {
     data class Loading(val input: RemainingStudyInput) : RemainingStudyState
     data class CalendarSearch(val id: Int, val input: RemainingStudyInput,
                               val phase: FreeTimePhase = FreeTimePhase.RequestingPermission,
-                              val placements: List<PlacedSession> = emptyList(), val changed: Boolean = false) : RemainingStudyState
+                              val placements: List<PlacedSession> = emptyList(), val changed: Boolean = false,
+                              val suggestions: List<FreeTimeSuggestion> = emptyList(), val selected: Int? = null) : RemainingStudyState
     data class Success(val input: RemainingStudyInput, val rows: List<ScheduleRow>, val save: MoveSave = MoveSave.Saving) : RemainingStudyState
     data class Failure(val input: RemainingStudyInput, val error: ApiError? = null, val noFit: Boolean = false) : RemainingStudyState
     data class Invalid(val message: String) : RemainingStudyState

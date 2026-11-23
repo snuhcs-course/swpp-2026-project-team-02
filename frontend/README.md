@@ -1442,7 +1442,8 @@ the actual minutes as a separate field. 다 했어요 suggests the planned minut
 both 다 했어요 and 일부 했어요 accept any positive whole number of minutes, including
 more than planned; 못 했어요 disables the field and saves 0. Invalid entries show
 an error and keep the saved report. 기록 저장하기 / 기록 수정하기 saves explicitly
-and returns to the plan; 취소 or back writes nothing. Rows show the saved status
+and returns to the plan unless the saved report offers a follow-up. 취소 or back
+writes nothing before saving. Rows show the saved status
 and actual minutes (for example 다 했어요 · 실제 20분) apart from the scheduled
 duration.
 
@@ -1454,6 +1455,25 @@ sent to the server or the calendar, and do not estimate mastery; there is no
 skip (이미 아는 내용이에요) action and no history of earlier reports.
 
 ## Remaining study re-planning
+
+Saving **못 했어요** or **일부 했어요** on a ready plan with entered study windows
+offers **빈 시간에 이어서 공부하기** when that topic has minutes left. Saving the
+report reads no calendar and sends no request. **나중에** returns to the plan
+with the report saved and the schedule unchanged.
+
+Opening the offer checks calendar read access and lists up to three times on
+different dates in the usual study band before the exam. Each suggestion shows
+the topic, remaining duration and whether it is outside the entered windows.
+Remainders under 30 minutes need adjacent study that brings the continuous
+session to at least 30 minutes. Confirmation re-reads the calendar. A new
+overlap clears the selection and refreshes the suggestions. Denied access, an
+unreadable calendar and no suitable time each offer a return to the plan.
+
+Live sends a remaining-mode request with one session, its chosen
+`new_start_date`, and `confirm_outside_availability: true` only for a confirmed
+outside-window time. Demo saves locally. The new row starts without a report
+and the original report remains associated with its original ID. The follow-up
+uses the save and reload behavior below. Calendar export stays separate.
 
 The plan view of a generated or reopened plan offers **남은 공부 다시 계획하기**
 (일정 조정 does not) independently

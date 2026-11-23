@@ -10,6 +10,8 @@ import com.swpp.licenseplanner.data.RemainingStudyInput
 import com.swpp.licenseplanner.data.RemainingStudyRepository
 import com.swpp.licenseplanner.data.remainingResponseProblem
 import com.swpp.licenseplanner.domain.FreeTime
+import com.swpp.licenseplanner.domain.RemainingContribution
+import com.swpp.licenseplanner.domain.RemainingWork
 import com.swpp.licenseplanner.ui.screens.isNoFit
 import com.swpp.licenseplanner.domain.RemainingStudy
 import com.swpp.licenseplanner.data.AdjustmentInput
@@ -283,6 +285,7 @@ data class CheckInEditor(
     val minutesEdited: Boolean,
     val error: CheckInInputError? = null,
     val save: CheckInSave = CheckInSave.Editing,
+    val followUp: RemainingContribution? = null,
 ) {
     /** Minutes can be typed only for done or partly, before saving. */
     val minutesEnabled: Boolean get() = save == CheckInSave.Editing && status != null && status != StudyCheckInStatus.Missed
@@ -504,6 +507,11 @@ class PlanFormViewModel(
         viewModelScope.launch {
             combine(_plans, _adjustment) { _, _ -> Unit }.collect {
                 _freeTimeSearch.value?.let { if (!freeTimeSourceCurrent(it)) cancelFreeTimeSearch() }
+                val followUp = _remainingStudy.value as? RemainingStudyState.CalendarSearch
+                if (followUp?.input?.followUpScheduleId != null &&
+                    plan(followUp.input.source.ordinal) != followUp.input.source) {
+                    _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
+                }
             }
         }
         viewModelScope.launch {
@@ -1253,8 +1261,16 @@ class PlanFormViewModel(
         _remainingStudy.value = search.copy(id = nextConflictId++, phase = FreeTimePhase.RequestingPermission)
     }
 
+    fun selectFollowUpTime(index: Int) {
+        val search = _remainingStudy.value as? RemainingStudyState.CalendarSearch ?: return
+        if (search.phase == FreeTimePhase.Results && index in search.suggestions.indices) {
+            _remainingStudy.value = search.copy(selected = index)
+        }
+    }
+
     fun confirmRemainingFreeTime(): Boolean {
         val search = (_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.takeIf { it.phase == FreeTimePhase.Results } ?: return false
+        if (search.input.followUpScheduleId != null && search.selected == null) return false
         readRemainingFreeTime(search, final = true)
         return true
     }
@@ -1264,11 +1280,15 @@ class PlanFormViewModel(
             _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
             return
         }
+        val original = search.input.source.original
+        val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
+        if (search.input.followUpScheduleId != null && currentMinute().plusMinutes(1) >= exam) {
+            _remainingStudy.value = search.copy(phase = FreeTimePhase.NoTime, suggestions = emptyList(), selected = null)
+            return
+        }
         _remainingStudy.value = search.copy(phase = FreeTimePhase.Reading)
         viewModelScope.launch {
             val source = search.input.source
-            val original = source.original
-            val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
             val outcome = readCalendar(CalendarReadWindow(currentMinute().toLocalDate(), exam.toLocalDate().plusDays(1)))
             if ((_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.id != search.id) return@launch
             if (plan(source.ordinal) != source || !regenerationSaveReady()) {
@@ -1279,6 +1299,10 @@ class PlanFormViewModel(
                 CalendarReadOutcome.PermissionMissing -> _remainingStudy.value = search.copy(phase = FreeTimePhase.PermissionDenied)
                 CalendarReadOutcome.Unavailable -> _remainingStudy.value = search.copy(phase = FreeTimePhase.Unavailable)
                 is CalendarReadOutcome.Loaded -> {
+                    if (search.input.followUpScheduleId != null) {
+                        applyFollowUpCalendarRead(search, outcome.snapshot, final)
+                        return@launch
+                    }
                     val placed = FreeTime.placeBatch(requireNotNull(AvailabilityWire.context(original)), source.current.schedules,
                         search.input.work.instructions, outcome.snapshot.occurrences,
                         requireNotNull(WireDateTime.parseOrNull(original.preparationStart)), exam, search.input.replanFrom, currentMinute())
@@ -1290,6 +1314,27 @@ class PlanFormViewModel(
                 }
             }
         }
+    }
+
+    private fun applyFollowUpCalendarRead(search: RemainingStudyState.CalendarSearch, snapshot: CalendarBusySnapshot, final: Boolean) {
+        val input = search.input
+        val contribution = input.work.contributions.single()
+        val original = input.source.original
+        val availability = requireNotNull(AvailabilityWire.context(original))
+        val earliest = maxOf(input.replanFrom, currentMinute().withSecond(0).withNano(0).plusMinutes(1))
+        val chosen = if (final) search.selected?.let(search.suggestions::getOrNull) else null
+        // With the source held constant, only the current time and the fresh calendar can invalidate this choice.
+        if (chosen != null && chosen.start >= earliest &&
+            snapshot.occurrences.none { it.start < chosen.end && chosen.start < it.end }) {
+            sendRemainingStudy(input.copy(destinations = mapOf(contribution.source.scheduleId to chosen.start),
+                confirmOutside = chosen.outsideWindows))
+            return
+        }
+        val suggestions = FreeTime.suggest(availability, input.source.current.schedules, contribution.source.scheduleId,
+            snapshot.occurrences, requireNotNull(WireDateTime.parseOrNull(original.preparationStart)),
+            requireNotNull(WireDateTime.parseOrNull(original.examDate)), earliest, remainingMinutes = contribution.remainingMinutes)
+        _remainingStudy.value = search.copy(phase = if (suggestions.isEmpty()) FreeTimePhase.NoTime else FreeTimePhase.Results,
+            suggestions = suggestions, selected = null, changed = final)
     }
 
     /** The same entry rule is used by rendered controls and direct calls. */
@@ -1685,6 +1730,27 @@ class PlanFormViewModel(
      * (confirmed or failed) the shown collection stays as it is. Refused while saving.
      */
     fun closeCheckIn() = _checkIn.update { if (it?.save == CheckInSave.Saving) it else null }
+
+    private fun checkInFollowUp(source: SessionPlan, editor: CheckInEditor): RemainingContribution? {
+        if (!source.canAdjust || AvailabilityWire.context(source.original)?.let(FreeTime::band) == null ||
+            WireDateTime.parseOrNull(source.original.preparationStart) == null ||
+            WireDateTime.parseOrNull(source.original.examDate) == null) return null
+        return runCatching { RemainingStudy.calculate(source, editor.scheduleId) }.getOrNull()
+            ?.contributions?.singleOrNull()?.takeIf { it.report != null && it.remainingMinutes > 0 }
+    }
+
+    fun startCheckInFollowUp(): Boolean {
+        val editor = _checkIn.value?.takeIf { it.save == CheckInSave.Saved } ?: return false
+        val contribution = editor.followUp ?: return false
+        if (remainingStudyBlockReason(editor.planOrdinal) != null) return false
+        val source = plan(editor.planOrdinal) ?: return false
+        if (checkInFollowUp(source, editor) != contribution) return false
+        val input = RemainingStudyInput(source, RemainingWork(listOf(contribution), contribution.remainingMinutes.toLong()),
+            currentMinute().withSecond(0).withNano(0).plusMinutes(1), followUpScheduleId = editor.scheduleId)
+        _remainingStudy.value = RemainingStudyState.CalendarSearch(nextConflictId++, input)
+        _checkIn.value = null
+        return true
+    }
 
     /**
      * Opens a calendar export of plan [ordinal]'s current study rows, captured now. Refused unless the
@@ -2165,11 +2231,13 @@ class PlanFormViewModel(
         pending.checkIn?.let { captured ->
             _checkIn.update { current ->
                 if (current?.copy(save = captured.save) == captured) {
+                    val followUp = if (saved == true) pending.snapshot.plans.firstOrNull { it.ordinal == captured.planOrdinal }
+                        ?.let { checkInFollowUp(it, captured) } else null
                     current.copy(save = when (saved) {
                         null -> CheckInSave.Saving
                         true -> CheckInSave.Saved
                         false -> CheckInSave.Unsaved
-                    })
+                    }, followUp = followUp)
                 } else current
             }
         }
