@@ -22,6 +22,7 @@ from schedule_adjuster.settings import AGENT_MAX_STEPS
 from schedule_adjuster.tools import ScheduleAdjustmentTools
 from study_plan_store import StudyPlanStore
 from test_support.device_tokens import bearer, owner_store
+from test_support.filesystem import symlink_or_skip
 
 
 ROWS = [
@@ -250,9 +251,9 @@ class PlanUpdateTests(unittest.TestCase):
             return unchanged
 
         def restore():
-            if not self.metadata.is_symlink():
+            if self.metadata.exists() and not self.metadata.is_symlink():
                 self.metadata.chmod(0o644)
-            self.metadata.unlink()
+            self.metadata.unlink(missing_ok=True)
             self.metadata.write_bytes(valid_metadata)
 
         damages = {"invalid timestamp": malformed(b'{"exam_date": "soon"}'),
@@ -548,10 +549,7 @@ class PlanUpdateTests(unittest.TestCase):
 
     def symlink(self, link, target):
         """Create a real symlink, skipping only where the platform refuses to."""
-        try:
-            link.symlink_to(target)
-        except (OSError, NotImplementedError) as error:
-            self.skipTest(f"cannot create a file symlink here: {error}")
+        symlink_or_skip(self, link, target)
         self.addCleanup(link.unlink, missing_ok=True)
 
     def test_selected_plan_symlinks_are_rejected_without_reading_targets(self):

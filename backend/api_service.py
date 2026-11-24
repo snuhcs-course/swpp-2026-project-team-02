@@ -12,7 +12,7 @@ from license_planner.agent import PlanningAgent
 from license_planner.csv_io import parse_busy_csv, parse_datetime, render_schedule_csv
 from license_planner.models import PlanRequest
 from license_planner.tools import check_initial_capacity
-from assessment_service import get_public_questions, parse_assessment_results, partition_assessment
+from assessment_service import get_public_questions, parse_assessment_results, partition_assessment, reassessment_topic_results
 from license_planner.user_availability import (
     load_personal_availability, save_personal_availability,
 )
@@ -21,6 +21,7 @@ from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
 from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions, validate_remaining_destinations
+from schedule_adjuster.reassessment import resplit_study
 from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
 from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
@@ -36,7 +37,7 @@ MISSING_STORED_EXAM_DATE = ("This saved plan has no stored exam date. "
                             "Create a new plan before adjusting study sessions.")
 # The project's wire timestamps are Korea-local; Korea has no daylight saving time.
 KOREA_TIMEZONE = timezone(timedelta(hours=9), "Asia/Seoul")
-ADJUSTMENT_MODES = ("automatic", "manual", "remaining")
+ADJUSTMENT_MODES = ("automatic", "manual", "remaining", "reassessment")
 REMAINING_FIELDS = ("schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
                     "preparation_start", "exam_date", "replan_from", "remaining_sessions")
 SINGLE_TARGET_FIELDS = ("schedule_id", "new_start_date", "confirm_outside_availability")
@@ -263,7 +264,7 @@ def _adjustment_availability(payload: dict[str, Any], snapshot: PlanSnapshot | N
 def _adjustment_mode(payload: dict[str, Any]) -> str:
     mode = payload.get("mode", "automatic")
     if mode not in ADJUSTMENT_MODES or not isinstance(mode, str):
-        raise ValueError("mode must be automatic, manual or remaining")
+        raise ValueError("mode must be automatic, manual, remaining or reassessment")
     return mode
 
 
@@ -389,6 +390,61 @@ def _adjust_remaining(payload: dict[str, Any], store: StudyPlanStore) -> dict[st
             "action": "replanned_remaining", "agent_summary": _remaining_summary(placed), "tool_calls": []}
 
 
+def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict[str, Any]:
+    """Stateless deterministic preview/commit over the same authoritative plan snapshot.
+
+    Identical input produces identical output; commits recheck both the live clock
+    and the saved CSV/metadata. No question, model, profile or plan writes happen
+    during preview. Device reports are represented only by keep_schedule_ids.
+    """
+    fields = ("schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
+              "preparation_start", "exam_date", "replan_from", "keep_schedule_ids",
+              "first_new_study_id", "assessment_results", "commit")
+    for field in fields:
+        if payload.get(field) is None:
+            raise ValueError(f"{field} is required when mode is reassessment")
+    for field in (*SINGLE_TARGET_FIELDS, "remaining_sessions"):
+        if field in payload:
+            raise ValueError(f"{field} is not used when mode is reassessment")
+    if type(payload["commit"]) is not bool:
+        raise ValueError("commit must be true or false")
+    keep = payload["keep_schedule_ids"]
+    if (not isinstance(keep, list) or not all(isinstance(key, str) for key in keep)
+            or len(keep) != len(set(keep))):
+        raise ValueError("keep_schedule_ids must be an array of distinct study IDs")
+    if not isinstance(payload["first_new_study_id"], str):
+        raise ValueError("first_new_study_id must be a string")
+    if not isinstance(payload["weekly_availability"], dict):
+        raise ValueError("weekly_availability must be a JSON object keyed by weekday")
+    entries = parse_schedule_rows(payload["schedules"])
+    supplied = select_availability_context(payload, lambda: None)
+    start = _datetime(payload["preparation_start"], "preparation_start")
+    exam = _datetime(payload["exam_date"], "exam_date")
+    cutoff = _datetime(payload["replan_from"], "replan_from")
+    snapshot = store.snapshot(payload["schedule_csv_file"])
+    if {row.schedule_id: row for row in entries} != {row.schedule_id: row for row in snapshot.entries}:
+        raise PlanConflictError("The selected plan has changed. Reload it before adjusting.")
+    if snapshot.exam_date is None or snapshot.preparation_start is None or snapshot.availability is None:
+        raise ValueError(MISSING_STORED_CONTEXT)
+    if start != snapshot.preparation_start or exam != snapshot.exam_date or supplied != snapshot.availability:
+        raise ValueError("preparation_start, exam_date and study times must match the selected plan's stored context")
+    if cutoff >= exam:
+        raise ValueError("replan_from must be before exam_date")
+    results = reassessment_topic_results(payload["assessment_results"])
+    revised = resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
+                           now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
+    csv_text = render_adjusted_csv(revised)
+    if payload["commit"]:
+        # Validation above may span a minute boundary. Recheck before persisting.
+        resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
+                      now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
+        store.update(snapshot, csv_text)
+    return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text, **plan_fields(snapshot.identifier),
+            "availability_snapshot": context_payload(snapshot.availability, include_end=True),
+            "action": "reassessed" if payload["commit"] else "reassessment_preview",
+            "agent_summary": "새 진단 결과로 남은 공부의 토픽별 시간을 다시 나눴어요.", "tool_calls": []}
+
+
 # AI-assisted with Codex, 2026-10-17; execution verification pending.
 def adjust_schedule(payload: dict[str, Any], store: StudyPlanStore, *,
                     shared_availability: bool = True) -> dict[str, Any]:
@@ -404,6 +460,8 @@ def adjust_schedule(payload: dict[str, Any], store: StudyPlanStore, *,
             raise ValueError("confirm_external_overlap must be true or false and is only valid in manual mode")
     if mode == "remaining":
         return _adjust_remaining(payload, store)
+    if mode == "reassessment":
+        return _adjust_reassessment(payload, store)
     entries = parse_schedule_rows(payload.get("schedules"))
     target_id = payload.get("schedule_id")
     if not isinstance(target_id, str) or not target_id:

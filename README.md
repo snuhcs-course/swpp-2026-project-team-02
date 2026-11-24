@@ -58,8 +58,9 @@ The app supports multiple daily study windows, per-week changes, device-local
 creation drafts and study reports, and viewing or moving saved study sessions.
 A learner can [reassess during a plan](frontend/README.md#reassessment-during-a-plan)
 with separate example questions and, after a preview and confirmation, change the
-topics of future unreported sessions without moving their times (demo only until
-a backend adds the reassessment route). It can read calendar conflicts and copy
+topics of future unreported sessions without moving their times. Both demo and
+the backend support this flow; live use requires deploying this backend version.
+It can read calendar conflicts and copy
 study sessions to a chosen device calendar. Build and verification instructions are in
 [`frontend/README.md`](frontend/README.md#checks). The
 [Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)

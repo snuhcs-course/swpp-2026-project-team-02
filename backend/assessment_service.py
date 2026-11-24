@@ -12,7 +12,7 @@ from typing import Any, Mapping
 
 import certification_selector.catalog as selector_catalog
 from assessment_questionnaire.validation import (
-    UNKNOWN_CHOICE, QuestionContentError, check_question_content, check_total, is_nonempty_text,
+    UNKNOWN_CHOICE, QuestionContentError, check_question_content, check_reviewed_record, check_total, is_nonempty_text,
     is_positive_id, parse_json_bytes, retained_records, select_questions,
 )
 from license_planner.catalog import CERTIFICATIONS
@@ -278,6 +278,67 @@ def parse_assessment_results(certification_id: str, assessment: Any) -> tuple[As
         seen_ids.add(question_id)
     check_total([item.possible_score for item in submitted], "assessment_results")
     return tuple(submitted)
+
+
+def get_reassessment_questions(certification_id: str) -> dict[str, Any]:
+    """Serve an explicit separate example selection, retaining its honest draft status.
+
+    Unlike onboarding, these authored examples may be drafts, but every selected
+    item must have complete validated content, a catalog topic and explanation.
+    Never select all drafts implicitly or promote them to reviewed records.
+    """
+    snapshot = _snapshot(certification_id)
+    document = json.loads(snapshot.document_json)
+    ids = document.get("reassessment_question_ids")
+    try:
+        if (not isinstance(ids, list) or not ids or not all(is_positive_id(key) for key in ids)
+                or len(ids) != len(set(ids))):
+            raise QuestionContentError("reassessment_question_ids must contain distinct positive IDs")
+        if set(ids) & {question.id for question in snapshot.selected}:
+            raise QuestionContentError("reassessment questions must differ from onboarding questions")
+        by_id = {question["id"]: question for question in document["questions"]}
+        selected = []
+        for key in ids:
+            if key not in by_id:
+                raise QuestionContentError("reassessment selection references an unknown question")
+            question = by_id[key]
+            check_reviewed_record(question)  # Content checks only; does not alter review_status.
+            if question["topic"] not in CERTIFICATIONS[certification_id].topics:
+                raise QuestionContentError("reassessment question has an unsupported topic")
+            selected.append({field: question[field] for field in (*PUBLIC_QUESTION_FIELDS, "topic", "explanation",
+                                                                  "review_status")})
+        check_total([float(question["possible_score"]) for question in selected], "reassessment questions")
+        if {question["topic"] for question in selected} != {question.topic for question in snapshot.selected}:
+            raise QuestionContentError("reassessment and onboarding topic coverage must match")
+    except QuestionContentError as error:
+        raise AssessmentConfigurationError(certification_id, str(error)) from error
+    return {"certification_id": certification_id, "certification_name": snapshot.certification_name,
+            "questions": selected}
+
+
+def reassessment_topic_results(assessment: Any) -> list[tuple[str, float, bool]]:
+    """Validate the whole selected quiz against server records, never client-supplied topics or keys."""
+    if not isinstance(assessment, dict) or not isinstance(assessment.get("certification_id"), str):
+        raise ValueError("assessment_results.certification_id must be a string")
+    certification_id = assessment["certification_id"]
+    try:
+        questions = get_reassessment_questions(certification_id)["questions"]
+    except KeyError:
+        raise ValueError("Unsupported assessment_results.certification_id") from None
+    submitted = parse_assessment_results(certification_id, assessment)
+    by_id = {question["id"]: question for question in questions}
+    if {item.problem_id for item in submitted} != set(by_id):
+        raise ValueError("assessment_results must contain every selected reassessment question exactly once")
+    results = []
+    for item in submitted:
+        question = by_id[item.problem_id]
+        normal = {key: text for key, text in item.choices.items() if key != UNKNOWN_CHOICE}
+        if (item.question != question["prompt"] or normal != question["choices"]
+                or item.correct_answer != question["correct_answer"]
+                or item.possible_score != float(question["possible_score"])):
+            raise ValueError("assessment_results must match the current reassessment question content")
+        results.append((question["topic"], item.possible_score, item.is_correct))
+    return results
 
 
 def partition_assessment(certification_id: str, items: tuple[AssessmentItem, ...],

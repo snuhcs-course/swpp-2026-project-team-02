@@ -814,3 +814,63 @@ For a static payload template, see `scenarios/inputs/api/plan_adjustment_request
 Its sample file does not exist automatically; replace both the identifier and
 schedule rows with those from generation or listing. The Android Emulator base
 URL remains `http://10.0.2.2:8000/api/v1`.
+
+## Reassessment during an existing plan (P12)
+
+All paths below use the existing `/api/v1` prefix.
+
+- `GET /certifications/{id}/reassessment-questions` is public. It returns
+  `certification_id`, `certification_name` and `questions`. Each question has
+  `id`, `prompt`, `choices`, `correct_answer`, `possible_score`, `topic`,
+  `explanation` and `review_status`. The current 18 authored examples (IDs 19–36)
+  remain drafts, separate from onboarding; they are not validated assessments.
+  The bank explicitly selects them using `reassessment_question_ids`.
+- `POST /schedules/adjust` requires the existing device Bearer token and
+  `mode: "reassessment"`. Required fields match Android `ReassessmentRequest`:
+  `commit` (boolean), `schedule_csv_file`, `schedules`, `weekly_availability`,
+  `availability_overrides`, `preparation_start`, `exam_date`, `replan_from`,
+  `keep_schedule_ids`, `first_new_study_id`, and `assessment_results`.
+  Submit the whole selected quiz in the existing locally scored result format,
+  with `assessment_results.certification_id`. The server checks question IDs,
+  content, choices, answer keys, possible scores and correctness against its bank.
+  `UNKNOWN: "모르겠음"` is accepted and always incorrect. No model is called.
+
+`commit: false` returns `action: "reassessment_preview"` without changing any
+files. After confirmation, resend the same input with `commit: true`; it returns
+`action: "reassessed"` and atomically updates only the selected owner's CSV.
+Both responses include `schedules`, `schedule_csv`, the same `schedule_csv_file`,
+`availability_snapshot`, `agent_summary` and `tool_calls: []`.
+
+Preview is deterministic and stateless: there is no preview token or server-side
+quiz history. Commit recomputes the same result, verifies unchanged source rows
+and retained context, rechecks time, and uses the existing optimistic storage
+update to reject concurrent writes. Client-side preview equality and reload
+gates remain applicable. CSV and metadata changes yield `409 PLAN_CONFLICT`.
+
+Only study rows starting at or after `replan_from` and absent from
+`keep_schedule_ids` can change. Reported IDs come from the device; the backend
+does not retain study reports. Past rows, in-progress rows, external rows and
+kept rows remain identical. Each revisable row keeps its exact time coverage;
+only topic boundaries may split it into adjacent pieces. Unchanged single-topic
+rows keep their IDs; changed pieces receive fresh IDs from `first_new_study_id`,
+which must exceed every current study ID. FE may reserve a higher number for
+retained reports. Preparation dates, exam date and study windows cannot change.
+
+New scores alone determine topic budgets: reserve one minute per topic and split
+the rest by `2 - score/100`, with largest-remainder rounding and weakest-first
+packing. This matches the shared Android/Python reassessment fixtures and does
+not invoke the planner's boundary smoothing. Short topic pieces can occur within
+an existing study session; study session time coverage remains unchanged.
+
+Errors use the existing error envelope:
+
+| HTTP | Code | Meaning |
+| --- | --- | --- |
+| 401 | `INVALID_DEVICE_TOKEN` | Missing/invalid owner credential |
+| 404 | `PLAN_NOT_FOUND` | No selected plan owned by this device |
+| 409 | `PLAN_CONFLICT` | Client snapshot or stored metadata changed |
+| 422 | `REASSESSMENT_PREVIEW_EXPIRED` | A revisable row now starts before the current Seoul minute |
+| 422 | `INVALID_INPUT` | Malformed/incomplete quiz, invalid IDs, missing retained context, or no revisable rows |
+| 422 | `INVALID_INPUT` with message starting `NOT_ENOUGH_TIME` | Remaining minutes cannot give every assessed topic one minute |
+| 500 | `INTERNAL_ERROR` | Invalid question-bank configuration; internal details stay server-side |
+| 500 | `STORAGE_ERROR` | Plan storage failure |

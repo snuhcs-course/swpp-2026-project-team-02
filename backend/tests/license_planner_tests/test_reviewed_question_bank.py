@@ -301,15 +301,15 @@ class ReviewedTopicPlanningTests(unittest.TestCase):
     def test_submitted_reviewed_item_outside_onboarding_uses_its_stored_topic(self):
         with temporary_question_bank(larger_level_2_bank()):
             stored = {question["id"]: question for question in _load_question_bank(CERT_ID)["questions"]}
-            request = build_plan_request(payload(results_for(bank_questions() + [stored[19]], lambda question: True)),
+            request = build_plan_request(payload(results_for(bank_questions() + [stored[901]], lambda question: True)),
                                          require_assessment=True)
             served = [question["id"] for question in get_public_questions(CERT_ID)["questions"]]
 
         self.assertEqual(request.assessment_items, ())
-        self.assertEqual([row.problem_id for row in request.problem_results], [*range(1, 19), 19])
-        self.assertEqual(request.problem_results[-1].topic, stored[19]["topic"])
+        self.assertEqual([row.problem_id for row in request.problem_results], [*range(1, 19), 901])
+        self.assertEqual(request.problem_results[-1].topic, stored[901]["topic"])
         self.assertEqual(served, list(range(1, 19)))
-        self.assertEqual(stored[20]["review_status"], "draft")
+        self.assertEqual(stored[902]["review_status"], "draft")
 
 class MixedEvidenceTests(unittest.TestCase):
     def test_mixed_results_conserve_points_on_same_and_different_topics(self):

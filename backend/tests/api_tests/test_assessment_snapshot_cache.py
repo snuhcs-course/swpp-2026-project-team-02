@@ -2,7 +2,9 @@
 import json
 import os
 import threading
+import time
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import assessment_service
@@ -13,6 +15,7 @@ from assessment_service import (
 from test_support.question_banks import (
     CERT_ID, level_2_bank, temporary_assessment_configuration, temporary_question_bank,
 )
+from test_support.filesystem import symlink_or_skip
 
 
 def submitted(questions):
@@ -27,7 +30,35 @@ def write_atomically(path, document, *, keep_mtime_of=None):
     replacement.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     if keep_mtime_of is not None:
         os.utime(replacement, ns=(keep_mtime_of.st_atime_ns, keep_mtime_of.st_mtime_ns))
-    os.replace(replacement, path)
+    # Windows readers do not grant delete sharing. Retry only transient Windows
+    # sharing/access errors, keeping the replacement atomic and the wait bounded.
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.replace(replacement, path)
+            break
+        except PermissionError as error:
+            if getattr(error, "winerror", None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
+@contextmanager
+def running_readers(read, stop, count=4):
+    """Stop/join readers before temporary sources or module patches are restored."""
+    readers = [threading.Thread(target=read) for _ in range(count)]
+    started = []
+    try:
+        for reader in readers:
+            reader.start()
+            started.append(reader)
+        yield readers
+    finally:
+        stop.set()
+        for reader in started:
+            reader.join(timeout=10)
+        if any(reader.is_alive() for reader in started):
+            raise AssertionError("question-bank reader did not terminate")
 
 
 class SnapshotCacheTests(unittest.TestCase):
@@ -113,10 +144,10 @@ class SnapshotCacheTests(unittest.TestCase):
                                                 bank_map={CERT_ID: "link.json"}) as root:
             outside = root.parent / "outside.json"
             outside.write_text(json.dumps(level_2_bank(), ensure_ascii=False), encoding="utf-8")
-            (root / "link.json").symlink_to(root / "real.json")
+            symlink_or_skip(self, root / "link.json", root / "real.json")
             self.assertEqual(len(get_public_questions(CERT_ID)["questions"]), 18)
             (root / "link.json").unlink()
-            (root / "link.json").symlink_to(outside)
+            symlink_or_skip(self, root / "link.json", outside)
 
             with self.assertRaisesRegex(AssessmentConfigurationError, "leaves assessment_questionnaire"):
                 get_public_questions(CERT_ID)
@@ -167,18 +198,41 @@ class SnapshotCacheTests(unittest.TestCase):
                     except Exception as error:
                         failures.append(error)
 
-            readers = [threading.Thread(target=read) for _ in range(4)]
-            for reader in readers:
-                reader.start()
-            for index in range(40):
-                write_atomically(bank_path, level_2_bank() if index % 2 else alternate)
-            stop.set()
-            for reader in readers:
-                reader.join(timeout=10)
+            with running_readers(read, stop):
+                for index in range(40):
+                    write_atomically(bank_path, level_2_bank() if index % 2 else alternate)
 
         self.assertTrue(seen)
         self.assertLessEqual(seen, expected)
         self.assertTrue(all(isinstance(error, AssessmentConfigurationError) for error in failures), failures)
+
+    def test_readers_terminate_even_if_the_writer_fails(self):
+        stop = threading.Event()
+        with self.assertRaisesRegex(OSError, "injected write failure"):
+            with running_readers(lambda: stop.wait(), stop) as readers:
+                raise OSError("injected write failure")
+        self.assertTrue(stop.is_set())
+        self.assertFalse(any(reader.is_alive() for reader in readers))
+
+    def test_transient_windows_replace_error_is_retried(self):
+        busy = PermissionError("sharing violation")
+        busy.winerror = 32
+        with temporary_question_bank(level_2_bank()) as path:
+            with patch.object(os, "replace", side_effect=[busy, None]) as attempt, \
+                    patch.object(time, "sleep"):
+                write_atomically(path, level_2_bank())
+            self.assertEqual(attempt.call_count, 2)
+
+    def test_replace_retry_is_bounded_and_does_not_hide_other_errors(self):
+        busy = PermissionError("sharing violation")
+        busy.winerror = 32
+        for error in (busy, PermissionError("permanent access denied"), OSError("disk failure")):
+            with self.subTest(error=str(error)), temporary_question_bank(level_2_bank()) as path:
+                with patch.object(os, "replace", side_effect=error) as attempt, \
+                        patch.object(time, "monotonic", side_effect=[0, 6]), \
+                        self.assertRaises(type(error)):
+                    write_atomically(path, level_2_bank())
+                self.assertEqual(attempt.call_count, 1)
 
     def test_retained_snapshots_stay_bounded_across_temporary_sources(self):
         for _ in range(SNAPSHOT_CACHE_LIMIT + 4):

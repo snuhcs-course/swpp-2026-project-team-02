@@ -15,7 +15,8 @@ from api_admission import AdmissionLimiter
 from api_service import (adjust_schedule, create_study_plan, delete_study_plan, owner_plan_store, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import (AssessmentConfigurationError, get_public_certifications,
-                                get_public_questions)
+                                get_public_questions, get_reassessment_questions)
+from schedule_adjuster.reassessment import ReassessmentPreviewExpired
 from openrouter_client import InferenceConfigurationError, sanitize_diagnostic
 from schedule_adjuster.schedule_logic import ManualMoveError
 from study_plan_store import PlanNotFoundError, PlanConflictError, PlanStorageError, StudyPlanStore
@@ -308,6 +309,12 @@ def make_handler(config: dict[str, Any], admission: AdmissionLimiter | None = No
                     self._send_json(200, read_availability())
                 elif path == f"{API_PREFIX}/certifications":
                     self._send_json(200, get_public_certifications())
+                elif path.startswith(f"{API_PREFIX}/certifications/") and path.endswith("/reassessment-questions"):
+                    certification_id = path[len(f"{API_PREFIX}/certifications/"):-len("/reassessment-questions")]
+                    if not certification_id or "/" in certification_id:
+                        self._send_json(404, ROUTE_NOT_FOUND)
+                        return
+                    self._send_json(200, get_reassessment_questions(certification_id))
                 elif path.startswith(f"{API_PREFIX}/certifications/") and path.endswith("/questions"):
                     certification_id = path[len(f"{API_PREFIX}/certifications/"):-len("/questions")].strip("/")
                     if not certification_id or "/" in certification_id:
@@ -428,6 +435,8 @@ def make_handler(config: dict[str, Any], admission: AdmissionLimiter | None = No
                 self._send_json(500, {"error": {"code": "STORAGE_ERROR", "message": str(error)}})
             except ManualMoveError as error:
                 self._send_json(422, {"error": {"code": error.code, "message": str(error)}})
+            except ReassessmentPreviewExpired as error:
+                self._send_json(422, {"error": {"code": "REASSESSMENT_PREVIEW_EXPIRED", "message": str(error)}})
             except ValueError as error:
                 self._send_json(422, {"error": {"code": "INVALID_INPUT", "message": str(error)}})
             except RuntimeError as error:
