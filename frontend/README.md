@@ -1566,6 +1566,55 @@ It avoids retained study/external rows and preserves existing protected overlaps
 A failure to fit any whole session rejects the complete batch. This deterministic
 operation has no network, model or calendar dependency.
 
+## Reassessment during a plan
+
+The plan view offers **다시 진단하기** right after **남은 공부 다시 계획하기**.
+It is disabled under the same shared rule as remaining-study re-planning: another
+plan operation or an unresolved reload blocks it, and a plan without its
+preparation start, exam date or study windows shows the existing recreation
+guidance. When the exam has passed or no unreported study row starts from the
+current minute on, it shows **바꿀 수 있는 남은 공부가 없어요**. Nothing is read
+or sent until it is tapped.
+
+The quiz uses a separate set of 18 authored example questions with the same
+topic coverage as the first diagnostic. It is labeled as differing from the
+first diagnostic and as neither an official nor a validated assessment, and
+each question offers 모르겠음. **결과 보기** needs every answer. The results
+show each question's answer, correct answer and explanation, and each topic as
+**처음 진단 N%** → **이번 진단 M%**, with no pass or mastery prediction. Results
+are discarded on leaving; no reassessment history is kept.
+
+**남은 공부에 반영해 보기** previews the change without saving it. Only future
+unreported study rows change, and only their topics: dates, times and total
+minutes stay fixed, and a row may split into back-to-back pieces where one topic
+ends and the next begins. Past rows, a row in progress, reported rows, external
+rows, the exam date, the preparation start and the study windows stay unchanged.
+Future minutes are split by the new scores alone (one minute per topic, the rest
+weighted by `2 − score/100`) and packed weakest-first in time order; completed
+study is not subtracted. The preview lists each topic's minutes before → after
+with the same total, and every changed session with its date, time and old → new
+topic. **바뀌는 남은 공부가 없어요** and too little remaining time to re-split
+both leave the plan unchanged.
+
+**이대로 바꾸기** applies the previewed result once; **바꾸지 않기** sends
+nothing. The update uses the remaining-study lock, the durable reload gate,
+uncertain-outcome reload and local-only **다시 저장하기** described above. A
+result that differs from the preview is treated as uncertain. If a revisable
+session starts before confirmation, the preview is out of date and
+**다시 미리 보기** asks again with the same answers. **계획 보기** returns to the
+plan view at the week of the first changed session. Reports, calendar
+acknowledgments and kept conflicts stay under their original IDs, and new pieces
+get fresh study IDs. Calendar copies exported earlier keep their old topics;
+export stays the separate existing action.
+
+Demo uses bundled copies of the 18 questions, computes the preview and update
+locally with the same rules, saves on the device and keeps the local-demo label.
+It makes no network or calendar request. Live loads
+`GET /certifications/{id}/reassessment-questions` and sends
+`POST /schedules/adjust` with `mode: "reassessment"`, first with `commit: false`
+for the preview and then with `commit: true` after confirmation. No server implements that route or mode yet, so live shows
+**서버 업데이트가 필요해요** and never substitutes demo questions.
+
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
@@ -1582,6 +1631,10 @@ operation has no network, model or calendar dependency.
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
+- Live reassessment needs a backend with the reassessment question route and
+  adjustment mode, which no server has yet; live builds show update guidance.
+  The 18 reassessment questions are drafts awaiting a teammate's review, and
+  their one to four items per topic make topic scores noisy.
 - Calendar checks are foreground snapshots and explicit action reviews. Background
   monitoring, synchronization and system notifications remain outside the flow.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
