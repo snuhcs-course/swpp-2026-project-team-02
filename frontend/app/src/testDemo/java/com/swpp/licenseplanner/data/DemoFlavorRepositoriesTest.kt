@@ -12,5 +12,6 @@ class DemoFlavorRepositoriesTest {
         assertTrue(FlavorRepositories.planningRepository(tokens) is DemoPlanningRepository)
         assertTrue(FlavorRepositories.adjustmentRepository(tokens) is DemoAdjustmentRepository)
         assertTrue(FlavorRepositories.remainingStudyRepository(tokens) is DemoRemainingStudyRepository)
+        assertTrue(FlavorRepositories.reassessmentRepository(tokens) is DemoReassessmentRepository)
     }
 }

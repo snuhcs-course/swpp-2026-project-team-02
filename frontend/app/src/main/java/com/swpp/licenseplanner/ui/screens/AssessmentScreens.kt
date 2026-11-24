@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.LocalTopics
 import com.swpp.licenseplanner.domain.PlanFormState
+import com.swpp.licenseplanner.domain.Question
 import com.swpp.licenseplanner.domain.QuestionResult
 import com.swpp.licenseplanner.domain.Scoring
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
@@ -102,39 +103,52 @@ fun QuestionsScreen(
                 SecondaryButton("이전으로", onExit)
             }
             !loaded || question == null -> LoadingBlock("예시 문항을 불러오는 중이에요")
-            else -> {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "${questions.size}문항 중 ${index + 1}번째",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = InkBody,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text("예시 단원: ${LocalTopics.labelFor(question.id)}", style = MaterialTheme.typography.bodySmall, color = InkBody)
-                    }
-                    ProgressTrack((index + 1).toFloat() / questions.size)
-                }
-                Text(question.prompt, style = MaterialTheme.typography.titleLarge, color = Ink)
-                // The answer cards and “모르겠음” form one single-choice group driven by form.answers.
-                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        for ((key, label) in question.answerChoices) {
-                            ChoiceCard(selected = selected == key, onClick = { onAnswer(question.id, key) }, choiceLabel = label) {
-                                Text(
-                                    label,
-                                    style = if (label.all { it.code < 128 }) MonoStyles.answer else MaterialTheme.typography.bodyLarge,
-                                    color = Ink,
-                                )
-                            }
-                        }
-                    }
-                    SecondaryButton(UNKNOWN_LABEL, onClick = { onAnswer(question.id, UNKNOWN_KEY) }, selected = selected == UNKNOWN_KEY)
-                }
-                Note("예시로 만든 문항이에요. 실제 기출이나 검증된 진단이 아니에요. 모르면 ‘모르겠음’을 골라 주세요. 0점으로 계산돼요.")
-            }
+            else -> QuizQuestion(question, index, questions.size, LocalTopics.labelFor(question.id), selected,
+                "예시로 만든 문항이에요. 실제 기출이나 검증된 진단이 아니에요. 모르면 ‘모르겠음’을 골라 주세요. 0점으로 계산돼요.", onAnswer)
         }
     }
+}
+
+/** One example question: count and topic, progress, the prompt, answer cards, “모르겠음” and its label note. */
+@Composable
+internal fun QuizQuestion(
+    question: Question,
+    index: Int,
+    count: Int,
+    topic: String,
+    selected: String?,
+    label: String,
+    onAnswer: (questionId: Int, choiceKey: String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "${count}문항 중 ${index + 1}번째",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkBody,
+                modifier = Modifier.weight(1f),
+            )
+            Text("예시 단원: $topic", style = MaterialTheme.typography.bodySmall, color = InkBody)
+        }
+        ProgressTrack((index + 1).toFloat() / count)
+    }
+    Text(question.prompt, style = MaterialTheme.typography.titleLarge, color = Ink)
+    // The answer cards and “모르겠음” form one single-choice group driven by the caller's answers.
+    Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            for ((key, choice) in question.answerChoices) {
+                ChoiceCard(selected = selected == key, onClick = { onAnswer(question.id, key) }, choiceLabel = choice) {
+                    Text(
+                        choice,
+                        style = if (choice.all { it.code < 128 }) MonoStyles.answer else MaterialTheme.typography.bodyLarge,
+                        color = Ink,
+                    )
+                }
+            }
+        }
+        SecondaryButton(UNKNOWN_LABEL, onClick = { onAnswer(question.id, UNKNOWN_KEY) }, selected = selected == UNKNOWN_KEY)
+    }
+    Note(label)
 }
 
 /**
@@ -180,10 +194,15 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
     }
 }
 
+/**
+ * One question's result. [correctAnswer] also shows the answers of a correct question, and
+ * [explanation] adds the authored explanation below them.
+ */
 @Composable
-private fun QuestionResultRow(number: Int, prompt: String, result: QuestionResult) {
+internal fun QuestionResultRow(number: Int, prompt: String, result: QuestionResult, correctAnswer: String? = null,
+                               explanation: String? = null) {
     val (status, chosen, correct) = when (result) {
-        QuestionResult.Correct -> Triple("정답", null, null)
+        QuestionResult.Correct -> Triple("정답", correctAnswer, correctAnswer)
         is QuestionResult.Wrong -> Triple("오답", result.chosen, result.correct)
         is QuestionResult.Unknown -> Triple(UNKNOWN_LABEL, UNKNOWN_LABEL, result.correct)
     }
@@ -192,7 +211,8 @@ private fun QuestionResultRow(number: Int, prompt: String, result: QuestionResul
     Column(
         Modifier.fillMaxWidth().clearAndSetSemantics {
             contentDescription = "문항 $number $status" +
-                (chosen?.let { ", 내 답 $it, 정답 $correct" } ?: "") + ", $prompt"
+                (chosen?.let { ", 내 답 $it, 정답 $correct" } ?: "") + ", $prompt" +
+                (explanation?.let { ", 해설 $it" } ?: "")
         }.padding(vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -219,6 +239,9 @@ private fun QuestionResultRow(number: Int, prompt: String, result: QuestionResul
                 Text("정답 $correct", Modifier.weight(1f, fill = false), style = style,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+        if (explanation != null) {
+            Text("해설: $explanation", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), color = InkBody)
         }
     }
 }

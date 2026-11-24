@@ -106,6 +106,7 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
         status == 429 && error?.code == RATE_LIMITED -> ApiError.RateLimited
         planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
         planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
+        planErrors && status == 422 && error?.code == REASSESSMENT_PREVIEW_EXPIRED -> ApiError.ReassessmentPreviewExpired
         planErrors && status == 422 && ManualMoveRejection.ofCode(error?.code) != null ->
             ApiError.ManualMoveRejected(ManualMoveRejection.ofCode(error?.code)!!)
         else -> genericError(status, message, body)
@@ -114,6 +115,7 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
 
 private const val PLAN_NOT_FOUND = "PLAN_NOT_FOUND"
 private const val PLAN_CONFLICT = "PLAN_CONFLICT"
+private const val REASSESSMENT_PREVIEW_EXPIRED = "REASSESSMENT_PREVIEW_EXPIRED"
 private const val INVALID_DEVICE_TOKEN = "INVALID_DEVICE_TOKEN"
 private const val RATE_LIMITED = "RATE_LIMITED"
 

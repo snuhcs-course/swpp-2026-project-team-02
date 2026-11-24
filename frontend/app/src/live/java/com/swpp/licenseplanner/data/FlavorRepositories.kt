@@ -5,7 +5,7 @@ import okhttp3.OkHttpClient
 
 /**
  * Live flavor wiring: HTTP repositories against the public API base URL; no demo fallback.
- * All four share one client that sends the installation's device credential from [DeviceTokenSource].
+ * All of them share one client that sends the installation's device credential from [DeviceTokenSource].
  */
 object FlavorRepositories {
     init {
@@ -23,4 +23,6 @@ object FlavorRepositories {
     fun adjustmentRepository(tokens: DeviceTokenSource): AdjustmentRepository = LiveAdjustmentRepository(BuildConfig.API_BASE_URL, client(tokens))
     fun remainingStudyRepository(tokens: DeviceTokenSource): RemainingStudyRepository =
         LiveRemainingStudyRepository(BuildConfig.API_BASE_URL, client(tokens))
+    fun reassessmentRepository(tokens: DeviceTokenSource): ReassessmentRepository =
+        LiveReassessmentRepository(BuildConfig.API_BASE_URL, client(tokens))
 }

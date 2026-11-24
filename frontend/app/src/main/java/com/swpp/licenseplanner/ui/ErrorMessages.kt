@@ -12,6 +12,7 @@ private fun ApiError.userMessage(advice: InputAdvice): String = when (this) {
     ApiError.Configuration -> "API 주소 또는 서버 경로를 확인해 주세요."
     ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
     ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
+    ApiError.ReassessmentPreviewExpired -> "미리 본 내용이 그사이 바뀌었어요. 다시 미리 보기를 해 주세요."
     ApiError.DeviceTokenRejected -> DEVICE_TOKEN_REJECTED_MESSAGE
     ApiError.RateLimited -> RATE_LIMITED_MESSAGE
     ApiError.DeviceTokenUnavailable -> DEVICE_TOKEN_UNAVAILABLE_MESSAGE
@@ -32,6 +33,7 @@ fun ApiError.developerMessage(): String = when (this) {
     ApiError.Configuration -> "HTTP 404: API endpoint or route was not found."
     ApiError.PlanNotFound -> "HTTP 404: PLAN_NOT_FOUND"
     ApiError.PlanConflict -> "HTTP 409: PLAN_CONFLICT"
+    ApiError.ReassessmentPreviewExpired -> "HTTP 422: REASSESSMENT_PREVIEW_EXPIRED"
     ApiError.DeviceTokenRejected -> "HTTP 401: INVALID_DEVICE_TOKEN"
     ApiError.RateLimited -> "HTTP 429: RATE_LIMITED"
     ApiError.DeviceTokenUnavailable -> "The device credential could not be read or saved; no request was sent."
@@ -74,6 +76,13 @@ fun ApiError.adjustmentMessage(): String = when {
     requiresReload() -> "조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
     else -> userMessage(InputAdvice.NewPlan)
 }
+
+/**
+ * Adjustment wording for a failed preview. A preview cannot change the server, so a lost or
+ * unreadable answer is described without asking to reload a result.
+ */
+fun ApiError.previewMessage(): String =
+    if (this != ApiError.PlanConflict && requiresReload()) userMessage(InputAdvice.NewPlan) else adjustmentMessage()
 
 /** Latest-plan reload failure; the shown plan is still the earlier local copy. */
 fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있어요. " + when (this) {

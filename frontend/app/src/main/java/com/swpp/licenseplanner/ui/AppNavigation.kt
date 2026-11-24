@@ -67,6 +67,7 @@ import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
 import com.swpp.licenseplanner.ui.screens.RemainingStudyScreen
+import com.swpp.licenseplanner.ui.screens.ReassessmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
@@ -94,6 +95,7 @@ private object Routes {
     const val EDIT_EXAM_DATE = "edit-exam-date"
     const val CHECK_IN = "check-in"
     const val REMAINING_STUDY = "remaining-study"
+    const val REASSESSMENT = "reassessment"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -185,6 +187,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
+    val reassessment by viewModel.reassessment.collectAsStateWithLifecycle()
     val freeTimeSearch by viewModel.freeTimeSearch.collectAsStateWithLifecycle()
     var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
@@ -656,6 +659,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     conflictNotices = { selectedNotices(plan.ordinal) },
                     onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
                     remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
+                    onReassess = { if (viewModel.startReassessment(plan.ordinal)) nav.go(Routes.REASSESSMENT) },
+                    reassessmentReason = viewModel.reassessmentBlockReason(plan.ordinal),
                     initialScheduleId = remainingFocus,
                     onFocusApplied = { remainingFocus = null },
                     deletion = deletion?.takeIf { it.ordinal == plan.ordinal }?.status,
@@ -688,6 +693,36 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                             result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
                         }
                         if (nav.canGoBack(entry) && viewModel.closeRemainingStudy()) {
+                            remainingFocus = focus
+                            nav.goBack(entry)
+                        }
+                    })
+            }
+        }
+        // Reassessment also sits above the plan view it was started from; every step shares this
+        // one entry, so each exit pops straight back and leaving discards the answers. A finished
+        // update shows the week of its first changed session there.
+        screen(nav, Routes.REASSESSMENT) { entry ->
+            val current = reassessment
+            fun close() {
+                if (nav.canGoBack(entry) && viewModel.closeReassessment()) nav.goBack(entry)
+            }
+            if (current == null) {
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
+            } else {
+                ReassessmentScreen(current,
+                    onRetryLoad = { viewModel.retryReassessmentQuestions() },
+                    onAnswer = viewModel::answerReassessment,
+                    onShowQuestion = viewModel::showReassessmentQuestion,
+                    onFinishQuiz = { viewModel.finishReassessmentQuiz() },
+                    onApply = { viewModel.previewReassessment() },
+                    onClose = ::close,
+                    storage = storage,
+                    onConfirm = { viewModel.confirmReassessment() },
+                    onRetrySave = viewModel::retrySave,
+                    onShowPlan = {
+                        val focus = (current as? ReassessmentState.Done)?.let { firstChangedScheduleId(it.preview) }
+                        if (nav.canGoBack(entry) && viewModel.closeReassessment()) {
                             remainingFocus = focus
                             nav.goBack(entry)
                         }

@@ -73,6 +73,8 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
     private var owner: ViewModelStoreOwner? = null
     val adjustmentCalls = AtomicInteger()
     val remainingCalls = AtomicInteger()
+    val reassessmentPreviews = AtomicInteger()
+    val reassessmentCommits = AtomicInteger()
     val planningCalls = AtomicInteger()
     val questionCalls = AtomicInteger()
     val reloadCalls = AtomicInteger()
@@ -211,6 +213,19 @@ internal class DemoUiHost(private val rule: UiRule, private val testName: String
                     override suspend fun replan(input: com.swpp.licenseplanner.data.RemainingStudyInput) = delegate.replan(input).also {
                         remainingCalls.incrementAndGet()
                     }
+                },
+                reassessmentRepository = object : com.swpp.licenseplanner.data.ReassessmentRepository {
+                    private val delegate = com.swpp.licenseplanner.data.DemoReassessmentRepository(
+                        com.swpp.licenseplanner.data.DemoReassessmentFixture.questions,
+                    ) { deviceMinute }
+                    override suspend fun questions(certificationId: String) = delegate.questions(certificationId)
+                    override suspend fun preview(input: com.swpp.licenseplanner.data.ReassessmentInput) = delegate.preview(input).also {
+                        reassessmentPreviews.incrementAndGet()
+                    }
+                    override suspend fun commit(
+                        input: com.swpp.licenseplanner.data.ReassessmentInput,
+                        previewed: List<com.swpp.licenseplanner.data.model.ScheduleRow>,
+                    ) = delegate.commit(input, previewed).also { reassessmentCommits.incrementAndGet() }
                 },
             ) as T
         }

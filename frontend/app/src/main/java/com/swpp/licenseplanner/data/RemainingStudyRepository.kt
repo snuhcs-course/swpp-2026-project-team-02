@@ -63,7 +63,7 @@ internal fun remainingCsv(rows: List<ScheduleRow>): String = buildString {
 }
 
 /** Reads quoted CSV fields, including embedded newlines, without rewriting topic text. */
-private fun parseRemainingCsv(csv: String): List<ScheduleRow>? {
+internal fun parseRemainingCsv(csv: String): List<ScheduleRow>? {
     val records = mutableListOf<List<String>>()
     var record = mutableListOf<String>()
     val field = StringBuilder()

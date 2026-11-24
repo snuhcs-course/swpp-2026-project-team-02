@@ -183,6 +183,8 @@ fun PlanScreen(
     conflictNotices: @Composable () -> Unit = {},
     onRemainingStudy: () -> Unit = {},
     remainingStudyReason: String? = null,
+    onReassess: () -> Unit = {},
+    reassessmentReason: String? = null,
     initialScheduleId: String? = null,
     onFocusApplied: () -> Unit = {},
     deletion: PlanDeletionStatus? = null,
@@ -295,7 +297,9 @@ fun PlanScreen(
                 )
             }
             item { SecondaryButton("남은 공부 다시 계획하기", onRemainingStudy, enabled = !deleting && remainingStudyReason == null) }
+            item { SecondaryButton("다시 진단하기", onReassess, enabled = !deleting && reassessmentReason == null) }
             remainingStudyReason?.let { item { Note(it) } }
+            reassessmentReason?.takeIf { it != remainingStudyReason }?.let { item { Note(it) } }
             regenerationReason?.let { item { Note(it) } }
             item { SecondaryButton("이 계획 다시 만들기", onRegenerate, enabled = !deleting && regenerationReason == null) }
             item { SecondaryButton("일정 조정하기", onAdjust, enabled = !deleting) }

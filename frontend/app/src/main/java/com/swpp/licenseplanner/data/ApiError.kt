@@ -12,6 +12,8 @@ sealed interface ApiError {
     data object Configuration : ApiError
     /** HTTP 404 `PLAN_NOT_FOUND` from adjustment: the selected server plan no longer exists. */
     data object PlanNotFound : ApiError
+    /** HTTP 422 `REASSESSMENT_PREVIEW_EXPIRED`: a session the shown preview would revise has started. */
+    data object ReassessmentPreviewExpired : ApiError
     /** HTTP 409 `PLAN_CONFLICT` from adjustment: the stored plan no longer matches the sent rows. */
     data object PlanConflict : ApiError
     /** HTTP 401 `INVALID_DEVICE_TOKEN`: the server refused this installation's device credential. */

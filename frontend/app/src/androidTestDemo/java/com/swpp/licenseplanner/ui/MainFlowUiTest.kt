@@ -2225,6 +2225,118 @@ class MainFlowUiTest {
         assertEquals(0, host.calendarWrites.get())
     }
 
+    /**
+     * One demo plan on the device minute 2026-11-16 00:00: a reported and an unreported row in the
+     * first week, and four unreported two-hour rows in the week of 2026-11-23 that a reassessment may change.
+     */
+    private fun seedReassessmentPlan(host: DemoUiHost): com.swpp.licenseplanner.data.PlanSnapshot {
+        host.deviceMinute = LocalDate.of(2026, 11, 16).atStartOfDay()
+        val rows = listOf(
+            ScheduleRow("study-1", "2026/11/12/18/00", "2026/11/12/19/00", "공부 주제 1"),
+            ScheduleRow("study-2", "2026/11/13/18/00", "2026/11/13/19/00", "공부 주제 2"),
+        ) + (3..6).map { id -> ScheduleRow("study-$id", "2026/11/${20 + id}/18/00", "2026/11/${20 + id}/20/00", "공부 주제 $id") }
+        val plan = com.swpp.licenseplanner.domain.SessionPlan.register(1, seededRequest(),
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true)
+            .copy(checkIns = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 60)))
+        val snapshot = com.swpp.licenseplanner.data.PlanSnapshot(listOf(plan))
+        host.seedSnapshot(snapshot); host.recreate()
+        openPlanView(1)
+        val weeks = PlanGrouping.weeks(rows)
+        showWeek(weeks[0].monday, 0, weeks.size)
+        return snapshot
+    }
+
+    /** 「다시 진단하기」 on the shown plan, every example answered 「모르겠음」, then the results' preview. */
+    private fun reassessToPreview(host: DemoUiHost) {
+        clickPlanAction("다시 진단하기")
+        val questions = com.swpp.licenseplanner.data.DemoReassessmentFixture.questions
+        for ((index, item) in questions.withIndex()) {
+            waitForText(item.question.prompt)
+            show("${questions.size}문항 중 ${index + 1}번째")
+            click(UNKNOWN_LABEL)
+            compose.onNodeWithText(UNKNOWN_LABEL).assertIsSelected()
+            click(if (index == questions.lastIndex) "결과 보기" else "다음")
+        }
+        waitForText("다시 진단 결과")
+        for (topic in questions.map { it.topic }.distinct()) {
+            assertTrue("Results list $topic", compose.onAllNodesWithText(topic).fetchSemanticsNodes().isNotEmpty())
+        }
+        assertEquals(0, host.reassessmentPreviews.get())
+        click("남은 공부에 반영해 보기")
+        waitForText("이대로 바꾸기")
+        show("로컬 시연 계산 · 서버나 AI를 사용하지 않아요.")
+        assertEquals(1, host.reassessmentPreviews.get())
+    }
+
+    @Test fun confirmedReassessmentSavesNewTopicsAndShowsTheirLaterWeek() = withApp { host ->
+        val original = seedReassessmentPlan(host)
+        val before = original.plans.single()
+        val reads = host.calendarReads.get()
+        reassessToPreview(host)
+        val preview = (host.viewModel.reassessment.value as ReassessmentState.Preview).preview
+        val oldIds = before.current.schedules.map { it.scheduleId }.toSet()
+        val pieces = preview.rows.filter { it.scheduleId !in oldIds }
+        show("바꿀 수 있는 남은 공부 480분")
+        show("바뀌는 일정 ${pieces.size}개")
+        val firstPiece = pieces.minBy { checkNotNull(WireDateTime.parseOrNull(it.startDate)) }
+        show("공부 주제 3 → ${firstPiece.topic}")
+        host.capture("reassessment-preview")
+        assertEquals(original, host.snapshot())
+        assertEquals(0, host.reassessmentCommits.get())
+
+        click("이대로 바꾸기")
+        waitForText("이 기기에 저장했어요")
+        host.awaitSaved()
+        show("남은 공부 ${pieces.size}개 일정의 주제를 바꿨어요")
+        host.capture("reassessment-done")
+        assertEquals(1, host.reassessmentCommits.get())
+        assertEquals(1, host.reassessmentPreviews.get())
+        val saved = host.snapshot().plans.single()
+        val rows = saved.current.schedules
+        assertEquals(preview.rows.associateBy { it.scheduleId }, rows.associateBy { it.scheduleId })
+        assertEquals(before.current.schedules.take(2), rows.filter { it.scheduleId == "study-1" || it.scheduleId == "study-2" })
+        assertEquals(before.checkIns, saved.checkIns)
+        assertEquals((7..14).map { "study-$it" }.toSet(), pieces.map { it.scheduleId }.toSet())
+        assertEquals(com.swpp.licenseplanner.data.DemoReassessmentFixture.questions.map { it.topic }.toSet(), pieces.map { it.topic }.toSet())
+        assertEquals(reads, host.calendarReads.get())
+        assertEquals(0, host.calendarWrites.get())
+
+        click("계획 보기")
+        awaitPlanView()
+        show("계획 1 · $CERTIFICATION_NAME")
+        val weeks = PlanGrouping.weeks(rows)
+        val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == firstPiece.scheduleId } } }
+        assertTrue("The changed week follows the first week", index > 0)
+        showWeek(weeks[index].monday, index, weeks.size)
+        for (piece in pieces) show(piece.topic, lazy = true)
+        compose.onAllNodesWithText("공부 주제 3").assertCountEquals(0)
+        host.capture("reassessment-changed-week")
+        assertNull(host.viewModel.reassessment.value)
+    }
+
+    @Test fun declinedReassessmentPreviewLeavesThePlanUnchanged() = withApp { host ->
+        val original = seedReassessmentPlan(host)
+        val bytes = host.snapshotBytes()
+        reassessToPreview(host)
+        click("바꾸지 않기")
+        awaitPlanView()
+        show("계획 1 · $CERTIFICATION_NAME")
+        assertNull(host.viewModel.reassessment.value)
+        assertEquals(original, host.snapshot())
+        assertArrayEquals(bytes, host.snapshotBytes())
+        assertEquals(0, host.reassessmentCommits.get())
+        assertEquals(1, host.reassessmentPreviews.get())
+        val rows = original.plans.single().current.schedules
+        val weeks = PlanGrouping.weeks(rows)
+        val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == "study-3" } } }
+        repeat(index) { clickDescription("다음 주") }
+        showWeek(weeks[index].monday, index, weeks.size)
+        for (id in 3..6) show("공부 주제 $id", lazy = true)
+        show("다시 진단하기", lazy = true)
+        compose.onNode(hasText("다시 진단하기") and hasClickAction()).assertIsEnabled()
+        host.capture("reassessment-declined")
+    }
+
     private fun withApp(block: (DemoUiHost) -> Unit) {
         val host = DemoUiHost(compose, testName.methodName)
         try {

@@ -16,4 +16,6 @@ object FlavorRepositories {
     fun planningRepository(tokens: DeviceTokenSource): PlanningRepository = DemoPlanningRepository()
     fun adjustmentRepository(tokens: DeviceTokenSource): AdjustmentRepository = DemoAdjustmentRepository()
     fun remainingStudyRepository(tokens: DeviceTokenSource): RemainingStudyRepository = DemoRemainingStudyRepository()
+    fun reassessmentRepository(tokens: DeviceTokenSource): ReassessmentRepository =
+        DemoReassessmentRepository(DemoReassessmentFixture.questions)
 }
