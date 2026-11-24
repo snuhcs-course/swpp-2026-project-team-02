@@ -1,0 +1,529 @@
+{
+  "cases": [
+    {
+      "name": "split_row_kept_row_and_protected_row",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/01/19/00",
+          "end_date": "2026/12/01/20/00",
+          "topic": "스프레드시트 기본"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/12/02/18/00",
+          "end_date": "2026/12/02/19/00",
+          "topic": "아르바이트"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/02/19/00",
+          "end_date": "2026/12/02/20/00",
+          "topic": "매크로 활용"
+        },
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/04/19/00",
+          "end_date": "2026/12/04/20/30",
+          "topic": "스프레드시트 기본"
+        }
+      ],
+      "keep_schedule_ids": [
+        "study-2"
+      ],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-5",
+      "results": [
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "expected_rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/01/19/00",
+          "end_date": "2026/12/01/20/00",
+          "topic": "스프레드시트 기본"
+        },
+        {
+          "schedule_id": "external-1",
+          "start_date": "2026/12/02/18/00",
+          "end_date": "2026/12/02/19/00",
+          "topic": "아르바이트"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/02/19/00",
+          "end_date": "2026/12/02/20/00",
+          "topic": "매크로 활용"
+        },
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-5",
+          "start_date": "2026/12/04/19/00",
+          "end_date": "2026/12/04/19/06",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-6",
+          "start_date": "2026/12/04/19/06",
+          "end_date": "2026/12/04/19/56",
+          "topic": "매크로 활용"
+        },
+        {
+          "schedule_id": "study-7",
+          "start_date": "2026/12/04/19/56",
+          "end_date": "2026/12/04/20/30",
+          "topic": "스프레드시트 기본"
+        }
+      ]
+    },
+    {
+      "name": "eight_topics_with_thirds_and_row_in_progress",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/02/11/30",
+          "end_date": "2026/12/02/12/30",
+          "topic": "인터넷 자료 활용"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/05/19/00",
+          "end_date": "2026/12/05/20/30",
+          "topic": "스프레드시트 기본"
+        },
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/06/10/00",
+          "end_date": "2026/12/06/11/00",
+          "topic": "인터넷 자료 활용"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/07/20/00",
+          "end_date": "2026/12/07/21/30",
+          "topic": "컴퓨터 시스템 활용"
+        }
+      ],
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-9",
+      "results": [
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "인터넷 자료 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "인터넷 자료 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "인터넷 자료 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "인터넷 자료 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "컴퓨터 시스템 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "컴퓨터 시스템 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "컴퓨터 시스템 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "함수와 데이터 관리",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "함수와 데이터 관리",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "컴퓨터 시스템 보호",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "컴퓨터 시스템 보호",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "페이지 설정과 인쇄",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": false
+        }
+      ],
+      "expected_rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/02/11/30",
+          "end_date": "2026/12/02/12/30",
+          "topic": "인터넷 자료 활용"
+        },
+        {
+          "schedule_id": "study-9",
+          "start_date": "2026/12/05/19/00",
+          "end_date": "2026/12/05/19/39",
+          "topic": "매크로 활용"
+        },
+        {
+          "schedule_id": "study-10",
+          "start_date": "2026/12/05/19/39",
+          "end_date": "2026/12/05/20/18",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-11",
+          "start_date": "2026/12/05/20/18",
+          "end_date": "2026/12/05/20/30",
+          "topic": "인터넷 자료 활용"
+        },
+        {
+          "schedule_id": "study-12",
+          "start_date": "2026/12/06/10/00",
+          "end_date": "2026/12/06/10/22",
+          "topic": "인터넷 자료 활용"
+        },
+        {
+          "schedule_id": "study-13",
+          "start_date": "2026/12/06/10/22",
+          "end_date": "2026/12/06/10/55",
+          "topic": "컴퓨터 시스템 활용"
+        },
+        {
+          "schedule_id": "study-14",
+          "start_date": "2026/12/06/10/55",
+          "end_date": "2026/12/06/11/00",
+          "topic": "함수와 데이터 관리"
+        },
+        {
+          "schedule_id": "study-15",
+          "start_date": "2026/12/07/20/00",
+          "end_date": "2026/12/07/20/25",
+          "topic": "함수와 데이터 관리"
+        },
+        {
+          "schedule_id": "study-16",
+          "start_date": "2026/12/07/20/25",
+          "end_date": "2026/12/07/20/50",
+          "topic": "스프레드시트 기본"
+        },
+        {
+          "schedule_id": "study-17",
+          "start_date": "2026/12/07/20/50",
+          "end_date": "2026/12/07/21/10",
+          "topic": "컴퓨터 시스템 보호"
+        },
+        {
+          "schedule_id": "study-18",
+          "start_date": "2026/12/07/21/10",
+          "end_date": "2026/12/07/21/30",
+          "topic": "페이지 설정과 인쇄"
+        }
+      ]
+    },
+    {
+      "name": "no_topic_changes",
+      "rows": [
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/04/19/00",
+          "end_date": "2026/12/04/19/30",
+          "topic": "스프레드시트 기본"
+        }
+      ],
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-5",
+      "results": [
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "expected_rows": [
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/04/19/00",
+          "end_date": "2026/12/04/19/30",
+          "topic": "스프레드시트 기본"
+        }
+      ]
+    },
+    {
+      "name": "too_little_time",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/02",
+          "topic": "차트와 분석"
+        }
+      ],
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-2",
+      "results": [
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "expected_code": "NOT_ENOUGH_TIME"
+    },
+    {
+      "name": "every_future_row_reported",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/01/19/00",
+          "end_date": "2026/12/01/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "매크로 활용"
+        }
+      ],
+      "keep_schedule_ids": [
+        "study-2"
+      ],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-3",
+      "results": [
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "expected_code": "INVALID_INPUT"
+    },
+    {
+      "name": "revisable_row_already_started",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/02/19/00",
+          "end_date": "2026/12/02/20/00",
+          "topic": "차트와 분석"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/20/00",
+          "topic": "매크로 활용"
+        }
+      ],
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/19/05",
+      "first_new_study_id": "study-3",
+      "results": [
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "차트와 분석",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "매크로 활용",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        },
+        {
+          "topic": "스프레드시트 기본",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "expected_code": "REASSESSMENT_PREVIEW_EXPIRED"
+    }
+  ]
+}

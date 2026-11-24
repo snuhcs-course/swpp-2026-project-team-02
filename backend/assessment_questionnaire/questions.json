@@ -400,6 +400,384 @@
         "reference": "License Planner Team 2 authored, example added for two-subject written coverage; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
       },
       "review_status": "reviewed"
+    },
+    {
+      "id": 19,
+      "topic": "스프레드시트 기본",
+      "prompt": "Excel 2021에서 한 셀 안에서 줄을 바꿔 입력하려면 어떤 키를 누르나요?",
+      "choices": {
+        "A": "Enter",
+        "B": "Alt+Enter",
+        "C": "Ctrl+Enter",
+        "D": "Shift+Enter"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 입력",
+      "explanation": "Alt+Enter는 같은 셀 안에서 줄을 바꿉니다. Ctrl+Enter는 선택한 여러 셀에 같은 값을 한 번에 입력합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 20,
+      "topic": "스프레드시트 기본",
+      "prompt": "같은 통합 문서의 Sheet2 워크시트에 있는 B3 셀을 참조하는 수식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "=Sheet2!B3",
+        "B": "=Sheet2.B3",
+        "C": "=Sheet2:B3",
+        "D": "=[Sheet2]B3"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "다른 워크시트의 셀은 시트 이름 뒤에 느낌표(!)를 붙이고 셀 주소를 적어 참조합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 21,
+      "topic": "스프레드시트 기본",
+      "prompt": "Excel 2021에서 표의 행을 특정 열의 값에 따라 오름차순이나 내림차순으로 다시 배열하는 기능은 무엇인가요?",
+      "choices": {
+        "A": "정렬",
+        "B": "부분합",
+        "C": "목표값 찾기",
+        "D": "데이터 유효성 검사"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 관리",
+      "explanation": "정렬은 기준 열의 값 순서대로 행을 다시 배열합니다. 부분합은 그룹별 요약 값을 계산합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 22,
+      "topic": "스프레드시트 기본",
+      "prompt": "Excel 2021에서 셀에 1부터 100 사이의 정수만 입력할 수 있도록 제한하려면 어떤 기능을 사용하나요?",
+      "choices": {
+        "A": "조건부 서식",
+        "B": "데이터 유효성 검사",
+        "C": "시트 보호",
+        "D": "자동 채우기"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 입력",
+      "explanation": "데이터 유효성 검사로 입력할 수 있는 값의 종류와 범위를 정하면 조건에 맞지 않는 입력을 막을 수 있습니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 23,
+      "topic": "함수와 데이터 관리",
+      "prompt": "B2:B10 범위에서 값이 80 이상인 셀의 개수를 구하는 수식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "=COUNT(B2:B10)",
+        "B": "=COUNTIF(B2:B10,\">=80\")",
+        "C": "=SUMIF(B2:B10,\">=80\")",
+        "D": "=COUNTA(B2:B10)"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "COUNTIF는 범위에서 조건을 만족하는 셀의 개수를 셉니다. SUMIF는 조건에 맞는 값의 합계를 구합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 24,
+      "topic": "함수와 데이터 관리",
+      "prompt": "=ROUND(3.14159, 2)의 결과로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "3.14",
+        "B": "3.15",
+        "C": "3.1",
+        "D": "3"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "데이터 계산",
+      "explanation": "ROUND는 지정한 자릿수로 반올림합니다. 소수 둘째 자리까지 남기며 셋째 자리가 1이므로 3.14가 됩니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 25,
+      "topic": "차트와 분석",
+      "prompt": "시간에 따른 값의 변화 추세를 나타낼 때 일반적으로 알맞은 차트는 무엇인가요?",
+      "choices": {
+        "A": "원형 차트",
+        "B": "꺾은선형 차트",
+        "C": "방사형 차트",
+        "D": "도넛형 차트"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "차트 활용",
+      "explanation": "꺾은선형 차트는 일정한 간격의 시간 흐름에 따른 변화와 추세를 보여 주는 데 적합합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 26,
+      "topic": "페이지 설정과 인쇄",
+      "prompt": "Excel 2021에서 워크시트의 특정 범위만 인쇄되도록 지정하려면 어떤 기능을 사용하나요?",
+      "choices": {
+        "A": "인쇄 영역 설정",
+        "B": "인쇄 제목",
+        "C": "틀 고정",
+        "D": "창 나누기"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "출력 작업",
+      "explanation": "인쇄 영역을 설정하면 지정한 범위만 인쇄됩니다. 인쇄 제목은 각 페이지에 반복할 행이나 열을 정합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 27,
+      "topic": "매크로 활용",
+      "prompt": "Excel 2021에서 매크로를 기록할 때 지정할 수 있는 바로 가기 키의 형식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "Ctrl+영문자",
+        "B": "Alt+숫자",
+        "C": "Ctrl+숫자",
+        "D": "F1~F12 기능 키"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "스프레드시트 일반",
+      "syllabus_section": "매크로 활용",
+      "explanation": "매크로 기록 대화 상자에서는 Ctrl과 함께 누를 영문자를 지정합니다. 대문자를 입력하면 Ctrl+Shift+영문자가 됩니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 28,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "Windows에서 응답하지 않는 프로그램을 끝낼 수 있는 작업 관리자를 바로 여는 바로 가기 키는 무엇인가요?",
+      "choices": {
+        "A": "Ctrl+Shift+Esc",
+        "B": "Alt+F4",
+        "C": "Windows 로고 키+D",
+        "D": "Ctrl+Alt+Tab"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "Ctrl+Shift+Esc는 작업 관리자를 바로 엽니다. Alt+F4는 활성 창을 닫고, Windows 로고 키+D는 바탕 화면을 표시합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 29,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "CPU 안에서 처리 중인 데이터나 명령을 잠시 저장하며 가장 빠르게 접근할 수 있는 기억 장치는 무엇인가요?",
+      "choices": {
+        "A": "레지스터",
+        "B": "하드 디스크",
+        "C": "ROM",
+        "D": "광디스크"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "레지스터는 CPU 내부에 있는 고속 임시 기억 장치로, 주기억 장치보다 접근 속도가 빠릅니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 30,
+      "topic": "컴퓨터 시스템 활용",
+      "prompt": "Windows에서 디스크에 흩어져 저장된 파일 조각을 모아 접근 속도를 높이는 도구는 무엇인가요?",
+      "choices": {
+        "A": "디스크 정리",
+        "B": "드라이브 조각 모음 및 최적화",
+        "C": "시스템 복원",
+        "D": "파일 히스토리"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 활용",
+      "explanation": "드라이브 조각 모음 및 최적화는 흩어진 파일 조각을 모아 읽기 속도를 높입니다. 디스크 정리는 불필요한 파일을 지웁니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 31,
+      "topic": "인터넷 자료 활용",
+      "prompt": "IPv6 주소는 몇 비트로 구성되나요?",
+      "choices": {
+        "A": "32비트",
+        "B": "64비트",
+        "C": "128비트",
+        "D": "256비트"
+      },
+      "correct_answer": "C",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "IPv6 주소는 128비트이며 16비트씩 8부분을 콜론(:)으로 구분합니다. IPv4 주소는 32비트입니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 32,
+      "topic": "인터넷 자료 활용",
+      "prompt": "웹 브라우저와 웹 서버가 하이퍼텍스트 문서를 주고받을 때 사용하는 프로토콜은 무엇인가요?",
+      "choices": {
+        "A": "FTP",
+        "B": "HTTP",
+        "C": "SMTP",
+        "D": "TELNET"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "HTTP는 웹 문서를 주고받는 프로토콜입니다. FTP는 파일 전송, SMTP는 전자우편 발송에 사용합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 33,
+      "topic": "인터넷 자료 활용",
+      "prompt": "256색까지 표현하며 여러 장면을 이어 보여 주는 간단한 애니메이션을 지원하는 이미지 형식은 무엇인가요?",
+      "choices": {
+        "A": "GIF",
+        "B": "BMP",
+        "C": "TIFF",
+        "D": "JPEG"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "GIF는 최대 256색을 사용하고 여러 프레임으로 된 간단한 애니메이션을 저장할 수 있습니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 34,
+      "topic": "인터넷 자료 활용",
+      "prompt": "메일 서버에 도착한 전자우편을 사용자 컴퓨터로 내려받을 때 사용하는 프로토콜은 무엇인가요?",
+      "choices": {
+        "A": "SMTP",
+        "B": "POP3",
+        "C": "SNMP",
+        "D": "DHCP"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "인터넷 자료 활용",
+      "explanation": "POP3는 메일 서버의 메일을 사용자 컴퓨터로 가져올 때 사용합니다. SMTP는 메일을 보낼 때 사용합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 35,
+      "topic": "컴퓨터 시스템 보호",
+      "prompt": "사용자의 파일을 암호화한 뒤 복구해 주는 대가로 돈을 요구하는 악성 프로그램은 무엇인가요?",
+      "choices": {
+        "A": "랜섬웨어",
+        "B": "스파이웨어",
+        "C": "애드웨어",
+        "D": "트로이 목마"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 보호",
+      "explanation": "랜섬웨어는 파일을 암호화해 쓸 수 없게 만든 뒤 대가를 요구합니다. 중요한 파일을 따로 백업해 두면 피해를 줄일 수 있습니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
+    },
+    {
+      "id": 36,
+      "topic": "컴퓨터 시스템 보호",
+      "prompt": "공개키 암호화 방식에서 상대방에게 보낼 데이터를 암호화할 때 사용하는 키는 무엇인가요?",
+      "choices": {
+        "A": "받는 사람의 공개키",
+        "B": "받는 사람의 개인키",
+        "C": "보내는 사람의 개인키",
+        "D": "두 사람이 미리 나눈 비밀키"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "subject": "컴퓨터 일반",
+      "syllabus_section": "컴퓨터 시스템 보호",
+      "explanation": "공개키 암호화에서는 받는 사람의 공개키로 암호화하고, 받는 사람만 가진 개인키로 복호화합니다.",
+      "provenance": {
+        "kind": "authored",
+        "reference": "License Planner Team 2 authored, reassessment example set separate from the onboarding items; scope follows the KCCI 컴퓨터활용능력 2급 필기 출제기준 2024–2026 (pp. 23–25); not an official exam item"
+      },
+      "review_status": "draft"
     }
   ]
 }

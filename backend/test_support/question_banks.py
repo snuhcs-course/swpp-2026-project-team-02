@@ -21,7 +21,7 @@ def level_2_bank() -> dict:
     return json.loads(LEVEL_2_BANK_PATH.read_text(encoding="utf-8"))
 
 
-def unselected_reviewed_item(question_id: int = 19, topic: str = "매크로 활용") -> dict:
+def unselected_reviewed_item(question_id: int = 901, topic: str = "매크로 활용") -> dict:
     """A complete reviewed item retained outside onboarding."""
     return {"id": question_id, "topic": topic,
             "prompt": "Excel 2021에서 매크로를 기록할 때 사용할 수 있는 탭은 무엇인가요?",
@@ -33,7 +33,7 @@ def unselected_reviewed_item(question_id: int = 19, topic: str = "매크로 활�
             "review_status": "reviewed"}
 
 
-def incomplete_draft(question_id: int = 20) -> dict:
+def incomplete_draft(question_id: int = 902) -> dict:
     """A structurally valid draft whose answer, explanation and tags are not reviewed yet."""
     return {"id": question_id, "prompt": "검토 전 초안 문항", "choices": {"A": "후보"},
             "provenance": {"kind": "authored", "reference": "test-only draft"},
