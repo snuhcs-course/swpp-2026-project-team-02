@@ -26,6 +26,7 @@ from license_planner.models import StudyBlock
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.tools import ScheduleAdjustmentTools
 from study_plan_store import StudyPlanStore, owner_digest
+from test_support.filesystem import symlink_or_skip
 
 TOKEN_A = "a1" * 32
 TOKEN_B = "b2" * 32
@@ -149,7 +150,7 @@ class DevicePlanIsolationTests(unittest.TestCase):
         return self.plan_root / owner_digest(token)
 
     def files(self):
-        return {str(path.relative_to(self.plan_root)): path.read_bytes()
+        return {path.relative_to(self.plan_root).as_posix(): path.read_bytes()
                 for path in sorted(self.plan_root.rglob("*")) if path.is_file()}
 
     @staticmethod
@@ -385,7 +386,7 @@ class DevicePlanIsolationTests(unittest.TestCase):
 
     def test_symlinked_owner_directory_is_rejected_without_using_its_target(self):
         plan_a = self.generate(TOKEN_A)
-        self.owner_dir(TOKEN_LINKED).symlink_to(self.owner_dir(TOKEN_A), target_is_directory=True)
+        symlink_or_skip(self, self.owner_dir(TOKEN_LINKED), self.owner_dir(TOKEN_A), target_is_directory=True)
         before = self.files()
         requests = {
             "list": ("GET", "/study-plans", None),

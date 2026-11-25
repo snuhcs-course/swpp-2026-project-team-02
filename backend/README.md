@@ -5,6 +5,13 @@ license planner, schedule adjuster, configuration, and developer documentation.
 Run backend commands from this directory. The repository overview is in
 `../README.md`.
 
+The API serves public reassessment questions and supports deterministic preview and commit in
+`POST /api/v1/schedules/adjust` with `mode: "reassessment"`. It preserves study
+time coverage while updating future unreported topics from the new quiz scores.
+See [the FE contract](FRONTEND_INTEGRATION_GUIDE.md#reassessment-during-an-existing-plan)
+for fields, protected rows and errors. The separate 18 reviewed example questions
+are not an official assessment. Live use requires deploying this backend.
+
 Offline unit suites live in `tests/` (`tests/api_tests/`,
 `tests/license_planner_tests/`, `tests/schedule_adjuster_tests/`); run each with
 `python -m unittest discover -s tests/<suite> -v`. Scenario runners live in

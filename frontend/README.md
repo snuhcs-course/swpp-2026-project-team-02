@@ -1612,8 +1612,9 @@ locally with the same rules, saves on the device and keeps the local-demo label.
 It makes no network or calendar request. Live loads
 `GET /certifications/{id}/reassessment-questions` and sends
 `POST /schedules/adjust` with `mode: "reassessment"`, first with `commit: false`
-for the preview and then with `commit: true` after confirmation. No server implements that route or mode yet, so live shows
-**서버 업데이트가 필요해요** and never substitutes demo questions.
+for the preview and then with `commit: true` after confirmation. The backend in
+this checkout implements both endpoints. Live requires deploying that version;
+older servers show **서버 업데이트가 필요해요** and never substitute demo questions.
 
 ## Known limitations
 
@@ -1631,8 +1632,8 @@ for the preview and then with `commit: true` after confirmation. No server imple
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
-- Live reassessment needs a backend with the reassessment question route and
-  adjustment mode, which no server has yet; live builds show update guidance.
+- Live reassessment needs this backend version deployed with the reassessment
+  question route and adjustment mode; deployment is not verified by offline tests.
   The 18 reassessment questions are drafts awaiting a teammate's review, and
   their one to four items per topic make topic scores noisy.
 - Calendar checks are foreground snapshots and explicit action reviews. Background

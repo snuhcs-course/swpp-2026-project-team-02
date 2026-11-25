@@ -14,6 +14,7 @@ from typing import Any
 UNKNOWN_CHOICE = "UNKNOWN"
 UNKNOWN_LABEL = "모르겠음"
 SELECTION_KEY = "onboarding_question_ids"
+REASSESSMENT_SELECTION_KEY = "reassessment_question_ids"
 REVIEW_STATUSES = ("draft", "reviewed")
 PROVENANCE_KINDS = ("authored", "external")
 REVIEWED_TEXT_FIELDS = ("topic", "subject", "syllabus_section", "explanation")
@@ -134,18 +135,33 @@ def question_list(document: Any) -> list[Any]:
     return questions
 
 
+def separately_checked_ids(document: Any) -> set[int]:
+    """Reassessment-only IDs, which the reassessment selection checks on its own.
+
+    Keeping them out of the onboarding checks means a mistake there cannot block onboarding.
+    """
+    if not isinstance(document, dict):
+        return set()
+    reassessment, onboarding = document.get(REASSESSMENT_SELECTION_KEY), document.get(SELECTION_KEY)
+    if not isinstance(reassessment, list):
+        return set()
+    shared = set(onboarding) if isinstance(onboarding, list) and all(map(is_positive_id, onboarding)) else set()
+    return {question_id for question_id in reassessment if is_positive_id(question_id)} - shared
+
+
 def retained_records(document: Any) -> dict[int, dict[str, Any]]:
     """Validate every retained record and every reviewed record; return records by ID.
 
     Drafts need only identity, status and provenance; reviewed records, selected or
-    not, must be complete.
+    not, must be complete, except reassessment-only records (see separately_checked_ids).
     """
     by_id: dict[int, dict[str, Any]] = {}
+    separate = separately_checked_ids(document)
     for question in question_list(document):
         question_id = check_retained_record(question)
         if question_id in by_id:
             raise QuestionContentError(f"duplicate retained question id: {question_id}")
-        if question["review_status"] == "reviewed":
+        if question["review_status"] == "reviewed" and question_id not in separate:
             check_reviewed_record(question)
         by_id[question_id] = question
     return by_id

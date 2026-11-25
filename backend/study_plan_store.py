@@ -28,6 +28,7 @@ METADATA_SUFFIX = ".meta.json"
 EXAM_DATE_FORMAT = "%Y/%m/%d/%H/%M"
 CONTEXT_METADATA_VERSION = 2
 _CONTEXT_METADATA_KEYS = {"version", "exam_date", "preparation_start", "availability_snapshot"}
+_CERTIFIED_CONTEXT_METADATA_KEYS = _CONTEXT_METADATA_KEYS | {"certification_id"}
 STUDY_PLAN_OUTPUT_LOCK = Lock()
 DEVICE_TOKEN = re.compile(r"[0-9a-f]{64}")
 MISSING_PLAN_MESSAGE = "The selected study plan was not found."
@@ -56,6 +57,7 @@ class PlanSnapshot:
     # Only plans created with retained availability context store these two.
     preparation_start: datetime | None = None
     availability: AvailabilityContext | None = None
+    certification_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class PlanMetadata:
     exam_date: datetime
     preparation_start: datetime | None = None
     availability: AvailabilityContext | None = None
+    certification_id: str | None = None
 
 
 def owner_digest(token: str) -> str:
@@ -160,13 +163,12 @@ class StudyPlanStore:
 
     @classmethod
     def _parse_metadata(cls, content: bytes) -> PlanMetadata:
-        """Read an exam-only sidecar or a version-2 sidecar with retained context."""
+        """Read an exam-only sidecar or retained context with an optional certification ID."""
         try:
             data = json.loads(content.decode("utf-8"))
             if isinstance(data, dict) and data.keys() == {"exam_date"}:
                 return PlanMetadata(cls._parse_timestamp(data["exam_date"], "exam_date"))
-            # Newer servers also record a certification_id; accept and ignore it.
-            if (not isinstance(data, dict) or data.keys() - {"certification_id"} != _CONTEXT_METADATA_KEYS
+            if (not isinstance(data, dict) or data.keys() not in (_CONTEXT_METADATA_KEYS, _CERTIFIED_CONTEXT_METADATA_KEYS)
                     or type(data["version"]) is not int or data["version"] != CONTEXT_METADATA_VERSION):
                 raise ValueError("unsupported study plan metadata")
             certification_id = data.get("certification_id")
@@ -181,7 +183,7 @@ class StudyPlanStore:
                                                                     "availability_overrides"}:
                 raise ValueError("availability_snapshot must contain base and overrides")
             base, overrides = parse_availability_payload(snapshot)
-            return PlanMetadata(exam_date, preparation_start, make_context(base, overrides or ()))
+            return PlanMetadata(exam_date, preparation_start, make_context(base, overrides or ()), certification_id)
         except (ValueError, UnicodeError) as error:
             raise PlanStorageError("Stored study plan metadata is invalid") from error
 
@@ -196,7 +198,7 @@ class StudyPlanStore:
             parsed = self._parse_metadata(metadata)
             return PlanSnapshot(identifier, hashlib.sha256(content).digest(), entries,
                                 parsed.exam_date, hashlib.sha256(metadata).digest(),
-                                parsed.preparation_start, parsed.availability)
+                                parsed.preparation_start, parsed.availability, parsed.certification_id)
 
     def download(self, filename: str) -> tuple[str, str]:
         with STUDY_PLAN_OUTPUT_LOCK:
@@ -301,17 +303,22 @@ class StudyPlanStore:
 
     def create(self, content: str, exam_date: datetime | None = None, *,
                preparation_start: datetime | None = None,
-               availability: AvailabilityContext | None = None) -> str:
+               availability: AvailabilityContext | None = None,
+               certification_id: str | None = None) -> str:
         """Save a new plan; API generation always passes its validated exam date.
 
         With ``preparation_start`` and ``availability`` the sidecar is version 2
-        and retains the accepted context; otherwise it is the exam-only form.
+        and retains the accepted context and any supplied certification ID;
+        otherwise it is the exam-only form.
         The metadata sidecar is published before the CSV, so a listed plan
         never lacks a deadline or context it was created with.
         """
         if (preparation_start is None) != (availability is None) or (
                 exam_date is None and preparation_start is not None):
             raise ValueError("preparation_start and availability require each other and exam_date")
+        if certification_id is not None and (
+                preparation_start is None or not isinstance(certification_id, str) or not certification_id.strip()):
+            raise ValueError("certification_id requires retained context and must be a non-empty string")
         with STUDY_PLAN_OUTPUT_LOCK:
             try:
                 self.directory.mkdir(parents=True, exist_ok=True)
@@ -326,6 +333,8 @@ class StudyPlanStore:
                         record = {"version": CONTEXT_METADATA_VERSION, **record,
                                   "preparation_start": preparation_start.strftime(EXAM_DATE_FORMAT),
                                   "availability_snapshot": context_payload(availability, include_end=False)}
+                    if certification_id is not None:
+                        record["certification_id"] = certification_id
                     self._atomic_write(metadata, json.dumps(record, ensure_ascii=False, separators=(",", ":")))
                     try:
                         self._atomic_write(path, content)

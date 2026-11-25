@@ -273,13 +273,29 @@ class AdmissionHttpTests(unittest.TestCase):
     def test_every_adjustment_mode_shares_one_bucket(self):
         self.start_server()
         bodies = [{"mode": "automatic", "schedule_id": "study-1"}, {"mode": "automatic", "schedule_id": "external-1"},
-                  {"mode": "manual"}, {"mode": "remaining"}]
+                  {"mode": "manual"}, {"mode": "remaining"}, {"mode": "reassessment", "commit": True},
+                  {"mode": "reassessment", "commit": 0}]
         for number in range(12):
             body = json.dumps(bodies[number % 4]).encode()
             self.assertEqual(self.send("POST", ADJUST, 7, body).status, 422)
         for body in bodies:
             self.assertEqual(self.send("POST", ADJUST, 7, json.dumps(body).encode()).status, 429)
         self.assertEqual(self.send("POST", GENERATE, 7).status, 422)
+
+    def test_reassessment_previews_and_adjustments_have_independent_quotas(self):
+        self.start_server()
+        preview = b'{"mode":"reassessment","commit":false}'
+        commit = b'{"mode":"reassessment","commit":true}'
+        self.assertEqual(self.statuses(ADJUST, 1, 12, body=preview), [422] * 12)
+        rejected = self.send("POST", ADJUST, 1, preview)
+        self.assertEqual(rejected.status, 429)
+        self.assertEqual(json.loads(rejected.body), RATE_LIMITED_BODY)
+        self.assertEqual(rejected.headers["Retry-After"], "3600")
+        self.assertEqual(self.send("POST", ADJUST, 1, commit).status, 422)
+        self.assertEqual(self.send("POST", ADJUST, 1, b'{"mode":"manual"}').status, 422)
+        self.assertEqual(self.statuses(ADJUST, 2, 12, body=commit), [422] * 12)
+        self.assertEqual(self.send("POST", ADJUST, 2, commit).status, 429)
+        self.assertEqual(self.send("POST", ADJUST, 2, preview).status, 422)
 
     def test_local_mode_keys_the_address_on_the_socket_peer(self):
         self.start_server()
