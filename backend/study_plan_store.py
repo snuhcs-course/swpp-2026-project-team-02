@@ -165,9 +165,13 @@ class StudyPlanStore:
             data = json.loads(content.decode("utf-8"))
             if isinstance(data, dict) and data.keys() == {"exam_date"}:
                 return PlanMetadata(cls._parse_timestamp(data["exam_date"], "exam_date"))
-            if (not isinstance(data, dict) or data.keys() != _CONTEXT_METADATA_KEYS
+            # Newer servers also record a certification_id; accept and ignore it.
+            if (not isinstance(data, dict) or data.keys() - {"certification_id"} != _CONTEXT_METADATA_KEYS
                     or type(data["version"]) is not int or data["version"] != CONTEXT_METADATA_VERSION):
                 raise ValueError("unsupported study plan metadata")
+            certification_id = data.get("certification_id")
+            if "certification_id" in data and (not isinstance(certification_id, str) or not certification_id.strip()):
+                raise ValueError("certification_id must be a non-empty string")
             exam_date = cls._parse_timestamp(data["exam_date"], "exam_date")
             preparation_start = cls._parse_timestamp(data["preparation_start"], "preparation_start")
             if preparation_start >= exam_date:
