@@ -21,7 +21,7 @@ from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
 from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions, validate_remaining_destinations
-from schedule_adjuster.reassessment import resplit_study
+from schedule_adjuster.reassessment import ReassessmentPreviewExpired, resplit_study
 from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
 from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
@@ -410,6 +410,9 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
             raise ValueError(f"{field} is not used when mode is reassessment")
     if type(payload["commit"]) is not bool:
         raise ValueError("commit must be true or false")
+    if payload["commit"] != ("previewed_schedules" in payload):
+        raise ValueError("previewed_schedules is required when commit is true and not used otherwise")
+    previewed = parse_schedule_rows(payload["previewed_schedules"]) if payload["commit"] else None
     keep = payload["keep_schedule_ids"]
     if (not isinstance(keep, list) or not all(isinstance(key, str) for key in keep)
             or len(keep) != len(set(keep))):
@@ -437,10 +440,13 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
     revised = resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
                            now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
     csv_text = render_adjusted_csv(revised)
-    if payload["commit"]:
+    if previewed is not None:
         # Validation above may span a minute boundary. Recheck before persisting.
         resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
                       now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
+        # Server inputs outside the request, such as the question bank, can change after the preview.
+        if {row.schedule_id: row for row in previewed} != {row.schedule_id: row for row in revised}:
+            raise ReassessmentPreviewExpired("The confirmed rows differ from the current result. Preview again.")
         store.update(snapshot, csv_text)
     return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text, **plan_fields(snapshot.identifier),
             "availability_snapshot": context_payload(snapshot.availability, include_end=True),

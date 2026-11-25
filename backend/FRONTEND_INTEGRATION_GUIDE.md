@@ -826,15 +826,19 @@ All paths below use the existing `/api/v1` prefix.
 
 - `GET /certifications/{id}/reassessment-questions` is public. It returns
   `certification_id`, `certification_name` and `questions`. Each question has
-  `id`, `prompt`, `choices`, `correct_answer`, `possible_score`, `topic`,
-  `explanation` and `review_status`. The current 18 authored examples (IDs 19–36)
-  remain drafts, separate from onboarding; they are not validated assessments.
-  The bank explicitly selects them using `reassessment_question_ids`.
+  `id`, `prompt`, `choices`, `correct_answer`, `possible_score`, `topic` and
+  `explanation`. The bank selects them with `reassessment_question_ids`; the
+  current 18 reviewed authored examples (IDs 19–36) differ from onboarding and
+  are not an official or validated assessment. A certification whose bank has no
+  selection returns `404 NOT_FOUND`; an invalid selection returns
+  `500 INTERNAL_ERROR` while onboarding keeps working.
 - `POST /schedules/adjust` requires the existing device Bearer token and
   `mode: "reassessment"`. Required fields match Android `ReassessmentRequest`:
   `commit` (boolean), `schedule_csv_file`, `schedules`, `weekly_availability`,
   `availability_overrides`, `preparation_start`, `exam_date`, `replan_from`,
-  `keep_schedule_ids`, `first_new_study_id`, and `assessment_results`.
+  `keep_schedule_ids`, `first_new_study_id`, and `assessment_results`. A
+  commit also requires `previewed_schedules`, the rows the learner confirmed;
+  a preview must omit it.
   Submit the whole selected quiz in the existing locally scored result format,
   with `assessment_results.certification_id` matching the selected plan. New
   plans retain their certification ID. Older plans with retained study context
@@ -849,10 +853,12 @@ Both responses include `schedules`, `schedule_csv`, the same `schedule_csv_file`
 `availability_snapshot`, `agent_summary` and `tool_calls: []`.
 
 Preview is deterministic and stateless: there is no preview token or server-side
-quiz history. Commit recomputes the same result, verifies unchanged source rows
-and retained context, rechecks time, and uses the existing optimistic storage
-update to reject concurrent writes. Client-side preview equality and reload
-gates remain applicable. CSV and metadata changes yield `409 PLAN_CONFLICT`.
+quiz history. Commit recomputes the result, verifies unchanged source rows
+and retained context, rechecks time, and saves only if the recomputed rows equal
+`previewed_schedules`. A difference, for example after a question-bank edit,
+returns `422 REASSESSMENT_PREVIEW_EXPIRED` and writes nothing. The existing
+optimistic storage update rejects concurrent writes; CSV and metadata changes
+yield `409 PLAN_CONFLICT`.
 
 Only study rows starting at or after `replan_from` and absent from
 `keep_schedule_ids` can change. Reported IDs come from the device; the backend
@@ -876,7 +882,7 @@ Errors use the existing error envelope:
 | 401 | `INVALID_DEVICE_TOKEN` | Missing/invalid owner credential |
 | 404 | `PLAN_NOT_FOUND` | No selected plan owned by this device |
 | 409 | `PLAN_CONFLICT` | Client snapshot or stored metadata changed |
-| 422 | `REASSESSMENT_PREVIEW_EXPIRED` | A revisable row now starts before the current Seoul minute |
+| 422 | `REASSESSMENT_PREVIEW_EXPIRED` | A revisable row now starts before the current Seoul minute, or the commit's result differs from `previewed_schedules` |
 | 422 | `INVALID_INPUT` | Malformed/incomplete quiz, invalid IDs, missing retained context, or no revisable rows |
 | 422 | `INVALID_INPUT` with message starting `NOT_ENOUGH_TIME` | Remaining minutes cannot give every assessed topic one minute |
 | 429 | `RATE_LIMITED` | The applicable preview or adjustment quota is full |

@@ -13,7 +13,7 @@ from typing import Any, Mapping
 import certification_selector.catalog as selector_catalog
 from assessment_questionnaire.validation import (
     UNKNOWN_CHOICE, QuestionContentError, check_question_content, check_reviewed_record, check_total, is_nonempty_text,
-    is_positive_id, parse_json_bytes, retained_records, select_questions,
+    is_positive_id, parse_json_bytes, retained_records, select_questions, separately_checked_ids,
 )
 from license_planner.catalog import CERTIFICATIONS
 from license_planner.models import AssessmentItem, ProblemResult
@@ -120,8 +120,9 @@ def _validated_snapshot(document: Any, certification_id: str, topics: tuple[str,
         raise AssessmentConfigurationError(certification_id, "question bank certification_name must be text")
     try:
         by_id = retained_records(document)
+        separate = separately_checked_ids(document)
         reviewed = {question_id: record for question_id, record in by_id.items()
-                    if record["review_status"] == "reviewed"}
+                    if record["review_status"] == "reviewed" and question_id not in separate}
         for record in reviewed.values():
             if record["topic"] not in topics:
                 raise QuestionContentError(f"reviewed question {record['id']} has an unsupported topic")
@@ -281,35 +282,39 @@ def parse_assessment_results(certification_id: str, assessment: Any) -> tuple[As
 
 
 def get_reassessment_questions(certification_id: str) -> dict[str, Any]:
-    """Serve an explicit separate example selection, retaining its honest draft status.
+    """Serve the bank's separate reviewed reassessment selection with topics and explanations.
 
-    Unlike onboarding, these authored examples may be drafts, but every selected
-    item must have complete validated content, a catalog topic and explanation.
-    Never select all drafts implicitly or promote them to reviewed records.
+    A bank without a selection has no reassessment set (KeyError, served as 404).
     """
     return _reassessment_questions(certification_id, _snapshot(certification_id))
 
 
 def _reassessment_questions(certification_id: str, snapshot: _BankSnapshot) -> dict[str, Any]:
     document = json.loads(snapshot.document_json)
-    ids = document.get("reassessment_question_ids")
+    if "reassessment_question_ids" not in document:
+        raise KeyError(f"No reassessment questions are configured for certification_id: {certification_id}")
+    ids = document["reassessment_question_ids"]
     try:
         if (not isinstance(ids, list) or not ids or not all(is_positive_id(key) for key in ids)
                 or len(ids) != len(set(ids))):
             raise QuestionContentError("reassessment_question_ids must contain distinct positive IDs")
         if set(ids) & {question.id for question in snapshot.selected}:
             raise QuestionContentError("reassessment questions must differ from onboarding questions")
+        onboarding_prompts = {question.prompt for question in snapshot.selected}
         by_id = {question["id"]: question for question in document["questions"]}
         selected = []
         for key in ids:
             if key not in by_id:
                 raise QuestionContentError("reassessment selection references an unknown question")
             question = by_id[key]
-            check_reviewed_record(question)  # Content checks only; does not alter review_status.
+            if question.get("review_status") != "reviewed":
+                raise QuestionContentError(f"reassessment question {key} is not reviewed")
+            check_reviewed_record(question)
+            if question["prompt"] in onboarding_prompts:
+                raise QuestionContentError(f"reassessment question {key} repeats an onboarding prompt")
             if question["topic"] not in CERTIFICATIONS[certification_id].topics:
                 raise QuestionContentError("reassessment question has an unsupported topic")
-            selected.append({field: question[field] for field in (*PUBLIC_QUESTION_FIELDS, "topic", "explanation",
-                                                                  "review_status")})
+            selected.append({field: question[field] for field in (*PUBLIC_QUESTION_FIELDS, "topic", "explanation")})
         check_total([float(question["possible_score"]) for question in selected], "reassessment questions")
         if {question["topic"] for question in selected} != {question.topic for question in snapshot.selected}:
             raise QuestionContentError("reassessment and onboarding topic coverage must match")
@@ -326,7 +331,10 @@ def reassessment_topic_results(certification_id: str, assessment: Any) -> list[t
         snapshot = _snapshot(certification_id)
     except KeyError:
         raise ValueError("Unsupported assessment_results.certification_id") from None
-    questions = _reassessment_questions(certification_id, snapshot)["questions"]
+    try:
+        questions = _reassessment_questions(certification_id, snapshot)["questions"]
+    except KeyError:
+        raise ValueError("No reassessment questions are configured for this certification") from None
     by_id = {question["id"]: question for question in questions}
     if {item.problem_id for item in submitted} != set(by_id):
         raise ValueError("assessment_results must contain every selected reassessment question exactly once")

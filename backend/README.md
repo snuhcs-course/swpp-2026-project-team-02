@@ -9,8 +9,8 @@ The API serves public reassessment questions and supports deterministic preview 
 `POST /api/v1/schedules/adjust` with `mode: "reassessment"`. It preserves study
 time coverage while updating future unreported topics from the new quiz scores.
 See [the FE contract](FRONTEND_INTEGRATION_GUIDE.md#reassessment-during-an-existing-plan)
-for fields, protected rows and errors. The separate 18 example questions remain
-drafts awaiting teammate review. Live use requires deploying this backend.
+for fields, protected rows and errors. The separate 18 reviewed example questions
+are not an official assessment. Live use requires deploying this backend.
 
 Offline unit suites live in `tests/` (`tests/api_tests/`,
 `tests/license_planner_tests/`, `tests/schedule_adjuster_tests/`); run each with

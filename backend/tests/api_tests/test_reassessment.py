@@ -61,6 +61,9 @@ class ReassessmentApiTests(unittest.TestCase):
         thread.start()
         self.addCleanup(lambda: (self.server.shutdown(), self.server.server_close(), thread.join(timeout=3)))
         self.questions = get_reassessment_questions(CERT)["questions"]
+        status, preview = self.call("/schedules/adjust", self.payload())
+        self.assertEqual(status, 200, preview)
+        self.previewed = preview["schedules"]
 
     @staticmethod
     def forbidden(*args, **kwargs):
@@ -78,6 +81,8 @@ class ReassessmentApiTests(unittest.TestCase):
             return response.status, json.loads(response.read().decode())
 
     def payload(self, **changes):
+        if changes.get("commit") is True and "previewed_schedules" not in changes:
+            changes["previewed_schedules"] = copy.deepcopy(self.previewed)
         results = [{"problem_id": q["id"], "question": q["prompt"],
                     "choices": q["choices"] | {"UNKNOWN": "모르겠음"}, "correct_answer": q["correct_answer"],
                     "possible_score": q["possible_score"], "user_answer": "UNKNOWN", "is_correct": False}
@@ -98,7 +103,7 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertEqual((actual, body.get("error", {}).get("code")), (status, code), body)
         self.assertEqual(self.files(), before)
 
-    def test_questions_are_separate_complete_and_still_drafts(self):
+    def test_questions_are_separate_complete_and_without_review_metadata(self):
         status, body = self.call(QUESTIONS_PATH, headers={})
         self.assertEqual(status, 200)
         self.assertEqual(body["certification_id"], CERT)
@@ -107,7 +112,8 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertFalse({q["id"] for q in onboarding} & {q["id"] for q in body["questions"]})
         for q in body["questions"]:
             self.assertTrue(q["topic"] and q["explanation"])
-            self.assertEqual(q["review_status"], "draft")
+            self.assertEqual(set(q), {"id", "prompt", "choices", "correct_answer", "possible_score", "topic",
+                                      "explanation"})
             self.assertIn(q["correct_answer"], q["choices"])
 
     def test_preview_is_read_only_and_commit_matches_preview(self):
@@ -126,7 +132,8 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(sum(int((row.end_datetime-row.start_datetime).total_seconds()/60)
                              for row in parse_schedule_rows(changed)), 240)
-        status, committed = self.call("/schedules/adjust", payload | {"commit": True})
+        commit = payload | {"commit": True, "previewed_schedules": preview["schedules"]}
+        status, committed = self.call("/schedules/adjust", commit)
         self.assertEqual(status, 200, committed)
         self.assertEqual(committed["action"], "reassessed")
         self.assertEqual(committed["schedules"], preview["schedules"])
@@ -136,7 +143,33 @@ class ReassessmentApiTests(unittest.TestCase):
         after = self.files()
         self.assertEqual([key for key in before if before[key] != after[key]],
                          [next(key for key in before if key.endswith(".csv"))])
-        self.assert_invalid(payload | {"commit": True}, "PLAN_CONFLICT", 409)
+        self.assert_invalid(commit, "PLAN_CONFLICT", 409)
+
+    def test_commit_saves_only_the_previewed_rows(self):
+        tampered = copy.deepcopy(self.previewed)
+        changed = next(row for row in tampered if row["schedule_id"] not in {r["schedule_id"] for r in ROWS})
+        changed["topic"] = next(q["topic"] for q in self.questions if q["topic"] != changed["topic"])
+        for rows in (tampered, self.previewed[:-1]):
+            with self.subTest(rows=len(rows)):
+                self.assert_invalid(self.payload(commit=True, previewed_schedules=rows), "REASSESSMENT_PREVIEW_EXPIRED")
+
+    def test_bank_topic_edit_after_preview_blocks_commit(self):
+        first = self.questions[0]
+        other = next(q for q in self.questions if q["topic"] != first["topic"])
+        payload = self.payload()
+        result = payload["assessment_results"]["results"][0]
+        result.update(user_answer=first["correct_answer"], is_correct=True)
+        status, preview = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, preview)
+        document = level_2_bank()
+        by_id = {q["id"]: q for q in document["questions"]}
+        by_id[first["id"]]["topic"], by_id[other["id"]]["topic"] = other["topic"], first["topic"]
+        with temporary_question_bank(document):
+            status, current = self.call("/schedules/adjust", payload)
+            self.assertEqual(status, 200, current)
+            self.assertNotEqual(current["schedules"], preview["schedules"])
+            self.assert_invalid(payload | {"commit": True, "previewed_schedules": preview["schedules"]},
+                                "REASSESSMENT_PREVIEW_EXPIRED")
 
     def test_correct_answers_and_reversed_result_order(self):
         payload = self.payload()
@@ -221,7 +254,9 @@ class ReassessmentApiTests(unittest.TestCase):
                         {"keep_schedule_ids": ["external-1"]}, {"keep_schedule_ids": ["study-1"]},
                         {"keep_schedule_ids": ["study-999"]}, {"first_new_study_id": "study-1"},
                         {"first_new_study_id": 6}, {"schedule_id": "study-4"},
-                        {"replan_from": "bad"}, {"replan_from": "2026/12/11/00/00"}):
+                        {"replan_from": "bad"}, {"replan_from": "2026/12/11/00/00"},
+                        {"previewed_schedules": []}, {"commit": True, "previewed_schedules": None},
+                        {"commit": True, "previewed_schedules": [{"schedule_id": "study-1"}]}):
             with self.subTest(changes=changes):
                 self.assert_invalid(self.payload(**changes))
 
@@ -244,13 +279,25 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertEqual(self.call("/certifications/unsupported/reassessment-questions")[0], 404)
         self.assertEqual(self.call("/certifications/a/b/reassessment-questions")[0], 404)
 
+    def test_bank_without_a_reassessment_set(self):
+        document = level_2_bank()
+        document.pop("reassessment_question_ids")
+        with temporary_question_bank(document):
+            status, body = self.call(QUESTIONS_PATH)
+            self.assertEqual((status, body["error"]["code"]), (404, "NOT_FOUND"), body)
+            self.assertEqual(self.call(f"/certifications/{CERT}/questions")[0], 200)
+            self.assert_invalid(self.payload())
+
     def test_bad_selection_or_content_fails_closed(self):
-        for kind in ("missing", "duplicate", "overlap", "unknown", "topic", "explanation", "coverage"):
+        for kind in ("empty", "duplicate", "overlap", "unknown", "draft", "onboarding_prompt", "topic", "explanation",
+                     "coverage"):
             document = level_2_bank()
-            if kind == "missing": document.pop("reassessment_question_ids")
+            if kind == "empty": document["reassessment_question_ids"] = []
             elif kind == "duplicate": document["reassessment_question_ids"].append(19)
             elif kind == "overlap": document["reassessment_question_ids"][0] = 1
             elif kind == "unknown": document["reassessment_question_ids"][0] = 999
+            elif kind == "draft": document["questions"][18]["review_status"] = "draft"
+            elif kind == "onboarding_prompt": document["questions"][18]["prompt"] = document["questions"][0]["prompt"]
             elif kind == "topic": document["questions"][18]["topic"] = "unknown"
             elif kind == "explanation": document["questions"][18]["explanation"] = ""
             elif kind == "coverage": document["reassessment_question_ids"] = [19]
@@ -259,6 +306,7 @@ class ReassessmentApiTests(unittest.TestCase):
                     status, body = self.call(QUESTIONS_PATH)
                 self.assertEqual(status, 500, body)
                 self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
+                self.assertEqual(self.call(f"/certifications/{CERT}/questions")[0], 200)
 
 
 if __name__ == "__main__":
