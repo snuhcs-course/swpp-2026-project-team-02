@@ -2,6 +2,7 @@ package com.swpp.licenseplanner.data
 
 import com.swpp.licenseplanner.data.model.AssessmentResult
 import com.swpp.licenseplanner.data.model.AssessmentResults
+import com.swpp.licenseplanner.data.model.AvailabilitySnapshot
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
 import com.swpp.licenseplanner.data.model.StudyPlanResponse
@@ -9,6 +10,8 @@ import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.StudyCheckIn
+import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -133,6 +136,29 @@ class PlanSnapshotTest {
         assertEquals(3, demoPlans.nextOrdinal)
     }
 
+    @Test fun keptDigestsRoundTripWithReportsRecoveryAndHistoricalStudyIds() {
+        val kept = planA.copy(keptConflicts = mapOf("study-1" to setOf("a".repeat(64)), "historical" to setOf("b".repeat(64))),
+            checkIns = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 20)))
+        val snapshot = live.copy(plans = listOf(kept, planB))
+        assertEquals(PlanStoreLoad.Loaded(snapshot), decode(encoded(snapshot)))
+        for (value in listOf(JsonNull, JsonObject(mapOf("study-1" to JsonArray(emptyList()))),
+            JsonObject(mapOf("external-1" to JsonArray(listOf(JsonPrimitive("a".repeat(64)))))),
+            JsonObject(mapOf("study-1" to JsonArray(listOf(JsonPrimitive("raw-event-id"))))),
+            JsonObject(mapOf("study-1" to JsonArray(listOf(JsonPrimitive("a".repeat(64)), JsonPrimitive("a".repeat(64)))))))) {
+            assertEquals(PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(editEntry(encoded(snapshot), 0) { it.with("kept_conflicts", value) }))
+        }
+    }
+
+    @Test fun versionFourLoadsWithoutKeptDigestsAndWithoutRewritingBytes() = runTest {
+        val old = edit(encoded()) { root -> root.with("version", JsonPrimitive(4)).with("entries",
+            JsonArray(root.getValue("entries").jsonArray.map { JsonObject(it.jsonObject - "kept_conflicts") })) }
+        val bytes = MemoryPlanBytes(old.encodeToByteArray())
+        assertEquals(PlanStoreLoad.Loaded(live), store(bytes).load())
+        assertEquals(0, bytes.writes)
+        assertArrayEquals(old.encodeToByteArray(), bytes.committed)
+        assertEquals(PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(edit(encoded()) { it.with("version", JsonPrimitive(4)) }))
+    }
+
     // --- Scope ---
 
     @Test fun scopesSeparateFlavorsAndBackendUrls() {
@@ -230,7 +256,9 @@ class PlanSnapshotTest {
         for ((case, corrupted) in malformed) {
             assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Malformed), decode(corrupted))
         }
-        assertEquals(PlanStoreLoad.Failed(PlanLoadFailure.Unsupported), decode(edit(text) { it.with("version", JsonPrimitive(2)) }))
+        for (version in listOf(0, 6)) {
+            assertEquals("version $version", PlanStoreLoad.Failed(PlanLoadFailure.Unsupported), decode(edit(text) { it.with("version", JsonPrimitive(version)) }))
+        }
     }
 
     // --- Store over committed bytes ---
@@ -247,7 +275,7 @@ class PlanSnapshotTest {
             Triple("unreadable", text.encodeToByteArray(), PlanLoadFailure.Unreadable),
             Triple("malformed", "{\"version\":1,".encodeToByteArray(), PlanLoadFailure.Malformed),
             Triple("invalid utf-8", byteArrayOf(0x7b, 0xff.toByte(), 0x7d), PlanLoadFailure.Malformed),
-            Triple("future version", edit(text) { it.with("version", JsonPrimitive(2)) }.encodeToByteArray(), PlanLoadFailure.Unsupported),
+            Triple("future version", edit(text) { it.with("version", JsonPrimitive(6)) }.encodeToByteArray(), PlanLoadFailure.Unsupported),
             Triple("other scope", encoded(scope = PlanStorageScope.of(false, "http://other/api/v1")).encodeToByteArray(), PlanLoadFailure.Invalid),
         )
         for ((case, saved, reason) in cases) {
@@ -281,5 +309,219 @@ class PlanSnapshotTest {
         assertTrue(restarted.save(PlanSnapshot(listOf(planB))))
         assertEquals(PlanStoreLoad.Loaded(PlanSnapshot(listOf(planB))), store(bytes).load())
         assertNotEquals(committed?.toList(), bytes.committed?.toList())
+    }
+
+    // --- Version 1 compatibility and retained availability context ---
+
+    /** The same collection as an earlier build wrote it: version 3, without a creation draft. */
+    private fun versionThree(text: String = encoded()): String = edit(text) { root ->
+        JsonObject(root - "creation_draft").with("version", JsonPrimitive(3)).with("entries",
+            JsonArray(root.getValue("entries").jsonArray.map { JsonObject(it.jsonObject - "kept_conflicts") }))
+    }
+
+    /** The same collection as an earlier build wrote it: version 2, without study reports. */
+    private fun versionTwo(text: String = encoded()): String = edit(versionThree(text)) { root ->
+        val entries = root.getValue("entries").jsonArray.map { JsonObject(it.jsonObject - "check_ins") }
+        root.with("version", JsonPrimitive(2)).with("entries", JsonArray(entries))
+    }
+
+    /** The same collection as the first build wrote it: version 1, start/end windows, no replacement map or reports. */
+    private fun versionOne(text: String = encoded()): String = edit(versionTwo(text)) { root ->
+        val entries = root.getValue("entries").jsonArray.map { entry ->
+            val original = entry.jsonObject.getValue("original").jsonObject
+            entry.with("original", JsonObject(original - "availability_overrides"))
+        }
+        root.with("version", JsonPrimitive(1)).with("entries", JsonArray(entries))
+    }
+
+    private val contextPlan = SessionPlan(
+        6,
+        request(
+            mapOf(
+                "monday" to listOf(TimeWindow("08:00", durationMinutes = 60), TimeWindow("19:00", durationMinutes = 120)),
+                "sunday" to listOf(TimeWindow("23:00", durationMinutes = 90)),
+            ),
+        ).copy(
+            availabilityOverrides = mapOf(
+                "2026/10/19" to emptyMap(),
+                "2026/10/26" to mapOf("tuesday" to listOf(TimeWindow("20:00", durationMinutes = 60))),
+            ),
+        ),
+        false,
+        StudyPlanResponse(
+            rowsB, "csv", null, "d.csv",
+            AvailabilitySnapshot(
+                mapOf("monday" to listOf(TimeWindow("08:00", "09:00", 60), TimeWindow("19:00", "21:00", 120)),
+                    "sunday" to listOf(TimeWindow("23:00", "00:30", 90))),
+                mapOf("2026/10/19" to emptyMap(), "2026/10/26" to mapOf("tuesday" to listOf(TimeWindow("20:00", "21:00", 60)))),
+            ),
+        ),
+        "d.csv",
+    )
+
+    @Test fun versionOneCollectionLoadsWithoutRewriteAndTheNextSaveIsVersionFive() = runTest {
+        val legacy = versionOne().encodeToByteArray()
+        val bytes = MemoryPlanBytes(legacy.copyOf())
+        val first = store(bytes)
+        assertEquals(PlanStoreLoad.Loaded(live.copy(inFlightAdjustmentOrdinal = null)), first.load())
+        assertEquals(0, bytes.writes)
+        assertArrayEquals(legacy, bytes.committed)
+
+        val updated = PlanSnapshot(live.plans + contextPlan)
+        assertTrue(first.save(updated))
+        val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
+        assertEquals(JsonPrimitive(5), saved["version"])
+        assertEquals(PlanStoreLoad.Loaded(updated), store(bytes).load())
+    }
+
+    @Test fun versionTwoCollectionLoadsUnreportedWithoutRewriteAndTheNextSaveIsVersionFive() = runTest {
+        val legacy = versionTwo(encoded(PlanSnapshot(live.plans + contextPlan))).encodeToByteArray()
+        val bytes = MemoryPlanBytes(legacy.copyOf())
+        val first = store(bytes)
+        val loaded = first.load() as PlanStoreLoad.Loaded
+        assertEquals(PlanSnapshot(live.plans + contextPlan), loaded.snapshot)
+        assertTrue(loaded.snapshot.plans.all { it.checkIns.isEmpty() })
+        assertEquals(0, bytes.writes)
+        assertArrayEquals(legacy, bytes.committed)
+        assertEquals(PlanStoreLoad.Loaded(loaded.snapshot), store(bytes).load())
+        assertArrayEquals(legacy, bytes.committed)
+
+        val reported = PlanSnapshot(loaded.snapshot.plans.map { plan ->
+            if (plan.ordinal == 2) plan.withCheckIn("study-1", StudyCheckIn(StudyCheckInStatus.Done, 20))!! else plan
+        })
+        assertTrue(first.save(reported))
+        val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
+        assertEquals(JsonPrimitive(5), saved["version"])
+        assertEquals(PlanStoreLoad.Loaded(reported), store(bytes).load())
+    }
+
+    @Test fun versionThreeCollectionLoadsWithReportsAndNoDraftWithoutRewriteAndTheNextSaveIsVersionFive() = runTest {
+        val reportedPlans = PlanSnapshot(live.plans.map { plan ->
+            if (plan.ordinal == 2) plan.withCheckIn("study-1", StudyCheckIn(StudyCheckInStatus.Partly, 45))!! else plan
+        }, inFlightAdjustmentOrdinal = 2)
+        val legacy = versionThree(encoded(reportedPlans)).encodeToByteArray()
+        assertTrue(legacy.decodeToString().contains("\"version\":3"))
+        val bytes = MemoryPlanBytes(legacy.copyOf())
+        val first = store(bytes)
+        val loaded = (first.load() as PlanStoreLoad.Loaded).snapshot
+        assertNull(loaded.creationDraft)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Partly, 45), loaded.plans[1].checkInFor("study-1"))
+        assertEquals(PlanRecovery.ReloadRequired, loaded.plans[1].recovery)
+        assertEquals(0, bytes.writes)
+        assertArrayEquals(legacy, bytes.committed)
+
+        assertTrue(first.save(loaded))
+        val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
+        assertEquals(JsonPrimitive(5), saved["version"])
+        assertFalse("creation_draft" in saved)
+        assertEquals(PlanStoreLoad.Loaded(loaded), store(bytes).load())
+    }
+
+    @Test fun legacyVersionsCarryingReportsAreInvalid() {
+        val reports = JsonObject(mapOf("study-1" to JsonObject(mapOf("status" to JsonPrimitive("missed"), "actual_minutes" to JsonPrimitive(0)))))
+        for ((case, legacy) in mapOf("version 1" to versionOne(), "version 2" to versionTwo())) {
+            val corrupted = editEntry(legacy, 1) { it.with("check_ins", reports) }
+            assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(corrupted))
+        }
+    }
+
+    // --- Study reports ---
+
+    private fun report(status: StudyCheckInStatus, minutes: Int) = StudyCheckIn(status, minutes)
+
+    /** A and B share study IDs; A awaits a reload and keeps a report for a row it no longer shows. */
+    private val reported = PlanSnapshot(
+        listOf(
+            planA.copy(checkIns = mapOf("study-1" to report(StudyCheckInStatus.Partly, 45), "study-9" to report(StudyCheckInStatus.Done, 20))),
+            planB.copy(checkIns = mapOf("study-1" to report(StudyCheckInStatus.Missed, 0), "study-2" to report(StudyCheckInStatus.Done, Int.MAX_VALUE))),
+            planC,
+            planD,
+        ),
+    )
+
+    @Test fun reportsRoundTripPerPlanWithRecoveryAndHiddenRows() {
+        val text = encoded(reported)
+        val restored = (decode(text) as PlanStoreLoad.Loaded).snapshot
+        assertEquals(reported, restored)
+        val (a, b) = restored.plans
+        assertEquals(PlanRecovery.ReloadRequired, a.recovery)
+        assertEquals("study-2", a.recoveryScheduleId)
+        assertEquals(report(StudyCheckInStatus.Partly, 45), a.checkInFor("study-1"))
+        assertEquals(report(StudyCheckInStatus.Missed, 0), b.checkInFor("study-1"))
+        assertEquals(report(StudyCheckInStatus.Done, 20), a.checkIns["study-9"])
+        assertNull(a.checkInFor("study-9"))
+        assertEquals(rowsA, a.current.schedules)
+
+        val entries = Json.parseToJsonElement(text).jsonObject.getValue("entries").jsonArray
+        assertEquals(
+            Json.parseToJsonElement("""{"study-1":{"status":"missed","actual_minutes":0},"study-2":{"status":"done","actual_minutes":2147483647}}"""),
+            entries[1].jsonObject["check_ins"],
+        )
+        assertEquals(JsonObject(emptyMap()), entries[2].jsonObject["check_ins"])
+    }
+
+    @Test fun unresolvedAdjustmentKeepsThePlansReports() {
+        val pending = PlanSnapshot(reported.plans, inFlightAdjustmentOrdinal = 2)
+        val restored = (decode(encoded(pending)) as PlanStoreLoad.Loaded).snapshot
+        assertEquals(PlanRecovery.ReloadRequired, restored.plans[1].recovery)
+        assertEquals(reported.plans.map { it.checkIns }, restored.plans.map { it.checkIns })
+    }
+
+    @Test fun malformedOrInvalidReportsAreAFailureNotARepair() {
+        val text = encoded(reported)
+        fun withReports(raw: String) = editEntry(text, 1) { it.with("check_ins", Json.parseToJsonElement(raw)) }
+        val invalid = mapOf(
+            "external key" to withReports("""{"external-1":{"status":"done","actual_minutes":20}}"""),
+            "blank key" to withReports("""{" ":{"status":"done","actual_minutes":20}}"""),
+            "done with zero" to withReports("""{"study-1":{"status":"done","actual_minutes":0}}"""),
+            "partly negative" to withReports("""{"study-1":{"status":"partly","actual_minutes":-5}}"""),
+            "missed with minutes" to withReports("""{"study-1":{"status":"missed","actual_minutes":30}}"""),
+            "missing reports" to editEntry(text, 1) { JsonObject(it - "check_ins") },
+            "null reports" to editEntry(text, 1) { it.with("check_ins", JsonNull) },
+        )
+        for ((case, corrupted) in invalid) {
+            assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(corrupted))
+        }
+        val malformed = mapOf(
+            "unknown status" to withReports("""{"study-1":{"status":"skipped","actual_minutes":0}}"""),
+            "fractional minutes" to withReports("""{"study-1":{"status":"partly","actual_minutes":1.5}}"""),
+            "overflowing minutes" to withReports("""{"study-1":{"status":"done","actual_minutes":2147483648}}"""),
+            "missing minutes" to withReports("""{"study-1":{"status":"done"}}"""),
+            "unknown report field" to withReports("""{"study-1":{"status":"done","actual_minutes":20,"mastery":1}}"""),
+            "report list" to editEntry(text, 1) { it.with("check_ins", JsonArray(emptyList())) },
+        )
+        for ((case, corrupted) in malformed) {
+            assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Malformed), decode(corrupted))
+        }
+    }
+
+    @Test fun overnightExtraAndEmptyWeekContextsRoundTrip() {
+        val restored = (decode(encoded(PlanSnapshot(listOf(contextPlan)))) as PlanStoreLoad.Loaded).snapshot.plans.single()
+        assertEquals(contextPlan, restored)
+        assertEquals(emptyMap<String, List<TimeWindow>>(), restored.original.availabilityOverrides.getValue("2026/10/19"))
+        assertEquals(2, restored.original.weeklyAvailability.getValue("monday").size)
+    }
+
+    @Test fun contextsTheServerWouldRejectAreInvalid() {
+        val text = encoded(PlanSnapshot(listOf(contextPlan)))
+        val overlapping = JsonObject(mapOf("monday" to JsonArray(listOf(
+            JsonObject(mapOf("start" to JsonPrimitive("23:00"), "duration_minutes" to JsonPrimitive(90))))),
+            "tuesday" to JsonArray(listOf(
+                JsonObject(mapOf("start" to JsonPrimitive("00:15"), "duration_minutes" to JsonPrimitive(60)))))))
+        val cases = mapOf(
+            "next-day overlap" to editEntry(text, 0) { it.withOriginal("weekly_availability", overlapping) },
+            "non-Monday week" to editEntry(text, 0) {
+                it.withOriginal("availability_overrides", JsonObject(mapOf("2026/10/20" to JsonObject(emptyMap()))))
+            },
+            "duration in version 1" to versionOne(text),
+            "replacement weeks in version 1" to edit(versionOne()) { root ->
+                val entries = root.getValue("entries").jsonArray.toMutableList()
+                entries[0] = entries[0].jsonObject.withOriginal("availability_overrides", JsonObject(mapOf("2026/10/19" to JsonObject(emptyMap()))))
+                root.with("entries", JsonArray(entries))
+            },
+        )
+        for ((case, corrupted) in cases) {
+            assertEquals(case, PlanStoreLoad.Failed(PlanLoadFailure.Invalid), decode(corrupted))
+        }
     }
 }

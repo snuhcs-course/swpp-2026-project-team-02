@@ -32,6 +32,17 @@ REAL_ASK_MODEL = PlanningAgent._ask_model
 WIRE_DATETIME_FORMAT = "%Y/%m/%d/%H/%M"
 
 
+def planned_minutes_by_date(schedules):
+    days = {}
+    for row in schedules:
+        if row["schedule_id"].startswith("external-"):
+            continue
+        start = datetime.strptime(row["start_date"], WIRE_DATETIME_FORMAT)
+        minutes = int((datetime.strptime(row["end_date"], WIRE_DATETIME_FORMAT) - start).total_seconds() // 60)
+        days[start.strftime("%Y/%m/%d")] = days.get(start.strftime("%Y/%m/%d"), 0) + minutes
+    return days
+
+
 def model_reply(name, args):
     return {"status": "completed", "output": [{"type": "function_call", "call_id": f"call_{next(CALL_IDS)}",
                                                "name": name, "arguments": json.dumps(args, ensure_ascii=False)}]}
@@ -121,6 +132,19 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assert_infeasible(status, body, "학습 주제 1개에도")
         self.assertEqual(self.model_requests, 0)
 
+    def test_every_preparation_week_replaced_with_an_empty_week_is_not_enough_time(self):
+        payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
+        payload.update({"preparation_start": "2026/11/16/00/00", "exam_date": "2026/11/29/23/00",
+                        "weekly_availability": {"wednesday": [{"start": "19:00", "duration_minutes": 60}]},
+                        "availability_overrides": {"2026/11/16": {}, "2026/11/23": {}}})
+
+        status, body = self.post(payload)
+
+        self.assert_infeasible(status, body, "학습 주제 1개에도")
+        self.assertIn("0분", body["error"]["message"])
+        self.assertEqual(self.model_requests, 0)
+        self.assertEqual(self.saved_files(), [])
+
     def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
         recorded = RECORDED["one_minute_with_three_assessed_topics"]
         self.script(recorded)
@@ -131,7 +155,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertIn("시간이 1분이라", body["error"]["message"])
         self.assertEqual(self.model_requests, 2)
 
-    def test_recorded_builds_on_the_last_request_are_saved_and_returned(self):
+    def test_recorded_traces_end_at_the_first_build_and_are_saved(self):
         for key in ("topic_errors_then_build_on_last_request", "capacity_errors_then_build_on_last_request"):
             recorded = RECORDED[key]
             with self.subTest(key):
@@ -144,21 +168,59 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 status, body = self.post(recorded["request"])
 
                 self.assertEqual(status, 200, body)
-                self.assertEqual(self.model_requests, 6)
-                self.assertEqual(self.replies, [])
-                self.assertEqual(len(body["tool_calls"]), 6)
+                # Later recorded corrections are never requested: the first build ignores the proposal.
+                self.assertEqual(self.model_requests, 3)
+                self.assertEqual(len(self.replies), 3)
+                self.assertEqual(len(body["tool_calls"]), 3)
                 self.assertTrue(body["agent_summary"])
                 csv_name = Path(body["schedule_csv_file"]).name
                 metadata_name = Path(csv_name).stem + ".meta.json"
                 self.assertEqual(self.saved_files(), sorted([csv_name, metadata_name]))
-                self.assertEqual(json.loads((self.store / metadata_name).read_text(encoding="utf-8")),
-                                 {"exam_date": recorded["request"]["exam_date"]})
+                metadata = json.loads((self.store / metadata_name).read_text(encoding="utf-8"))
+                self.assertEqual({key: metadata[key] for key in ("version", "exam_date", "preparation_start")},
+                                 {"version": 2, "exam_date": recorded["request"]["exam_date"],
+                                  "preparation_start": recorded["request"]["preparation_start"]})
+                stored_context = metadata["availability_snapshot"]
+                returned_context = body["availability_snapshot"]
+                for week in (stored_context["weekly_availability"],
+                             *stored_context["availability_overrides"].values()):
+                    self.assertTrue(all(set(window) == {"start", "duration_minutes"}
+                                        for windows in week.values() for window in windows))
+                self.assertEqual(returned_context["weekly_availability"].keys(),
+                                 stored_context["weekly_availability"].keys())
+                for day, windows in returned_context["weekly_availability"].items():
+                    self.assertEqual([{k: w[k] for k in ("start", "duration_minutes")} for w in windows],
+                                     stored_context["weekly_availability"][day])
                 stored = (self.store / csv_name).read_text(encoding="utf-8")
                 self.assertEqual(stored, body["schedule_csv"])
                 self.assertEqual(list(csv.DictReader(io.StringIO(stored))), body["schedules"])
                 external = {f"external-{row['schedule_id']}" for row in recorded["request"]["busy_schedules"]}
                 self.assertEqual({row["schedule_id"] for row in body["schedules"]
                                   if row["schedule_id"].startswith("external-")}, external)
+
+    def test_shared_profile_context_is_captured_and_survives_later_profile_edits(self):
+        from license_planner.user_availability import load_personal_availability, save_personal_availability
+        recorded = RECORDED["topic_errors_then_build_on_last_request"]
+        profile = Path(self.temp.name) / "profile.json"
+        future_week = {"2027/01/04": {"friday": [{"start": "07:00", "duration_minutes": 30}]}}
+        save_personal_availability({"weekly_availability": recorded["request"]["weekly_availability"],
+                                    "availability_overrides": future_week}, profile)
+        payload = copy.deepcopy(recorded["request"])
+        del payload["weekly_availability"]
+        self.script(recorded)
+        with patch.object(api_service, "load_personal_availability", lambda: load_personal_availability(profile)):
+            status, body = self.post(payload)
+        self.assertEqual(status, 200, body)
+        captured = body["availability_snapshot"]
+        self.assertEqual(captured["availability_overrides"]["2027/01/04"]["friday"],
+                         [{"start": "07:00", "duration_minutes": 30, "end": "07:30"}])
+
+        save_personal_availability({"weekly_availability": {"sunday": [{"start": "10:00", "duration_minutes": 60}]},
+                                    "availability_overrides": {}}, profile)
+        status, listing = self.get("/study-plans")
+        self.assertEqual(status, 200)
+        listed = next(plan for plan in listing["plans"] if plan["schedule_csv_file"] == body["schedule_csv_file"])
+        self.assertEqual(listed["availability_snapshot"], captured)
 
     def test_busy_schedule_is_excluded_from_study_blocks_over_http(self):
         """The JSON busy_schedules contract reaches the scheduler, not just the model prompt."""
@@ -261,10 +323,12 @@ class PlanGenerationHttpTests(unittest.TestCase):
     def test_upstream_and_repeated_failures_are_not_reported_as_infeasible(self):
         request = RECORDED["topic_errors_then_build_on_last_request"]["request"]
         calls = RECORDED["topic_errors_then_build_on_last_request"]["model_tool_calls"]
-        repeated_builds = [model_reply("build_study_schedule", calls[2]["args"]) for _ in range(3)]
+        invalid = copy.deepcopy(calls[1]["args"])
+        invalid["problem_topics"][0]["topics"][0]["weight"] = 0.5
+        repeated = [model_reply(calls[1]["name"], invalid) for _ in range(3)]
         scenarios = {
             "provider error": [RuntimeError("OpenRouter request failed: rate limited (HTTP 429)")],
-            "repeated failing build": [model_reply(calls[1]["name"], calls[1]["args"]), *repeated_builds],
+            "repeated failing analysis": [*repeated],
         }
         for label, replies in scenarios.items():
             with self.subTest(label):
@@ -274,14 +338,14 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
                 self.assertNotIn("NOT_ENOUGH_TIME", body["error"]["message"])
                 self.assertEqual(self.saved_files(), [])
-        self.assertEqual(self.replies, repeated_builds[2:])
+        self.assertEqual(self.replies, repeated[2:])
 
         with missing_openrouter_key():
             status, body = self.post(request)
         self.assertEqual((status, body["error"]["code"]), (503, "UPSTREAM_ERROR"))
         self.assertEqual(self.saved_files(), [])
 
-    def test_varied_invalid_proposals_for_feasible_input_exhaust_as_upstream_failure(self):
+    def test_invalid_proposals_over_http_are_ignored_and_usable_time_is_filled(self):
         recorded = RECORDED["topic_errors_then_build_on_last_request"]
         profile, analysis = recorded["model_tool_calls"][:2]
         topics = ["스프레드시트 기본", "함수와 데이터 관리", "차트와 분석"]
@@ -302,17 +366,16 @@ class PlanGenerationHttpTests(unittest.TestCase):
         with patch.object(PlanningAgent, "_ask_model", recording_ask_model):
             status, body = self.post(recorded["request"])
 
-        self.assertEqual(status, 502, body)
-        self.assertEqual(body["error"]["code"], "UPSTREAM_ERROR")
-        self.assertNotIn("NOT_ENOUGH_TIME", body["error"]["message"])
-        self.assertFalse(SUCCESS_FIELDS & body.keys())
-        self.assertEqual(self.saved_files(), [])
-        self.assertEqual((len(sent_tools), self.replies), (6, []))
-        build = next(tool for tool in sent_tools[-1] if tool["name"] == "build_study_schedule")
-        item = build["parameters"]["properties"]["daily_topic_minutes"]["items"]["properties"]
-        self.assertCountEqual(item["topic"]["enum"], topics)
-        self.assertNotIn("2026/10/20", item["date"]["enum"])
-        self.assertIn("2026/10/19", item["date"]["enum"])
+        self.assertEqual(status, 200, body)
+        self.assertEqual((len(sent_tools), len(self.replies)), (3, 3))
+        for tools in sent_tools:
+            build = next(tool for tool in tools if tool["name"] == "build_study_schedule")
+            self.assertEqual(build["parameters"]["properties"], {})
+        self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        self.assertEqual(planned_minutes_by_date(body["schedules"]),
+                         {"2026/10/19": 120, "2026/10/21": 120, "2026/10/23": 120,
+                   "2026/10/26": 120, "2026/10/28": 120, "2026/10/30": 120})
+        self.assertNotIn("여유 시간", body["agent_summary"])
 
     def test_complete_onboarding_selection_plans_every_reviewed_topic_over_http(self):
         status, bank = self.get("/certifications/computer_specialist_level_2/questions")
@@ -332,9 +395,9 @@ class PlanGenerationHttpTests(unittest.TestCase):
         topics = list(dict.fromkeys(reviewed.values()))
         days = ("2026/10/19", "2026/10/21", "2026/10/23")
         self.replies = [model_reply("analyze_exam_results", {}),
-                        model_reply("build_study_schedule", {"daily_topic_minutes": [
-                            {"date": days[index % len(days)], "topic": topic, "minutes": 30}
-                            for index, topic in enumerate(topics)]})]
+                        model_reply("build_study_schedule", {"daily_minutes": [
+                            {"date": day, "minutes": minutes}
+                            for day, minutes in zip(days, (90, 90, 60))]})]
 
         status, body = self.post(payload)
 
@@ -342,6 +405,10 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(len(bank["questions"]), 18)
         self.assertEqual(len(topics), 8)
         self.assertEqual({row["topic"] for row in body["schedules"]}, set(topics))
+        # The model's 240-minute daily_minutes are ignored; every usable minute is planned.
+        self.assertEqual(planned_minutes_by_date(body["schedules"]),
+                         {"2026/10/19": 120, "2026/10/21": 120, "2026/10/23": 120,
+                   "2026/10/26": 120, "2026/10/28": 120, "2026/10/30": 120})
         self.assertEqual([call["tool"] for call in body["tool_calls"]],
                          ["analyze_exam_results", "build_study_schedule"])
         self.assertEqual(self.replies, [])

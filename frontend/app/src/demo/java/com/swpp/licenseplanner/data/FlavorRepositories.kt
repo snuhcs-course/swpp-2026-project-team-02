@@ -11,4 +11,5 @@ object FlavorRepositories {
     fun questionRepository(): QuestionRepository = DemoQuestionRepository()
     fun planningRepository(): PlanningRepository = DemoPlanningRepository()
     fun adjustmentRepository(): AdjustmentRepository = DemoAdjustmentRepository()
+    fun remainingStudyRepository(): RemainingStudyRepository = DemoRemainingStudyRepository()
 }

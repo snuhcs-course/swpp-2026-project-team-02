@@ -1,79 +1,126 @@
 package com.swpp.licenseplanner.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.DayAvailability
+import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanGrouping
-import com.swpp.licenseplanner.domain.Validation
+import com.swpp.licenseplanner.domain.StudyAvailability
+import com.swpp.licenseplanner.domain.StudyInterval
+import com.swpp.licenseplanner.domain.WeekPlan
+import com.swpp.licenseplanner.domain.WeekSource
+import com.swpp.licenseplanner.domain.WeekWindows
 import com.swpp.licenseplanner.domain.Weekday
+import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.WireDateTime
-import com.swpp.licenseplanner.ui.components.AppScreen
+import com.swpp.licenseplanner.domain.toWeekWindows
+import com.swpp.licenseplanner.ui.CalendarReadState
 import com.swpp.licenseplanner.ui.components.AlertCard
+import com.swpp.licenseplanner.ui.components.AppScreen
+import com.swpp.licenseplanner.ui.components.FieldLabel
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.InfoRow
 import com.swpp.licenseplanner.ui.components.InputBox
 import com.swpp.licenseplanner.ui.components.MutedBox
+import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
-import com.swpp.licenseplanner.ui.components.StepperButton
-import com.swpp.licenseplanner.ui.CalendarReadState
 import com.swpp.licenseplanner.ui.theme.Divider
+import com.swpp.licenseplanner.ui.theme.ControlBorder
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkSecondary
+import java.time.Duration
+import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
+/** Editing callbacks; a null week edits the recurring base, a Monday edits that week's replacement. */
+class AvailabilityActions(
+    val onCapture: (Weekday, Int?, LocalDate?) -> AvailabilityWindowTarget?,
+    val onApply: (AvailabilityWindowTarget, LocalTime, Int) -> Boolean,
+    val onRemove: (AvailabilityWindowTarget) -> Boolean,
+    val onShowWeek: (LocalDate) -> Unit,
+    val onReplaceWeek: (LocalDate) -> Unit,
+    val onClearWeek: (LocalDate) -> Unit,
+    val onResetWeek: (LocalDate) -> Unit,
+)
+
 /**
- * Adapted from frame 2005:371: per-weekday duration steppers plus a start-time
- * control. “0시간” means the day is off. No buffer day or readiness claims.
+ * Complete weekday window lists for the recurring base or one replaced preparation week.
+ * Each dialog edits a captured list entry and applies its start and duration together.
  */
 @Composable
 fun AvailabilityScreen(
     form: PlanFormState,
+    selectedWeek: LocalDate?,
     generating: Boolean,
     plansSaved: Boolean,
     calendarRead: CalendarReadState,
-    onEnable: (Weekday, Boolean) -> Unit,
-    onStep: (Weekday, Int) -> Unit,
-    onStart: (Weekday, LocalTime) -> Unit,
+    actions: AvailabilityActions,
     onBack: () -> Unit,
     onGenerate: () -> Unit,
     onReadCalendar: () -> Unit,
     onOpenCalendarSettings: () -> Unit,
 ) {
-    var editingStart by rememberSaveable { mutableStateOf<Weekday?>(null) }
+    var editing by rememberSaveable(stateSaver = WindowTargetSaver) { mutableStateOf<AvailabilityWindowTarget?>(null) }
+    // The week whose replacement was just removed, for the confirmation line.
+    var resetWeek by rememberSaveable { mutableStateOf<Long?>(null) }
+
     val error = form.availabilityError
-    val enabled = Weekday.entries.mapNotNull { day -> form.availability[day]?.takeIf { it.enabled } }
+    val conflict = if (error != null) conflictText(form.studyAvailability) else null
+    val weeks = form.studyWeeks
+    val week = form.shownWeek(selectedWeek)
+    val source = week?.let(form::weekSource) ?: WeekSource.BASE
+    // The editor edits the shown week's replacement, or the base when the week inherits it.
+    val editWeek = week?.takeIf { source == WeekSource.REPLACED }
+    val days = if (editWeek != null) form.availabilityOverrides.getValue(editWeek) else form.availability
+    LaunchedEffect(week, form.availability, form.availabilityOverrides) {
+        editing?.let { target ->
+            val capturedDays = target.week?.let(form.availabilityOverrides::get) ?: form.availability
+            if (target.shownWeek != week || capturedDays[target.day]?.windows().orEmpty() != target.windows) editing = null
+        }
+    }
     val readingCalendar = calendarRead == CalendarReadState.RequestingPermission ||
         calendarRead == CalendarReadState.AwaitingPermission || calendarRead == CalendarReadState.Loading
 
     AppScreen(
         title = "공부 시간",
         onNav = onBack,
+        trailing = { ContextHelpButton(ContextHelpTopic.AVAILABILITY) },
         footer = {
             PrimaryButton(
                 text = if (generating) "계획을 만드는 중…" else "계획 만들기",
@@ -84,25 +131,76 @@ fun AvailabilityScreen(
             )
         },
     ) {
-        Heading("보통 언제 공부할 수 있나요?", "요일마다 시작 시간과 공부 시간을 정해 주세요. 공부하지 않는 요일은 0시간으로 두세요.")
-        Column {
-            for (day in Weekday.entries) {
-                DayRow(
-                    day = day,
-                    entry = form.availability[day] ?: DayAvailability(),
-                    onEnable = { onEnable(day, it) },
-                    onStep = { onStep(day, it) },
-                    onEditStart = { editingStart = day },
-                )
+        when {
+            conflict != null -> Heading("공부 시간을 확인해 주세요", "입력한 시간을 확인하고 겹치는 시간대를 바꿔 주세요.")
+            source == WeekSource.REPLACED -> Heading("이번 주 공부 시간", "이 주에만 적용돼요. 다른 주의 공부 시간은 그대로예요.")
+            source == WeekSource.EMPTY -> Heading("이번 주 공부 안 함", "이 주에 시작하는 공부 시간이 없어요.")
+            week != null && resetWeek == week.toEpochDay() ->
+                Heading("이번 주 공부 시간", "${monthDay(week)} 주의 별도 설정을 지웠어요. 이제 기본 시간을 사용해요.")
+            else -> Heading("매주 기본 시간", "시작과 종료 시간을 정해 주세요. 캘린더와 겹치는 시간을 제외하고 모두 계획에 써요.")
+        }
+
+        if (week != null) {
+            val index = weeks.indexOf(week)
+            WeekNavigator(
+                week = WeekPlan(week, emptyList()),
+                index = index,
+                count = weeks.size,
+                onPrevious = { resetWeek = null; actions.onShowWeek(weeks[index - 1]) },
+                onNext = { resetWeek = null; actions.onShowWeek(weeks[index + 1]) },
+            )
+            for (incoming in form.incomingWindows(week)) {
+                MutedBox {
+                    Text("지난주에서 이어지는 시간", style = MaterialTheme.typography.labelLarge, color = Ink)
+                    Text(incomingText(incoming), style = MaterialTheme.typography.bodyMedium, color = InkSecondary)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    if (source == WeekSource.REPLACED) {
+                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
+                    } else {
+                        SecondaryButton("이번 주 시간 바꾸기", { actions.onReplaceWeek(week) }, enabled = !generating)
+                    }
+                }
+                Column(Modifier.weight(1f)) {
+                    if (source == WeekSource.BASE) {
+                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
+                    } else {
+                        SecondaryButton(
+                            "기본 시간으로 되돌리기",
+                            { actions.onResetWeek(week); resetWeek = week.toEpochDay() },
+                            enabled = !generating,
+                        )
+                    }
+                }
             }
         }
-        if (enabled.isNotEmpty()) {
-            MutedBox {
-                InfoRow("공부하는 요일", "주 ${enabled.size}일")
-                InfoRow("공부 시간", "주 ${PlanGrouping.formatDuration(enabled.sumOf { it.durationMinutes }.toLong())}")
+
+        if (source != WeekSource.EMPTY) {
+            Column {
+                for (day in Weekday.entries) {
+                    DayRow(
+                        day = day,
+                        entry = days[day] ?: DayAvailability(),
+                        enabled = !generating && !readingCalendar && plansSaved,
+                        onEdit = { index -> editing = actions.onCapture(day, index, editWeek) },
+                        onRemove = { index -> actions.onCapture(day, index, editWeek)?.let(actions.onRemove) },
+                    )
+                }
+            }
+            val totals = weekTotals(days.toWeekWindows())
+            if (totals.days > 0) {
+                MutedBox {
+                    InfoRow("공부하는 요일", "${totals.days}일")
+                    InfoRow("공부 시간", PlanGrouping.formatDuration(totals.minutes.toLong()))
+                }
             }
         }
-        if (error != null) Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
+        when {
+            conflict != null -> AlertCard(conflict.title, conflict.body)
+            error != null -> Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
+        }
 
         Heading(
             "휴대폰 캘린더",
@@ -155,66 +253,76 @@ fun AvailabilityScreen(
         }
     }
 
-    editingStart?.let { day ->
-        StartTimeDialog(
-            initial = form.availability[day]?.start ?: DayAvailability.DEFAULT_START,
-            onDismiss = { editingStart = null },
-            onPick = { onStart(day, it); editingStart = null },
-        )
+    editing?.let { target ->
+        key(target) {
+            StudyWindowDialog(
+                target = target,
+                onDismiss = { editing = null },
+                onConfirm = { start, minutes -> actions.onApply(target, start, minutes); editing = null },
+            )
+        }
     }
 }
+
+private val WindowTargetSaver = listSaver<AvailabilityWindowTarget?, Any>(
+    save = { target ->
+        if (target == null) emptyList() else listOf(
+            target.day.name, target.week?.toEpochDay() ?: Long.MIN_VALUE,
+            target.index ?: -1, target.shownWeek?.toEpochDay() ?: Long.MIN_VALUE,
+        ) + target.windows.flatMap { listOf(it.start.toSecondOfDay(), it.durationMinutes) }
+    },
+    restore = { values ->
+        if (values.isEmpty()) null else AvailabilityWindowTarget(
+            day = Weekday.valueOf(values[0] as String),
+            week = (values[1] as Long).takeUnless { it == Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
+            windows = values.drop(4).chunked(2).map { WindowSpec(LocalTime.ofSecondOfDay((it[0] as Int).toLong()), it[1] as Int) },
+            index = (values[2] as Int).takeUnless { it == -1 },
+            shownWeek = (values[3] as Long).takeUnless { it == Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
+        )
+    },
+)
 
 @Composable
 private fun DayRow(
     day: Weekday,
     entry: DayAvailability,
-    onEnable: (Boolean) -> Unit,
-    onStep: (Int) -> Unit,
-    onEditStart: () -> Unit,
+    enabled: Boolean,
+    onEdit: (Int?) -> Unit,
+    onRemove: (Int) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(day.label, style = MaterialTheme.typography.titleSmall, color = Ink, modifier = Modifier.width(44.dp))
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${day.label}요일", style = MaterialTheme.typography.titleSmall, color = Ink)
             Spacer(Modifier.weight(1f))
-            StepperButton(R.drawable.ic_minus, "${day.label}요일 시간 줄이기", enabled = entry.enabled) {
-                if (entry.durationMinutes <= DayAvailability.MIN_DURATION_MINUTES) onEnable(false) else onStep(-1)
-            }
-            Text(
-                if (entry.enabled) PlanGrouping.formatDuration(entry.durationMinutes.toLong()) else "0시간",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Ink,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.width(76.dp),
-            )
-            StepperButton(
-                R.drawable.ic_plus,
-                "${day.label}요일 시간 늘리기",
-                enabled = !entry.enabled || entry.durationMinutes < DayAvailability.MAX_DURATION_MINUTES,
-            ) {
-                if (entry.enabled) onStep(1) else onEnable(true)
-            }
+            OutlinedButton(
+                onClick = { onEdit(null) },
+                enabled = enabled,
+                shape = MaterialTheme.shapes.small,
+                border = BorderStroke(1.5.dp, ControlBorder),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = 44.dp)
+                    .semantics { contentDescription = "${day.label}요일 시간대 추가" },
+            ) { Text("＋ 시간대 추가") }
         }
-        if (entry.enabled) {
-            val window = Validation.window(entry)
+        entry.windows().forEachIndexed { index, window ->
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 54.dp, bottom = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("시작", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
-                InputBox(WireDateTime.formatTime(entry.start), onEditStart, Modifier.width(96.dp))
-                Text(
-                    if (window != null) "~ ${WireDateTime.formatTime(window.end)}" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Ink,
+                InputBox(
+                    "${WireDateTime.formatTime(window.start)} ${endLabel(window)} · ${window.durationMinutes}분",
+                    { onEdit(index) },
+                    Modifier.weight(1f)
+                        .testTag(if (index == 0) "study-duration-${day.key}" else "study-duration-${day.key}-$index")
+                        .semantics { contentDescription = windowEditDescription(day, index, window) },
+                    enabled = enabled,
                 )
-            }
-            Validation.windowError(entry)?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = Ink, modifier = Modifier.padding(start = 54.dp, bottom = 10.dp))
+                TextButton(
+                    onClick = { onRemove(index) },
+                    enabled = enabled,
+                    modifier = Modifier.semantics { contentDescription = "${day.label}요일 시간대 ${index + 1} 삭제" },
+                ) { Text("삭제") }
             }
         }
         HorizontalDivider(color = Divider)
@@ -223,13 +331,152 @@ private fun DayRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StartTimeDialog(initial: LocalTime, onDismiss: () -> Unit, onPick: (LocalTime) -> Unit) {
+internal fun StartTimeDialog(initial: LocalTime, onDismiss: () -> Unit, title: String = "시작 시간", onPick: (LocalTime) -> Unit) {
     val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = true)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("시작 시간", style = MaterialTheme.typography.titleMedium) },
+        title = { Text(title, style = MaterialTheme.typography.titleMedium) },
         text = { TimePicker(state = state) },
-        confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("확인", color = Ink) } },
+        confirmButton = { TextButton(modifier = Modifier.testTag("study-clock-confirm"), onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("확인", color = Ink) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소", color = Ink) } },
     )
 }
+
+/** A complete candidate window stays local until the explicit confirmation. */
+@Composable
+private fun StudyWindowDialog(
+    target: AvailabilityWindowTarget,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalTime, Int) -> Unit,
+) {
+    val initial = target.index?.let(target.windows::get)
+        ?: WindowSpec(DayAvailability.DEFAULT_START, DayAvailability.DEFAULT_DURATION_MINUTES)
+    var startSeconds by rememberSaveable { mutableStateOf(initial.start.toSecondOfDay()) }
+    var endSeconds by rememberSaveable { mutableStateOf(initial.end.toSecondOfDay()) }
+    var pickingStart by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val start = LocalTime.ofSecondOfDay(startSeconds.toLong())
+    val end = LocalTime.ofSecondOfDay(endSeconds.toLong())
+    val minutes = studyWindowMinutes(start, end)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("공부 시간 입력", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("${target.day.label}요일 · ${if (target.week == null) "매주 기본 시간" else "${monthDay(target.week)} 주"}", style = MaterialTheme.typography.labelLarge, color = Ink)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FieldLabel("시작 시간")
+                        InputBox(WireDateTime.formatTime(start), { pickingStart = true }, Modifier.testTag("study-window-start"))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FieldLabel("종료 시간")
+                        InputBox(WireDateTime.formatTime(end), { pickingStart = false }, Modifier.testTag("study-window-end"))
+                    }
+                }
+                when {
+                    minutes == null -> Note("시작 시간과 종료 시간을 다르게 정해 주세요.")
+                    end.isBefore(start) -> Note("다음 날 종료 · ${PlanGrouping.formatDuration(minutes.toLong())}")
+                    else -> Note("공부 시간 ${PlanGrouping.formatDuration(minutes.toLong())}")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { minutes?.let { onConfirm(start, it) } }, enabled = minutes != null) { Text("확인") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+    pickingStart?.let { isStart ->
+        StartTimeDialog(
+            initial = if (isStart) start else end,
+            onDismiss = { pickingStart = null },
+            title = if (isStart) "시작 시간" else "종료 시간",
+            onPick = { time ->
+                if (isStart) startSeconds = time.toSecondOfDay() else endSeconds = time.toSecondOfDay()
+                pickingStart = null
+            },
+        )
+    }
+}
+
+/** Earlier end times belong to the following day; equal times cannot form a study window. */
+internal fun studyWindowMinutes(start: LocalTime, end: LocalTime): Int? {
+    val minutes = Duration.between(start, end).toMinutes().toInt()
+    val duration = if (minutes < 0) minutes + 1440 else minutes
+    return duration.takeIf(WindowSpec::isValidDuration)
+}
+
+/** Spoken label of a window's edit control: “월요일 시간대 2, 19:00–21:00, 120분, 수정”. */
+internal fun windowEditDescription(day: Weekday, index: Int, window: WindowSpec): String =
+    "${day.label}요일 시간대 ${index + 1}, ${WireDateTime.formatTime(window.start)}–" +
+        (if (window.endsNextDay) "다음 날 " else "") + "${WireDateTime.formatTime(window.end)}, ${window.durationMinutes}분, 수정"
+
+/** “– 20:00”, or “– 다음 날 00:30” for an end on the following date. */
+internal fun endLabel(window: WindowSpec): String =
+    "– " + (if (window.endsNextDay) "다음 날 " else "") + WireDateTime.formatTime(window.end)
+
+internal fun windowRangeLabel(window: WindowSpec): String =
+    WireDateTime.formatTime(window.start) + "–" +
+        (if (window.endsNextDay) "다음 날 " else "") + WireDateTime.formatTime(window.end)
+
+internal fun dateAvailabilityLabel(context: StudyAvailability?, date: LocalDate): String {
+    if (context == null) return "공부 가능 시간 정보가 없어요."
+    val windows = context.windowsStarting(date)
+    return if (windows.isEmpty()) "공부 가능 시간 없음"
+    else "공부 가능 ${windows.joinToString(" · ", transform = ::windowRangeLabel)}"
+}
+
+internal fun originalAvailabilityLabels(context: StudyAvailability?): List<String> {
+    if (context == null) return listOf("공부 가능 시간 정보가 없어요.")
+    fun labels(week: WeekWindows): String = Weekday.entries.mapNotNull { day ->
+        week[day]?.takeIf { it.isNotEmpty() }?.let { windows ->
+            "${day.label} ${windows.joinToString(" · ", transform = ::windowRangeLabel)}"
+        }
+    }.joinToString(" / ").ifEmpty { "공부 가능 시간 없음" }
+    return listOf("공부 가능 시간: ${labels(context.base)}") + context.overrides.toSortedMap().map { (monday, week) ->
+        "${overridesLabel(mapOf(monday to week))}: ${labels(week)}"
+    }
+}
+
+internal data class WeekTotals(val days: Int, val minutes: Int)
+
+/** Weekdays with any window and the minutes of every window. */
+internal fun weekTotals(week: WeekWindows): WeekTotals =
+    WeekTotals(week.count { it.value.isNotEmpty() }, week.values.sumOf { windows -> windows.sumOf { it.durationMinutes } })
+
+/** One replaced or empty week by its Monday, or how many weeks have their own times. */
+internal fun overridesLabel(overrides: Map<LocalDate, WeekWindows>): String = when (overrides.size) {
+    0 -> "없음"
+    1 -> overrides.entries.single().let { (monday, week) ->
+        "${monthDay(monday)} 주 · " + if (week.values.all { it.isEmpty() }) "공부 안 함" else "시간 바꿈"
+    }
+    else -> "${overrides.size}개 주"
+}
+
+internal data class ConflictText(val title: String, val body: String)
+
+/** The first overlap of the context as the days involved and the overlapping time, or null. */
+internal fun conflictText(availability: StudyAvailability): ConflictText? {
+    val (first, second) = availability.firstOverlap() ?: return null
+    val earlier = Weekday.of(first.start.dayOfWeek)
+    val later = Weekday.of(second.start.dayOfWeek)
+    val title = if (earlier == later) "${earlier.label}요일 공부 시간이 겹쳐요." else "${earlier.label}요일과 ${later.label}요일 공부 시간이 겹쳐요."
+    val from = second.start
+    val until = minOf(first.end, second.end)
+    // Replacement-week overlaps name their week; base overlaps repeat every week.
+    val week = listOf(first, second).map { StudyAvailability.mondayOf(it.start.toLocalDate()) }.firstOrNull { it in availability.overrides }
+    val where = week?.let { "${monthDay(it)} 주 " }.orEmpty()
+    val untilText = (if (until.toLocalDate().isAfter(from.toLocalDate())) "다음 날 " else "") + WireDateTime.formatTime(until.toLocalTime())
+    return ConflictText(
+        title,
+        "$where${Weekday.of(from.dayOfWeek).label}요일 ${WireDateTime.formatTime(from.toLocalTime())}–${untilText}이 겹쳐요. " +
+            "시작 시간이나 종료 시간을 바꿔 주세요.",
+    )
+}
+
+/** A window from the previous week that runs into the shown week. */
+internal fun incomingText(interval: StudyInterval): String =
+    "${dayWithWeekday(interval.start)} ${WireDateTime.formatTime(interval.start.toLocalTime())}–" +
+        "${WireDateTime.formatTime(interval.end.toLocalTime())} 공부 시간이 지난주 설정에서 이어져요."
+
+private fun dayWithWeekday(at: LocalDateTime): String =
+    "${monthDay(at.toLocalDate())}(${Weekday.of(at.dayOfWeek).label})"

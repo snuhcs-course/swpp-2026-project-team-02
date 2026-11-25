@@ -6,7 +6,7 @@
 
 명령줄 입력은 변경 대상 ID와 원본 CSV 경로입니다. 새 CSV 열은 `schedule_id,start_date,end_date,topic`이며 시작·종료 값은 `YYYY/MM/DD/HH/MM`입니다. 기존 세 열 CSV도 읽을 수 있습니다. 일정 구간은 시작 포함·종료 제외입니다. ID는 이전 일정 생성 프로그램의 출력과 같이 `study-번호` 또는 `external-번호` 형식이어야 합니다.
 
-- 실패한 공부 일정(`study-N`): 주제가 있으면 Agent가 같은 주제 세션을 먼저 조회합니다. 기존 기간 길이와 주제를 유지하고, 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 충돌하지 않는 구간을 찾습니다. `config/user_availability.json`이 있으면 해당 요일·시간 안에서만 이동합니다. 주제가 없는 구형 행도 같은 가능 시간 규칙을 적용합니다. 다른 일정 행은 그대로 둡니다.
+- 실패한 공부 일정(`study-N`): 주제가 있으면 Agent가 같은 주제 세션을 먼저 조회합니다. 기존 기간 길이와 주제를 유지하고, 같은 주제의 다른 세션 중 가장 늦게 끝나는 시각 이후부터 충돌하지 않는 구간을 찾습니다. `config/user_availability.json`이 있으면 실제 날짜의 가능 구간(주별 교체 시간, 자정을 넘는 구간 포함) 하나 안에 세션 전체가 들어가는 곳으로만 이동합니다. 주제가 없는 구형 행도 같은 가능 시간 규칙을 적용합니다. 다른 일정 행은 그대로 둡니다.
 - 취소된 외부 일정(`external-N`): 취소 행만 제거하고 나머지 외부 일정과 공부 일정은 보존합니다.
 - 출력: `schedule_id,start_date,end_date,topic` CSV. 주제는 이동 후에도 유지되며 외부 일정 주제는 비어 있을 수 있습니다. stdout은 결과 CSV, stderr는 조정 작업과 tool trace입니다.
 
@@ -24,13 +24,53 @@ python -m schedule_adjuster.cli --schedule-id study-104 --schedule-csv schedule.
 ```json
 {
   "weekly_availability": {
-    "monday": [{"start": "19:00", "end": "21:00"}],
+    "monday": [{"start": "23:00", "duration_minutes": 90}],
     "saturday": [{"start": "09:00", "end": "12:00"}]
-  }
+  },
+  "availability_overrides": {"2026/11/23": {}}
 }
 ```
 
-다른 JSON 파일을 지정하려면 `--availability-file availability.json`을 추가합니다. 파일이 없으면 기존처럼 기존 일정과 주제 순서만 고려해 이동합니다. 설정된 요일에 세션 길이를 수용할 만큼 긴 시간 구간이 없으면 조정 오류를 반환합니다. 취소된 외부 일정 제거는 가능 시간 설정과 무관합니다.
+구간은 `start`와 1~1439분 `duration_minutes`로 적고 시작한 요일에 속합니다(월요일 23:00/90분은 화요일 00:30까지). 구형 같은 날 `start`/`end`도 읽습니다. `availability_overrides`는 월요일 날짜 키로 그 주 전체를 교체하며 `{}`는 공부하지 않는 주입니다. 파서·겹침 검사·날짜별 해석은 License Planner와 같은 `backend/study_availability.py`를 씁니다. 읽기만으로는 파일을 다시 쓰지 않습니다.
+
+다른 JSON 파일을 지정하려면 `--availability-file availability.json`을 추가합니다. 파일이 없으면 기존처럼 기존 일정과 주제 순서만 고려해 이동합니다. 시험일까지 남은 가능 구간(이후 주별 교체 시간 포함) 어디에도 세션 길이를 수용할 구간이 없으면 조정 오류를 반환합니다. 취소된 외부 일정 제거는 가능 시간 설정과 무관합니다.
+
+## 수동 이동
+
+HTTP `mode: "manual"`은 모델 없이 지정 시각으로 한 공부 일정만 옮깁니다.
+`confirm_external_overlap`은 기본 false인 boolean으로, true이면 보존된 외부
+일정과의 겹침만 허용하며 외부 행을 지우지 않습니다. `confirm_outside_availability`는
+공부 가능 시간 밖 예외를 독립적으로 확인합니다. 두 조건이 있으면 둘 다 필요하고,
+과거·준비 시작·시험 종료·다른 공부 일정 겹침·stale/storage 검사는 항상 적용합니다.
+null/비boolean 또는 manual 밖에서 전달한 외부 겹침 flag는 모델 호출·변경 전에
+거절합니다. 서버는 새 기기 캘린더를 확인하지 않으며 자동 이동은 기존 충돌 회피를 유지합니다.
+
+## 남은 공부 일괄 재배치
+
+`remaining_study.place_remaining_sessions`는 저장된 계획의 여러 공부 일정에 남은 분을 한 번에 다시 배치하는 결정적 규칙입니다. 모델·Agent를 쓰지 않으며 API의 `mode: "remaining"`이 호출합니다(요청 형식은 [FRONTEND_INTEGRATION_GUIDE.md](../FRONTEND_INTEGRATION_GUIDE.md)).
+
+- 지시 하나는 원본 공부 일정 ID, 남은 분(1분 이상, 원래 길이 이하), 결과 ID입니다. 결과 ID가 원본과 같으면 원래 길이 전체여야 하고, 다르면 현재 모든 공부 일정 번호보다 큰 새 `study-N`이어야 합니다.
+- 지시된 원본 행을 모두 먼저 제거하고, 나머지 공부·외부 일정은 그대로 둔 채 바쁜 시간으로 봅니다. 이미 서로 겹쳐 있던 보존 행은 그대로 남습니다.
+- 원본의 시작 시각, 종료 시각, `study-N` 번호(숫자 비교) 순서로 하나씩 배치합니다. 각 지시는 준비 시작, `replan_from`, 현재 시각 다음 분 중 가장 늦은 시각 이후에서 가장 이른, 가능 구간 하나에 통째로 들어가고 다른 행과 겹치지 않는(시작 포함·종료 제외) 구간에 놓입니다. 앞 순서에서 배치한 행도 다음 지시의 바쁜 시간입니다.
+- 가능 구간은 공용 해석기를 써서 전날 시작해 자정을 넘는 구간과 주별 교체 시간을 반영하고, 시험 시각에 정확히 끝나는 배치는 허용합니다. 주제는 원본 주제를 그대로 쓰며 같은 주제 순서 규칙은 적용하지 않습니다.
+- 한 지시라도 들어갈 곳이 없으면 `NOT_ENOUGH_TIME`으로 전체를 거절하고 아무것도 바꾸지 않습니다. 이 결과는 정해진 순서·통째 배치 규칙에서 실패했다는 뜻이며, 나누거나 순서를 바꿔도 불가능하다는 증명은 아닙니다.
+
+### 확인한 시작 시각으로 일괄 이동
+
+`mode: "remaining"`의 모든 지시에 `new_start_date`를 넣으면
+`validate_remaining_destinations`가 지정한 시각만 검증하며 다른 시간을 찾지 않습니다.
+일부 지시에만 넣거나 시각 형식이 잘못되면 `INVALID_INPUT`입니다.
+이때만 최상위 boolean `confirm_outside_availability`(기본 false)를 받습니다.
+기존 지시만 보낼 때는 이 필드를 생략해야 합니다.
+
+원본 순서대로 현재 한국 시각의 다음 분, 준비 시작, `replan_from`, 시험 종료,
+보호된 공부 일정과 앞서 배치한 일정, 외부 일정, 공부 시간 창을 검사합니다.
+거절 코드는 차례로 `MANUAL_MOVE_IN_PAST`, `BEFORE_PREPARATION_START`,
+`INVALID_INPUT`, `EXAM_BOUND_EXCEEDED`, `STUDY_SESSION_OVERLAP`,
+`EXTERNAL_EVENT_OVERLAP`, `OUTSIDE_STUDY_WINDOWS`이며 HTTP 422입니다.
+맞닿는 구간과 시험 시각에 끝나는 구간은 허용합니다. 시간 밖 확인은 마지막
+검사만 면제하며 외부 겹침은 면제할 수 없습니다. 전체 검증 후 한 번만 저장하고,
+경합은 409로 거절합니다. 모델 호출과 프로필 변경은 없습니다.
 
 ## Agent 도구
 

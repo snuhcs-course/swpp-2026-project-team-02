@@ -82,4 +82,80 @@ class PlanGroupingTest {
     fun emptySchedulesGiveNoWeeks() {
         assertTrue(PlanGrouping.weeks(emptyList()).isEmpty())
     }
+
+    private val sampleRows = listOf(
+        row("study-1", "2026/11/04/19/00", "2026/11/04/19/25"),
+        row("study-2", "2026/11/04/19/30", "2026/11/04/20/00"),
+        row("study-3", "2026/11/06/19/00", "2026/11/06/19/30"),
+        row("study-4", "2026/11/06/19/35", "2026/11/06/20/00"),
+        row("study-5", "2026/11/25/19/00", "2026/11/25/19/30"),
+        row("study-6", "2026/11/25/19/35", "2026/11/25/20/00"),
+        row("study-7", "2026/11/27/19/00", "2026/11/27/19/30"),
+    )
+
+    @Test
+    fun firstAndLastSampleWeeksTotalTheirOwnStudySessions() {
+        val weeks = PlanGrouping.weeks(sampleRows)
+        assertEquals(4, weeks.size)
+        assertEquals(4, weeks.first().studySessionCount)
+        assertEquals(110L, weeks.first().studyMinutes)
+        assertEquals("1시간 50분", PlanGrouping.formatDuration(weeks.first().studyMinutes))
+        assertEquals(3, weeks.last().studySessionCount)
+        assertEquals(85L, weeks.last().studyMinutes)
+        assertEquals("1시간 25분", PlanGrouping.formatDuration(weeks.last().studyMinutes))
+    }
+
+    @Test
+    fun gapWeeksBetweenStudyWeeksTotalZero() {
+        val weeks = PlanGrouping.weeks(sampleRows)
+        weeks.subList(1, 3).forEach { gap ->
+            assertEquals(0, gap.studySessionCount)
+            assertEquals(0L, gap.studyMinutes)
+            assertEquals("0분", PlanGrouping.formatDuration(gap.studyMinutes))
+        }
+    }
+
+    @Test
+    fun unequalSessionsOnOneDayAddTheirActualDurations() {
+        val week = PlanGrouping.weeks(listOf(
+            row("study-1", "2026/10/05/18/00", "2026/10/05/18/25"),
+            row("study-2", "2026/10/05/18/30", "2026/10/05/19/50"),
+            row("study-3", "2026/10/05/20/00", "2026/10/05/20/10"),
+        )).single()
+        assertEquals(3, week.studySessionCount)
+        assertEquals(115L, week.studyMinutes)
+    }
+
+    @Test
+    fun externalRowsAreExcludedFromWeeklyStudyTotals() {
+        val week = PlanGrouping.weeks(listOf(
+            row("study-1", "2026/10/05/18/00", "2026/10/05/19/00"),
+            row("external-3", "2026/10/05/13/00", "2026/10/05/15/00", ""),
+            row("external-4", "2026/10/07/09/00", "2026/10/07/12/00", ""),
+        )).single()
+        assertEquals(1, week.studySessionCount)
+        assertEquals(60L, week.studyMinutes)
+    }
+
+    @Test
+    fun externalOnlyWeekTotalsZeroButKeepsItsRows() {
+        val weeks = PlanGrouping.weeks(listOf(
+            row("study-1", "2026/10/05/18/00", "2026/10/05/19/00"),
+            row("external-3", "2026/10/14/13/00", "2026/10/14/15/00", ""),
+        ))
+        val externalOnly = weeks[1]
+        assertEquals(0, externalOnly.studySessionCount)
+        assertEquals(0L, externalOnly.studyMinutes)
+        assertEquals(listOf("external-3"), externalOnly.days[2].sessions.map { it.scheduleId })
+    }
+
+    @Test
+    fun changedSchedulesGiveChangedWeeklyTotals() {
+        val before = PlanGrouping.weeks(sampleRows).first()
+        val changed = sampleRows.filterNot { it.scheduleId == "study-2" } +
+            row("study-8", "2026/11/08/10/00", "2026/11/08/11/15")
+        val after = PlanGrouping.weeks(changed).first()
+        assertEquals(4 to 110L, before.studySessionCount to before.studyMinutes)
+        assertEquals(4 to 155L, after.studySessionCount to after.studyMinutes)
+    }
 }

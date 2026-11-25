@@ -57,10 +57,13 @@ class AdaptationReportTests(unittest.TestCase):
 
     def test_allowlist_extracts_pure_validation_but_not_private_or_test_paths(self):
         allowed = ["backend/assessment_questionnaire/validation.py", "backend/assessment_questionnaire/__init__.py",
-                   "backend/assessment_service.py", "backend/assessment_questionnaire/questions.json"]
+                   "backend/assessment_service.py", "backend/assessment_questionnaire/questions.json",
+                   "backend/study_availability.py"]
         excluded = ["backend/assessment_questionnaire/cli.py", "backend/.env", "backend/config/user_availability.json",
                     "backend/license_planner/output/plan.csv", "backend/tests/api_tests/test_plan_generation.py",
-                    "backend/scenarios/run_license_planner_test_cases.py", "backend/test_support/question_banks.py"]
+                    "backend/scenarios/run_license_planner_test_cases.py", "backend/test_support/question_banks.py",
+                    "backend/tests/license_planner_tests/test_study_availability.py",
+                    "backend/tests/api_tests/test_availability_profile.py", "backend/study_availability_notes.py"]
         matches = lambda name: any(pattern.fullmatch(name) for pattern in verify_request.ALLOWED_PATHS)
 
         self.assertTrue(all(matches(name) for name in allowed))

@@ -12,6 +12,9 @@ include =
     api_service.py
     api_server.py
     assessment_service.py
+    openrouter_client.py
+    study_availability.py
+    study_plan_store.py
     license_planner/*
     schedule_adjuster/*
     assessment_questionnaire/*

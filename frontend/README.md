@@ -3,11 +3,31 @@
 Android app for the License Planner MVP (Kotlin, Jetpack Compose, single `:app`
 module, minSdk 26, target SDK 36).
 
-**Flow:** home (계획 생성 / 계획 조정). Creation: select 컴퓨터활용능력 2급 →
+**Flow:** home (계획 생성 / 내 계획). An explicitly saved draft adds 이어서 만들기.
+Creation: select 컴퓨터활용능력 2급 →
 enter preparation start and exam dates → choose current level and answer example
-questions → set weekday study windows → generate a plan → browse it by week and
-day. Adjustment: pick a plan saved on this device → mark one missed
-study session → see the updated plan. See [Plan adjustment](#plan-adjustment).
+questions → set weekday study windows (and optional per-week changes; see
+[Study availability](#study-availability)) → generate a plan → browse it by week and
+day in its plan view; Back from a new plan returns home. 내 계획 opens
+저장된 계획; choosing a plan opens the same plan view. Adjustment starts there:
+일정 조정하기 → 일정 조정 → mark one missed study session → see the updated
+plan, or move that session to a time you choose (시간 직접 옮기기); Back returns
+to the plan view. See [Plan adjustment](#plan-adjustment).
+Calendar reviews can also lead to a single-session move, opened in 일정 조정
+above the current screen (Back returns there), or a confirmed
+replacement of the selected plan. See [Calendar conflict review](#calendar-conflict-review).
+Both the new plan and a reopened saved plan let you record how each study session
+went (공부 기록하기); see [Study reports](#study-reports).
+
+**Plan view (내 계획).** Below the heading, any demo disclosure, calendar notices
+and save alert, the week picker is followed by that week's totals
+(「공부 일정 N개 · D」: its study sessions and their summed durations, not counting
+existing schedules), the 일별 공부 시간 chart when shown, and all seven dates.
+A date without sessions is a single muted 「일정 없음」 row. The full 계획 요약
+follows Sunday (or the no-rows message) and precedes the unchanged footer
+actions, including calendar export of the whole plan.
+
+Cancelling generation stops the app from waiting; the live server may still finish and store that plan in shared storage, where it is not shown in the app.
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
 warning, “시험 일정 바꾸기” opens an editor with only the exam date. Confirming a
@@ -29,6 +49,36 @@ kept) when an item has fewer than two normal choices besides 모르겠음, a res
 the backend's checks. Routine study check-ins using further questions are not
 implemented.
 
+## Iteration 4 source status
+
+- `feat/iteration-4-week-1` has per-day multi-window editing, weekly overrides,
+  local drafts and study reports, accepted move and save feedback, and calendar
+  conflict review, notices and per-occurrence keep decisions.
+- The HE fixes from `fix/iter4-p8-he-issues` are merged into it: contextual
+  help, error details, generation Back confirmation, day-by-day
+  available/assigned time, and a link from an adjustment's original position to
+  its destination. The HE branch's review rounds were not merged.
+- The topic budgets from `feat/p10-topic-budget` are merged. Diagnosed live
+  plans use every usable entered minute: the backend, not the model, sets each
+  date's total and splits it across topics by score. The demo planner fills the
+  same free minutes locally. Android displays the returned study rows through
+  the existing plan screen.
+- **Remaining study re-plan.** The [backend batch endpoint](../backend/FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
+  is implemented on this branch. The Android flow is available for new and
+  reopened plans. Its review shows scheduled, actual and remaining minutes
+  before confirmation. Done rows contribute zero. Missed and unreported rows
+  contribute their scheduled duration. A partly completed 60-minute row with
+  20 minutes reported contributes 40 minutes. A reported positive remainder
+  gets a fresh row ID, with its prior report kept locally under the original
+  ID. Placement uses the plan's saved calendar intervals and preserves all
+  existing phone events. The UI distinguishes local save retry from
+  reloading an uncertain live outcome.
+
+[Iteration 4 Figma screens](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3690)
+cover drafts, availability, study reports and HE behavior. See also
+[calendar review states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3850)
+and the [remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnUszW/License-Planner?node-id=2318-3984).
+
 ## Build and run
 
 Open this `frontend/` directory (not the repository root) in Android Studio and
@@ -48,6 +98,16 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 ## Checks
 
+For local editing, use the [local testing workflow](../docs/testing-workflow.md)
+for task-specific JVM filters, incremental/fresh execution, focused Compose
+methods and evidence reuse. Its [bounded local comparison](../docs/testing-workflow.md#bounded-local-daemon-comparison)
+supports `--daemon` for local recipes on the measured toolchain (five JVM tests;
+later medians 1.279 s reused versus 4.655 s fresh). This is one class on one
+host with a warmed daemon, not a full-build, Compose or CI speed claim. Keep
+`--no-daemon` as the fallback and preserve existing named-change commands and
+all required full gates/device recipes.
+
+The commands below reproduce CI; the local recipes do not replace them.
 CI runs these in order (Android SDK platform 36 and build-tools 36.0.0,
 Python 3.14). `ci.yml` provisions Java 25, while the checked-in Gradle daemon
 criteria select Java 17. The separate signed-release workflow provisions Java 17:
@@ -81,16 +141,135 @@ the job succeeds; both are kept 7 days. No minimum coverage is enforced.
 Gradle may report test tasks as `UP-TO-DATE` and skip them when nothing
 changed; CI starts from a fresh checkout, so its tests always run.
 
+### Demo Compose UI tests
+
+`app/src/androidTestDemo/.../ui/MainFlowUiTest.kt` mounts the real navigation,
+screens and ViewModel in a standard Compose test activity, using production demo
+repositories, a test-owned AtomicFile store, and injected calendar readers and
+writers. Coverage includes:
+
+- Home-bound save/discard/stay for visible and system Back; untouched defaults,
+  delayed/failed saves and local retry, failed discard and explicit replacement.
+- Same-question resume without refetching, an earlier edit moving the checkpoint,
+  a replaced availability week with several windows per day and busy rows, and atomic
+  plan completion removing the draft. Fresh injected state exercises restoration.
+- Multiple windows per day, reordering and removal, and cancelling a window edit
+  before changing between the recurring schedule and a one-week override.
+- Calendar review before generation, disposal of late reads after cancellation,
+  changed observations before dispatch, and fallback to previously imported busy
+  rows when a fresh read fails.
+- Export conflict review and final copy confirmation, plan replacement with local
+  save retry, and preservation of other plans and a separately saved draft.
+- Foreground conflict notices, persistence of a keep decision across reopen, a
+  new warning when the occurrence or study time changes, and separate consent for
+  outside-window and external-calendar overlap on a manual move.
+- New study reports gated until the scheduled device date, and report controls
+  reachable under long topic text or while the keyboard is open.
+
+- Creation through all 18 loaded questions, unknown-answer scores, authored-example
+  disclosure, weekday minutes entry, written/demo plan rows, week bounds and home count.
+- Disabled progression for missing certification, equal/reversed dates, an unanswered
+  question and empty availability; ordinary valid corrections enable progression.
+- Replacing a normal answer with unknown and retaining that sole selection through
+  forward navigation and the activity's system Back dispatcher.
+- Generating, restoring from saved bytes with fresh navigation/ViewModel/store,
+  selecting and automatically adjusting a row, and reopening the saved new time.
+  Saved-row comparisons confirm only the target times changed; the result card shows
+  the topic and the sent and saved rows' full times with 이 기기에 저장했어요;
+  restoration does not replay adjustment or retain the card or success marker.
+- Showing the outside-window question without manual scrolling, resubmitting the
+  retained time for fresh validation and applying only an explicitly confirmed move,
+  with the chosen time in the result card.
+- Showing usable overnight carry-in during the first empty preparation week and
+  a later replaced week.
+- Reporting a generated plan's session from a later week: no preselected status, a
+  status-required error, done suggesting the scheduled minutes then edited, partly
+  with overtime after a rejected nonnumeric entry, cancel keeping the saved report,
+  return to the same week, and no planning or adjustment request.
+- Reporting a reopened saved plan's session as missed (minutes disabled, zero saved)
+  without changing the session selected for adjustment, then reopening it.
+- A report save refused by the test-owned store: the edit stays shown as unsaved
+  with the earlier report kept on disk, a local 다시 저장하기 saves it once without a
+  request, and the report follows its session through an adjustment and reopening.
+- An adjustment whose save the test-owned store holds and then refuses: the result
+  card stays with 기기에 저장하는 중이에요 (no saved wording or retry yet), then
+  아직 이 기기에 저장하지 못했어요 with the single storage-alert 다시 저장하기 and the
+  old rows on disk, then 이 기기에 저장했어요 after a local retry with one adjustment
+  and no further request.
+
+The host grants calendar permission on the disposable emulator and supplies
+synthetic read and write outcomes. It needs no backend, model, calendar account
+or real events. Fixed dates, clocks, locale and timezone make cases repeatable. Each test removes only
+its own plan directory after disposing navigation and clearing its ViewModel owner.
+This injected host bypasses `MainActivity.Factory`; it does not verify production
+activity wiring, process death, live Compose behavior or physical-device behavior.
+
+Before installing or running connected tests, use `adb devices -l` and confirm
+exactly one attached, disposable API 35 AVD (the CI baseline). The current
+Espresso dependency fails input-injection initialization on the local API 37 image.
+Extra, offline, unauthorized or physical devices block this procedure. Connected tasks may replace/uninstall packages;
+never use a device containing a user's app installation. Then run from `frontend/`:
+
+```bash
+export ANDROID_SERIAL=<disposable-emulator-serial>
+bash ./gradlew --no-daemon :app:connectedDemoDebugAndroidTest --console=plain \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.swpp.licenseplanner.ui.MainFlowUiTest \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+```
+
+The leave-installed option retains only these disposable test packages so private
+diagnostics can be pulled after Gradle finishes; stop/delete the throwaway AVD after
+collecting evidence. Do not enable it on a user device.
+
+For one case, append `#<methodName>` to the class filter. In Android Studio select
+`demoDebug` and run this class under `app/src/androidTestDemo` as instrumented tests
+on the disposable AVD. The class is absent from live instrumentation. The shared
+`CalendarProviderIntegrationTest` remains separate; the class filter above excludes
+it and avoids its real provider operations.
+
+Demo XML results are under `app/build/outputs/androidTest-results/connected/debug/flavors/demo/`
+and HTML reports under `app/build/reports/androidTests/connected/debug/flavors/demo/`.
+On assertion failure, the test writes a semantics tree and screenshot to the demo
+app's private `files/compose-ui-diagnostics/<method>/failure.{txt,png}`. Creation and
+adjustment also save representative screenshots there for visual inspection. Pull
+only this test-owned directory before any uninstall, from `frontend/`:
+
+```bash
+mkdir -p app/build/compose-ui-diagnostics
+adb -s "$ANDROID_SERIAL" exec-out run-as com.swpp.licenseplanner.demo \
+  tar -C files/compose-ui-diagnostics -cf - . | tar -xf - -C app/build/compose-ui-diagnostics
+```
+
+The existing gated `android-live-e2e` job runs this filtered demo suite and the live
+suite on the same API 35 emulator, attempts both despite assertion failures, and
+fails if either fails. Its always-run evidence upload preserves separate reports,
+explicitly pulled UI diagnostics and fixture logs for seven days. A local pass
+does not establish a hosted run; hosted execution remains unverified until observed.
+
+The HE branch's `WorkflowRecoveryUiTest` was not merged. In the demo
+`MainFlowUiTest`, `cancellingGenerationKeepsTheSavedDraftAndAllInputs` covers
+cancelling generation, and `overnightAndOverrideGraphsFollowThePlanThroughALaterWeekMove`
+covers the daily chart across weeks and following a moved session to its
+destination. The contextual-help UI check opens each screen's corner guidance action.
+No instrumentation test opens the error-details retry path. The live HTTP cancellation contract has its own JVM tests.
+
+The remaining-work flow is covered by
+`remainingReviewCancelAndRepeatedReplanPreserveEffortIdentityAndOtherPlans`
+(a 60-minute row with 20 minutes reported, cancel and confirm, a repeated
+re-plan, another saved plan and the creation draft kept, no calendar write) and
+`remainingSaveFailureRetriesLocallyAndEmptyOrNoFitHasAReturnPath` (local save
+retry, zero-work and no-fit outcomes).
+
 ### Live instrumentation test
 
-`app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` is the only
-instrumentation test. It sits in the live flavor's source set, so only
-`connectedLiveDebugAndroidTest` runs it; demo instrumentation has no tests and
-contacts no server. It loads the 18 onboarding questions, submits all of them
+`app/src/androidTestLive/.../data/LiveBackendE2eTest.kt` sits in the live flavor's
+source set, so only `connectedLiveDebugAndroidTest` discovers this API test;
+demo instrumentation contacts no server. It loads the 18 onboarding questions, submits all of them
 (some answered 모르겠음), checks that the plan covers the topics of both written
-subjects, adjusts one study session, checks that the whole moved session ends
-by the plan's exam date and that no other row changed, and reads the plan back
-by its exact identity. The backend is
+subjects, verifies that a no-fit automatic move leaves the saved plan intact,
+and confirms a one-time manual move outside the study windows. It checks the
+chosen start, exam deadline and other rows, then reads the plan back by its
+exact identity. The backend is
 `backend/test_support/fixed_live_e2e_server.py`: the real API handler,
 scheduler, adjustment loop and plan store with fixed model replies and no
 OpenRouter access (see `backend/README.md`). Its default case,
@@ -103,17 +282,36 @@ fails rather than skipping. Use a disposable emulator:
 
 ```bash
 # from backend/
-python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000 --now 2026/10/19/00/00
 # in another terminal
 adb -s <test-device> reverse tcp:8000 tcp:8000
-# from frontend/: live only, or the aggregate (demo has no instrumentation tests)
+# from frontend/: live API test (shared provider tests require their own device setup)
 bash ./gradlew --no-daemon connectedLiveDebugAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
-bash ./gradlew --no-daemon connectedAndroidTest -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
 ```
 
-CI's `android-live-e2e` job runs the live command the same way on an API 35
-emulator. This is controlled integration evidence, not evidence about the
-model or the deployed server.
+For manual controlled-live checks on a disposable emulator (current dates,
+study-time editing, manual moves), start the same fixture with
+`--planning scripted` and the isolation options described in
+`backend/README.md` (Fixed-response API fixture): `--storage-dir`,
+`--profile-seed`, `--now`, `--request-log` and `--test-control`. It never
+touches `backend/config/user_availability.json` or the real plan output, and
+calls no model:
+
+```bash
+# from backend/
+python test_support/fixed_live_e2e_server.py --host 127.0.0.1 --port 8000 --planning scripted \
+  --storage-dir "$RUN/storage" --profile-seed "$RUN/seed.json" --now 2026/11/18/12/00 \
+  --request-log "$RUN/requests.jsonl" --test-control "$RUN/control.json"
+# in another terminal
+adb -s <test-device> reverse tcp:8000 tcp:8000
+# from frontend/
+bash ./gradlew --no-daemon assembleLiveDebug -PlicensePlanner.apiBaseUrl=http://127.0.0.1:8000/api/v1
+```
+
+CI's `android-live-e2e` job preserves the `connectedLiveDebugAndroidTest` command above alongside the filtered demo
+UI suite on an API 35 emulator. The live suite exercises repositories/API rather
+than Compose screens. It supplies controlled integration evidence, not evidence
+about the model or the deployed server.
 
 ## Flavors
 
@@ -123,18 +321,17 @@ model or the deployed server.
 | `live` | Yes | `GET /certifications/computer_specialist_level_2/questions` | `POST /study-plans` (OpenRouter `openai/gpt-6-luna`, server-side) | `POST /schedules/adjust`; `GET /study-plans` only to reload the selected plan |
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
-calculation, not backend or AI output. Demo workload: each topic shown on the
-score screen gets its own session count, one base session plus one extra when
-its score is below 60%. Each part is multiplied by the stricter of the chosen
-level and the overall-score level (80% advanced ×0.5, 60% intermediate ×1,
-otherwise beginner ×2) and rounded up separately, so an advanced learner still
-gets a weak topic's extra session. Extra sessions go to the weak topics that
-earned them. All 18 answered 모르겠음 at beginner level needs 32 sessions (four
-per topic); all 18 correct at advanced level needs eight (one per topic). These
-are demonstration assumptions for a practical evaluation journey, not the live
-model's allocation or an estimate of the preparation the exam needs; a perfect
-score keeps every topic and does not mean mastery. When the sessions do not fit,
-the demo shows the required and available counts and no partial plan. The live flavor never falls back to demo
+calculation, not backend or AI output. Demo workload: like a live plan, it
+fills every free minute of the entered windows inside the preparation period,
+outside imported busy rows. It splits those minutes across the topics on the
+score screen in the backend's proportions: one reserved minute per topic, the
+rest by weight `2 - score/100` with largest-remainder rounding. It then places
+the weakest topic first in time order, splitting a topic only where a free
+segment or its budget ends. It does not copy the backend's topic-order search or
+boundary smoothing, so its rows can differ from a live plan's. The chosen level
+does not change the amount. A perfect score keeps every topic and does not mean
+mastery. When there are fewer free minutes than topics, the demo shows the topic
+count and the free minutes and no partial plan. The live flavor never falls back to demo
 data: on failure it shows an error with retry and keeps all inputs.
 
 ## Live backend
@@ -241,7 +438,7 @@ that recognizes only exact backend messages or tightly anchored patterns:
 | A weekday window with a bad time, reversed order, or overlap | The weekday in Korean (for example 수요일) and the problem |
 | `NOT_ENOUGH_TIME:` with a current backend capacity sentence | 시험일 전까지 공부할 시간이 부족해요, plus the usable minutes and topic count. A zero-minute early check gives no topic count. |
 | `NOT_ENOUGH_TIME:` with any other text | The same headline without numbers |
-| Exactly `This saved plan has no stored exam date. Create a new plan before adjusting study sessions.` | 이 계획에는 시험일 정보가 저장되어 있지 않아요. / 목록으로 돌아가 새 계획을 만든 뒤 다시 조정해 주세요. |
+| Exactly `This saved plan has no stored exam date. Create a new plan before adjusting study sessions.` | 이 계획에는 시험일 정보가 저장되어 있지 않아요. / 홈의 '계획 생성'에서 새 계획을 만든 뒤 그 계획에서 조정해 주세요. |
 | Assessment-results payload checks | 답안 정보를 서버에서 처리하지 못했어요, with a note that it does not mean a wrong answer |
 | Anything else, including blank, technical, or path/trace text | 요청 정보를 확인하지 못했어요 |
 
@@ -256,8 +453,40 @@ messages claims that an unchanged retry fixes the input.
 
 ## Plan adjustment
 
+Saved plans open in their plan view. Its **일정 조정하기** opens **일정 조정** for
+the same plan, and Back returns to that plan view at the same week; 목록으로 in a
+recovery state opens 저장된 계획. Select a study session to reveal its automatic
+adjustment and manual-move actions. Remaining-study replanning, calendar export
+and regeneration stay on the plan view; 일정 조정 offers only its 조정 안내 help.
+Calendar conflicts are checked automatically when the app opens or returns to the
+foreground with permission. Successful results show the conflict status and check
+time. **캘린더 권한 허용** appears when access is missing, and **다시 확인** appears
+when the calendar could not be read. Explicit recovery reports its outcome.
+
+
+When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
+「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
+With entered windows, the no-fit footer also offers 「캘린더에서 빈 시간 찾기」.
+This explicit action requests read permission if needed and lists up to three free
+times on different dates, at whole 10-minute starts. The usual band runs from the
+earliest entered start to the latest entered end across the base and override
+weeks, on any date. Times avoid other study rows, retained external rows and
+eligible device-calendar occurrences, stay after preparation/current time and end
+by the exam. With no entered windows, the search is hidden.
+
+Each result says whether it lies outside the entered windows. Selecting a result
+and tapping 「이번 한 번만 옮기기」 confirms that one-time exception when needed;
+the entered windows and saved availability stay unchanged. The existing manual
+move path re-reads the calendar and reviews new overlaps before sending one move.
+「직접 시간 고르기」 opens ordinary manual selection, whose outside-window
+confirmation still applies. Back returns to the no-fit card. Permission denial,
+unreadable calendars and no free time have distinct messages and keep manual
+movement available; no unchecked time is suggested. Search results are transient.
+Remaining-study no-fit also offers calendar-free placement as described below.
+
 Home offers 계획 생성 (the existing creation flow, with earlier inputs kept)
-and 계획 조정 (a list of the plans generated and saved on this device). The first
+and 내 계획 (저장된 계획: a list of the plans generated and saved on this device,
+each opening its plan view). The first
 creation step (자격증) has a top-bar back arrow that, like system back, returns
 home without sending a request or clearing the inputs. Each
 successful generation adds one entry, numbered 계획 1, 계획 2, … even when dates
@@ -276,8 +505,62 @@ trailing slash ignored) keep separate lists, so switching backends never shows
 another server's plans, and switching back restores the earlier list.
 Uninstalling or clearing app data removes the list; plans lost that way, or
 created before this storage existed, cannot be recovered from the server,
-whose list lacks the original creation inputs. Form drafts, navigation and the
-moved-session tag are not saved.
+whose list lacks the original creation inputs. Form input that was not
+explicitly saved as a draft, navigation and the moved-session tag are not saved.
+
+**Snapshot versions.** Saving writes snapshot version 5, including plan-scoped
+timing-only conflict digests. Each entry keeps that plan's study-session reports (status and actual minutes) by study-row ID;
+identical IDs in two plans never share a report, and a report whose row is no
+longer in the plan is kept but not shown as a current session's. Next to the
+entries, version 4 has an optional slot for one unfinished plan creation: the
+entered inputs (incomplete or not yet valid ones included), the loaded example
+questions with their answers, the input screen to reopen, the question position
+and the selected availability week. Keeping it in the same file lets a generated
+plan and the removal of its draft be saved in one atomic replacement. A stored
+draft is checked only for values the input screens could hold; a missing exam
+date, dates in the wrong order or no study day stay editable input, while a
+damaged or unknown draft value makes the whole file fail to load like any other
+corruption.
+
+**Creation draft position and scope.** The resume position is the furthest
+input screen reached, or the screen of the latest actual edit: changing a level,
+date or answer after reaching availability moves it back to that screen (and
+question), while merely going back through earlier screens or questions to leave
+does not. A generation failure or demo shortfall counts as availability, and the
+selected availability week is kept with it. Only an explicit save is kept: there
+is no autosave, edits after the last save are lost if the process ends, and a
+save, discard or retry finishes writing before creation is left or reset. A
+failed write keeps the earlier saved file and the current inputs; 다시 시도
+writes the same draft again without any request, and staying drops that write.
+Resuming restores the saved inputs, loaded questions and answers without
+fetching them again, keeps dates that have since passed for correction, and opens
+the first study week if the saved week is no longer one. Imported calendar busy
+rows are restored as the saved snapshot and are not read again.
+Draft device acceptance uses the demo flavor on a disposable API 35 emulator,
+including normal-launcher force-stop checks for quiz and replaced-week drafts.
+Installed write failure/interruption remains unverified; those paths use controlled
+JVM and injected-host stores. Live provider, production, physical-device and calendar
+behavior are not established by these checks.
+Home offers 이어서 만들기 only when an explicitly saved draft exists; it does not
+count as a saved plan. 계획 생성 (also 새 계획 만들기 from saved plans) asks whether
+to resume, discard the saved inputs and start fresh, or cancel. Only Back from
+certification to Home asks 임시 저장하고 나가기 / 입력 버리고 나가기 / 계속 작성하기;
+ordinary step/question Back is unchanged. Visible and system Back agree, and
+Back on the decision means stay. Saving/discarding holds navigation until the
+local write succeeds; failure offers 다시 저장하기 or stay with the prior bytes intact.
+
+A successful generated plan and clearing its consumed draft are committed together.
+Generation failure or demo shortfall leaves the last saved draft available. If the
+outcome write fails, the result stays unsaved in memory and local retry writes the
+same plan plus draft removal without another generation. Ending the process before
+that succeeds restores the earlier saved draft, not the unsaved result or request.
+
+Version 1, 2, 3 and 4 lists saved by earlier builds still load (versions 1 and 2
+as plans without reports; v3 retains reports, v4 also retains drafts), without
+keeps, and the file is not rewritten until the next save of the list, which writes version 5. An older
+build cannot read a newer version and shows the load failure above without
+changing the file, so downgrading after a version 5 save needs a compatible
+backup of the earlier file; nothing is converted back automatically.
 
 At start the app reads the saved list before anything can change it. While it
 reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or
@@ -297,6 +580,20 @@ writes the local file; it never repeats the generation, adjustment or reload.
 A new plan whose save failed stays on the generation screen, which also offers
 저장하지 않은 계획 보기. Plans keep their numbers, and the next generation gets the
 next number after the highest saved one.
+
+**Saving a study report.** A report is written only by an explicit save of the
+report editor, which replaces that plan's report for that one study row and
+saves the whole list the same way; cancelling before saving writes nothing.
+Opening or saving a report never sends a generation, adjustment, reload or
+calendar request, and does not change the plan's rows, adjustment selection or
+reload/missing state, so a plan awaiting reload or missing can still be
+reported. A report cannot be saved while a generation, adjustment, reload,
+calendar export or another save is running, and a second tap while saving does
+nothing. If the save fails, the edited report stays shown but is not saved: the
+list is in the save-failure state above, other plan changes wait, and 다시 저장하기
+writes only the local file. Reports stay on this device in the same per-build
+list; they are not sent to the server, shared between devices or kept after
+uninstalling.
 
 **Closing the app during a request.** A live adjustment, including 다시 시도,
 is sent only after the plan has been saved as needing a reload, together with
@@ -318,9 +615,39 @@ A plan with no study sessions explains that and offers a way back. After a
 successful adjustment the same entry is updated in place, the view jumps to the
 moved session's week, and another session can be adjusted from the new rows.
 The moved session carries a “옮긴 일정” tag on this screen only. The tag stays
-through rotation and clears when another session is chosen or another plan is
-opened. Nothing about it is stored, and the generated-plan screen never shows it.
+through rotation and clears when another session is chosen, the plan is opened
+again from the list, or another plan is opened. Nothing about it is stored, and
+the generated-plan screen never shows it.
 Other plans never change, even when they share schedule IDs.
+
+**Accepted versus saved.** An accepted move (automatic or chosen time) and
+saving it on this device are separate steps. With the result, the app keeps the
+moved session's row as it was sent (so a session moved earlier starts from its
+latest time, not its generated one) and as it was accepted, with the returned
+topic, full dates and start/end times; it never reads them from the server's
+summary. That pair has the same lifetime as the tag above, and a restart, a
+reload or a failure never recreates it. The result also tracks its own local
+save: saving while the automatic save of the changed list runs, saved only once
+that save has written this result, and not saved when it failed. A failed save
+keeps the moved rows on screen, holds other plan changes, and 다시 저장하기
+writes only the local file, without another adjustment or generation; a later
+save of something else (for example a study report) never changes what is
+known about this move. Lost or invalid live responses, failed pre-request saves
+and missing plans never produce a move result: they follow the recovery rules
+below. If the app ends before the result is saved, the plan restarts behind
+최신 계획 불러오기 with its pre-request rows, as described above, without
+claiming either rows are on the server and without resending. These rules are
+checked by JVM tests that start a fresh view model over the same stored bytes;
+they do not kill a real process.
+
+On screen, the adjustment result card under 계획이 조정됐어요 shows the returned
+topic, 원래 시간 and 바뀐 시간 as full dates with weekday and start–end times (an
+end on another day names its own date), and the save line 기기에 저장하는 중이에요,
+이 기기에 저장했어요 or 아직 이 기기에 저장하지 못했어요. The server summary stays a
+separate 계획 요약 box. There is no save button on the card: a failure is explained
+by the storage alert above it, whose 다시 저장하기 is the only retry. The demo UI
+tests delay and refuse saves only in their own injected store; they do not show
+a real disk failure, process death or the live flavor.
 
 While an adjustment request runs, the screen shows progress; system back,
 the top-bar back, and every other action are held, and rotation keeps the same
@@ -390,6 +717,58 @@ allows a new attempt, and 목록으로 and 새 계획 만들기 are offered. The
 own windows never change; a new plan can use different study times. Nothing is
 sent to a server; the moved rows are saved on the device like any other change.
 
+**Chosen time (시간 직접 옮기기).** Next to 선택한 일정 조정하기, the
+adjustment screen offers a separate 시간 직접 옮기기 for the selected study
+session. It is enabled only when that plan could also be adjusted
+automatically: a study session (never an external row) is selected, the plan
+is ready (not awaiting reload, not missing, with a live identity), the
+device list is saved, and no request is running. It opens 시간 직접 옮기기
+(top bar 일정 조정) with the session's topic, a 날짜 field and a 시작 시간 field
+that open the existing date and time pickers, the original duration as
+read-only text (기존 공부 시간 · 60분 (그대로 유지)), and a preview of 기존 일정 and
+옮길 일정 as complete intervals (`11월 29일(일) 23:30–다음 날 00:30`). Fields start
+at the session's current time; 이 시간으로 옮기기 stays disabled
+(날짜나 시작 시간을 바꿔 주세요) until another time is chosen. Back or the top-bar
+arrow discards the draft without a request and returns to the same plan,
+week and selection. While the request runs, back and every action are held
+(옮기는 중…), and rotation keeps the draft and the request without sending it
+again, because the draft lives in the ViewModel.
+
+The app first sends the chosen time without the exception. If the time is
+otherwise valid but outside the plan's study windows, the screen asks
+설정한 공부 시간 밖이에요. with the exact interval (… 이번 일정만 옮길까요? 설정한 공부
+시간은 그대로예요.) and scrolls the question into view. 이번 한 번만 옮기기 resends that same time once with the
+exception, and 시간 다시 고르기 returns to the fields with the time kept and
+nothing sent (sending the same time again is checked from the start). Any
+change to the date or time clears an earlier question or exception. Other
+refusals are shown under the field they concern, keep the chosen time and
+disable 이 시간으로 옮기기 until the time changes. External overlap alone offers a fresh review and explicit consent:
+
+| Server code | Shown under | Message |
+| --- | --- | --- |
+| `MANUAL_MOVE_IN_PAST` | 날짜 | 이미 지난 시간이에요. 앞으로의 시간을 골라 주세요. |
+| `BEFORE_PREPARATION_START` | 날짜 | 준비 시작일 전이에요. 준비 기간 안에서 날짜를 골라 주세요. |
+| `EXAM_BOUND_EXCEEDED` | 시작 시간 | 공부가 시험일을 넘겨요. 더 이른 시간을 골라 주세요. |
+| `STUDY_SESSION_OVERLAP` | 시작 시간 | 다른 공부 일정과 겹쳐요. 다른 시간을 골라 주세요. |
+| `EXTERNAL_EVENT_OVERLAP` | 시작 시간 | 캘린더에서 가져온 일정과 겹쳐요. 다른 시간을 골라 주세요. |
+| `OUTSIDE_STUDY_WINDOWS` | (question above) | one-time confirmation only |
+
+Every other outcome follows the automatic rules above: a definite failure
+(for example HTTP 500 or 503) keeps the chosen time and offers 다시 시도, which
+rechecks the same destination and asks again if the timing observation changed; 404 `PLAN_NOT_FOUND`, any 409, a lost
+response or timeout, and a 200 that does not show exactly the target at the
+chosen time with the same topic and duration (and every other row unchanged)
+close the editor and require 최신 계획 불러오기, after which a session and time
+must be chosen again; nothing is replayed. The unresolved-request snapshot is
+saved before a live request as for automatic moves, and a failed save sends
+nothing and clears any exception. Success returns to the adjustment screen
+with 계획이 조정됐어요 and the moved session's week. The demo applies the same
+checks locally against the plan's original windows and the device clock and
+labels the editor 로컬 시연 계산. Neither flavor writes the device calendar or the
+shared availability profile. Live requests add `"mode": "manual"`,
+`new_start_date`, `confirm_outside_availability`, `confirm_external_overlap` and the plan's
+`preparation_start` to the fields below.
+
 **Live contract.** The app always sends five fields to
 `POST /api/v1/schedules/adjust`: the plan's exact `schedule_csv_file` from
 generation, the chosen `schedule_id`, every current row (external rows
@@ -421,11 +800,12 @@ released APKs behave this way has not been verified from this checkout. A plan
 saved before the server stored exam dates cannot have its study sessions
 moved, even though the app sends a date: the server answers 422 with the fixed
 message in [Validation errors](#validation-errors). The current app then shows
-이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새 계획을 만든 뒤
-다시 조정해 주세요. in the existing error panel. Every plan, its rows, the
-selection and the original inputs stay as they were, and nothing is sent
-automatically. 다시 시도 follows the usual rules and gets the same answer;
-목록으로 and then 새 계획 만들기 is the way forward. Old plans stay viewable.
+이 계획에는 시험일 정보가 저장되어 있지 않아요. 홈의 '계획 생성'에서 새 계획을
+만든 뒤 그 계획에서 조정해 주세요. in the existing error panel. Every plan, its rows,
+the selection and the original inputs stay as they were, and nothing is sent
+automatically. 다시 시도 follows the usual rules and gets the same answer; Back
+returns to the plan view and then the list, and Home's 계획 생성 is the way
+forward. Old plans stay viewable.
 Earlier app releases do not know this message and show the general
 요청 정보를 확인하지 못했어요 instead; only an app update changes that.
 
@@ -433,7 +813,8 @@ The app accepts a 200 response only if `action` is `rescheduled_study`,
 `target_schedule_id` matches, rows parse with end after start, IDs are
 nonblank and unique, the target row is present, and any returned
 `schedule_csv_file` equals the one sent. Anything else leaves the plan as it was.
-The app never sends the availability profile (`PUT /availability`).
+Adjustment never reads or writes the shared availability profile; only the
+explicit study-time actions in [Study availability](#study-availability) do.
 
 **Backend dependency** The backend in this checkout (merged from `main` at
 `11c822e`, plus the stored exam deadline described above) updates the selected
@@ -460,22 +841,87 @@ restart retention, and reload after a lost adjustment response. They do not
 attach the full two-plan same-file/CSV/original-window isolation procedure;
 that detailed gate remains unverified. See [Verification](#verification).
 
+## Study availability
+
+Availability requests and saved data retain the existing weekday arrays of start and duration, Monday-keyed whole-week replacements and explicit empty weeks. Editing a list uses the same primary-plus-extras representation as saved creation drafts and plan contexts. The snapshot writes v5 and explicitly reads v1–v5 without read-time migration.
+
+The recurring study-time heading is 「매주 기본 시간」. Its note
+says the plan uses all entered time except calendar conflicts. Detailed instructions
+open from the small 안내 action at the top right. Home, saved plans, plan views
+and 일정 조정 use the same corner action.
+
+The study-time screen (공부 시간) uses compact weekday rows with outlined
+＋ 시간대 추가 buttons beside the day labels. Each saved window shows its start,
+end and duration together, with a delete action beside it. Tapping the window
+opens its editor. 시간대 추가 opens an unconfirmed 18:00–19:00 window.
+The editor provides start and end time pickers. An earlier end belongs to the
+following day and is labeled 다음 날; equal times disable 확인. 확인 applies
+both times together, while 취소 or Back keeps the entered list. 삭제 removes
+only its identified window, promoting the next one when necessary. Removing
+the final window leaves that weekday empty. Week-specific actions appear side
+by side above the weekday list.
+
+Every base and replacement-week window participates in totals, validation,
+requests and creation drafts. Dialog targets retain their weekday, week and
+captured list. Changing week cannot apply a pending edit to another window.
+
+**Weeks.** With valid dates, a Monday-based week picker (`N / M주`) covers the
+weeks from the preparation start to the day before the exam; other weeks cannot be
+shown or changed. Each week is one of:
+
+- 기본 시간 (no change for that week): 매주 기본 시간 changes the recurring
+  base for every such week.
+  이번 주 시간 바꾸기 gives the week its own copy of the base, with every
+  window of each day; 이번 주 공부 안 함 makes it an empty week.
+- Replaced (이번 주 공부 시간): the editor changes only that week. 이번 주 공부 안 함
+  empties it; 기본 시간으로 되돌리기 removes the change so the week follows the
+  base again.
+- Empty (이번 주 공부 안 함): no window starts in that week. A window that starts
+  on the previous Sunday and runs into Monday is
+  still used. 이번 주 시간 바꾸기 and
+  기본 시간으로 되돌리기 are offered.
+
+Every week shows 지난주에서 이어지는 시간 when the previous Sunday's window
+continues into it, including replaced weeks and the first preparation week. The
+notice shows only the part inside the preparation/exam period, such as 월요일
+00:00–00:30, using the previous week's settings even when the new week is empty.
+
+An empty week is sent as an explicit empty `availability_overrides` entry, while a
+reset week has no entry, so the two are never confused. Changing the dates keeps
+week changes; those outside the new period are kept but not shown. The summary
+box (공부하는 요일, 공부 시간) counts every window of the shown week.
+
+**Conflicts.** Windows that overlap, including a window spilling past midnight
+into the next day's window, a Sunday spill into Monday, or a replaced week's
+boundary with its neighbours, switch the heading to 공부 시간을 확인해 주세요 and
+show which days and times overlap (for example 월요일과 화요일 공부 시간이 겹쳐요 /
+화요일 00:15–00:30이 겹쳐요). Both windows stay as entered, and 계획 만들기
+stays disabled until it is fixed. Ending exactly when the next window starts
+is allowed.
+
+The study-time screen edits availability for the current plan. Generation uses
+the entered hours, and each saved plan retains its original availability for
+adjustments. Saved creation drafts retain the entered hours on the device.
+
 ## Calendar import
 
 On the study-time screen (공부 시간), 캘린더 일정 불러오기 reads the device
 calendar's occurrences between the preparation start and the exam date once,
-only after that tap. Each occurrence is sent as a `busy_schedules` row with a
+only after that tap. Generation and export also read after their explicit actions. Each occurrence is sent as a `busy_schedules` row with a
 numeric ID, Korean wire times and the generic topic 외부 일정; titles and other
 event details never leave the device. Changing either date clears the imported
-rows. Planning without an import sends an empty array.
+rows. Generation also checks fresh occurrences after its explicit action, as described below.
 
-**Permission.** Import asks only for `READ_CALENDAR`, and only after that tap;
+**Permission.** Import and the explicit single-session/remaining-study free-time
+search ask only for `READ_CALENDAR`, and only after their tap;
 export needs `READ_CALENDAR` and `WRITE_CALENDAR` (see
 [Calendar export](#calendar-export)). With only read access granted, import
 works without a further prompt while export still asks for write access. The
 prompts and the provider checks share one definition of these permissions. If
 access is withdrawn after the prompt, the import reports the permission
-message and the plan can still be generated without calendar data.
+message and the plan can still be generated. Generation never asks for calendar
+permission: without read access it uses retained imported rows, or none if empty,
+without a calendar dialog. Regeneration uses the selected plan's original busy rows.
 
 **Which events count.** Android returns occurrences of visible calendars only,
 with recurrences expanded. Of those, busy and tentative occurrences block time;
@@ -498,6 +944,116 @@ events; a day without such a gap gets no session, and too few usable days give
 the usual labeled demo shortfall. Imported rows appear in the plan as
 `external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
 are not counted or exported as study sessions.
+
+## Calendar conflict review
+
+계획 만들기 and 이 계획 다시 만들기 never request calendar permission. Without read
+access, generation sends one request without a provider query or calendar dialog,
+using the current import's busy rows for a new plan or the selected plan's original
+busy rows for a replacement (none if empty). With read access, generation checks the
+device calendar before sending a plan request. The check compares every effective dated study window, including overnight
+carry-in and week replacements. A conflict offers 겹치지 않게 계획 만들기,
+하나씩 확인 and 공부 시간 수정. Reviewing or editing sends no planning request.
+The avoiding choice sends all freshly read generic busy rows with the original
+assessment, dates and complete study context. For a new plan, conflicts already
+covered by imported rows with the same outward-rounded start and end minutes skip
+review and proceed with the complete fresh snapshot. A new conflict still opens
+review, and replacement conflicts always require review. A repeated-weekday suggestion needs
+at least two distinct occurrences of the same recurring series.
+
+The reader keeps timing-only local occurrence identities built from the event ID,
+original millisecond endpoints and all-day flag. Recurrence series correspondence
+stays local too. A sub-minute edit invalidates consent even when rounded wire times
+are unchanged. Neither identity enters HTTP requests, saved plans or diagnostics.
+Titles, accounts and attendees are never queried for conflict comparison.
+Descriptions are used only for the existing app-copy exclusion and then dropped.
+
+Permission lost during a granted generation check, denied export permission or
+failed/null queries show 캘린더 확인 안 됨. 다시 확인 requests
+another explicit check; a generation retry without read access stays unchecked
+without a permission prompt or planning request. 취소 sends nothing, and 확인 없이 계속 is explicit unchecked
+consent. Generation retains earlier imported busy rows, labeled potentially stale,
+or uses an empty list when none exists. Network retry also checks afresh. The app
+re-reads immediately before dispatch and returns to review when any occurrence
+identity/timing or captured input changed. It describes a snapshot that another app
+can change afterward. Rotation retains one operation. Process restart restores
+saved plans and the explicit draft, with no request or export replay.
+
+이 계획 다시 만들기 uses only that selected plan's accepted original inputs plus
+newly reviewed busy rows. It first asks 바꾸고 다시 만들기, explaining that successful
+device saving replaces the selected entry at its existing number and clears only
+its old study reports. A live replacement has the newly returned server file
+identity. No old server-file deletion/overwrite is requested. Other plans, an
+independent saved creation draft and existing calendar copies remain intact.
+Unusable original assessment/context data shows a reason and requires a new plan.
+
+Regeneration waits until every accepted local save is resolved, including a failed
+report, movement, draft or keep save on another plan or in a closed editor. The disabled
+action explains 먼저 이 기기에 저장해 주세요 and uses the existing 다시 저장하기
+recovery. Local retry writes its captured complete snapshot and settles only that
+write's matching feedback. A replacement candidate stays unpublished until the
+atomic save succeeds. Failure keeps the earlier plan/reports visible and on disk,
+and local retry writes the same candidate with zero planning/calendar calls.
+After any earlier save retry succeeds, regeneration requires explicit re-entry.
+A failed adjustment preflight sends no adjustment. Its local retry writes the
+previously committed snapshot and leaves the plan ready for a new explicit
+submission.
+
+Export checks all selected-plan current study sessions across every week after
+calendar selection. Conflicts offer 겹치지 않게 다시 만들기, 하나씩 확인 and
+겹쳐도 내보내기. Regeneration leaves export, asks separate replacement consent,
+and never resumes copying automatically. Per-session review can open the existing
+eligible manual editor in 일정 조정 above the plan view and sends nothing on opening. Export anyway proceeds to
+the full destination/count/timezone/duplicate confirmation. Its final tap checks
+afresh before the first insert. Changed data clears override/unchecked consent and
+requires new review. An unavailable query permits explicit unchecked continuation
+and the ordinary final confirmation. Missing calendar permission requires settings
+or retry and cannot grant write access.
+
+## Calendar notices and keeping a conflict
+
+After saved plans load and on each real foreground entry, an existing read grant
+allows a timing-only check of upcoming and still-running study intervals. Identical
+plan ranges share one query; active operations defer it. Rotation keeps the same
+check. Foreground entry never requests permission, calls the backend or saves.
+Home and the saved-plan list show plan-scoped counts; plan screens show generic
+external intervals. Missing permission offers **캘린더 권한 허용** with instructions.
+A failed read offers **다시 확인**. Both states label older results as stale.
+There is no background monitoring.
+
+시간 옮기기 opens the existing editor in 일정 조정, on top of the screen the notice
+was on, without sending; leaving 일정 조정 returns to that screen. 그대로 두기 saves a local
+acknowledgment for the displayed current study interval and exact occurrences;
+it does not move the study or edit a calendar. The persisted values are SHA-256
+digests scoped to plan ordinal, study ID, exact study interval and the existing
+occurrence key. Changed event timing (even within a minute), another occurrence,
+or a changed study interval warns again. Keeps never waive export checks.
+
+A proposed manual destination is freshly checked against device occurrences and
+retained external plan rows, without removing either. 다른 시간 선택 cancels this
+review. 겹쳐도 이 시간으로 옮기기 explicitly applies the proposed time and sends the
+manual-only boolean `confirm_external_overlap`. Outside-window permission remains
+an independent `confirm_outside_availability` decision. Before every dispatch the
+same interval is re-read; changed inputs or keys require fresh consent. Failed
+reads require explicit unchecked continuation; retained conflicts still require
+external consent. Study overlaps, time bounds, stale rows and recovery cannot be
+waived. The matching backend is required; deployed compatibility is unverified.
+
+Current keeps use no POST. Accepted manual moves save fresh-occurrence keeps only
+with the validated move outcome, preserving reports, other plans and the saved
+draft. Saving or save failure is shown truthfully; the existing 다시 저장하기 writes the
+exact captured whole collection with no read, POST or calendar write. A pure keep
+retry settles only its matching keep feedback; a move-plus-keep write settles both
+matching results, leaving unrelated already saved report/move wording unchanged.
+Any unresolved local write blocks further keeps, manual dispatch and every
+regeneration entry, including after the originating card closes. Retry never
+resumes a blocked action automatically. Regeneration clears only the selected
+plan's keeps and reports when its replacement commits.
+
+The v5 collection keeps only digests and owning study IDs, alongside v3 reports,
+v4 drafts and recovery markers. v1–v4 load with empty keeps without rewriting;
+malformed digests or unsupported versions fail without resetting the file.
+Earlier binaries cannot read v5: use a compatible backup when testing downgrades.
 
 ## Calendar export
 
@@ -534,8 +1090,8 @@ creates a calendar or account.
   appear on other devices or in Google Calendar on the web depends on that
   calendar account's sync, which the app does not check.
 
-**Steps.** On a generated plan (내 계획) the action sits below the weeks; on a
-plan opened from 계획 조정 it sits beside the adjustment actions. It counts the
+**Steps.** On the plan view (내 계획) of a new or reopened plan, the action sits
+below the weeks. It counts the
 plan's current study sessions across all weeks. Tap 캘린더에 N개 일정 추가 →
 allow calendar access if asked → choose a calendar (equal names show the
 account) → 다음 → check the plan number, calendar, count and 한국 시간
@@ -633,9 +1189,10 @@ its result. Earlier dated device, deployment and emulator runs are kept in the
 Use this procedure on a device or emulator connected to a real backend (a local
 `python api_server.py` or the public server). It makes real model requests and
 writes plans to that server; use the public server only when its owner agrees.
-It checks rules the app and backend enforce, not a particular schedule: model
-output, session counts and response times vary between runs, so do not compare
-against a schedule or timing from an earlier run.
+It checks rules the app and backend enforce, not a particular schedule. The
+backend sets the workload, but response times vary between runs, and a changed
+calendar, date or server revision changes the rows, so do not compare against a
+schedule or timing from an earlier run.
 
 1. **Generate.** Choose 컴퓨터활용능력 2급, a preparation start and exam date,
    a level, answers to the example questions (including 모르겠음 at least once),
@@ -644,9 +1201,10 @@ against a schedule or timing from an earlier run.
    that the app stays open. In the plan, every study session must lie inside a
    chosen weekday window, after the preparation start and before the exam, and
    must not overlap another session or an imported calendar event.
-2. **Reopen.** Force-stop and relaunch the app, open 계획 조정, and confirm the
+2. **Reopen.** Force-stop and relaunch the app, open 내 계획, and confirm the
    plan is listed under its number with the same rows.
-3. **Adjust.** Choose one study session and adjust it. On success the view
+3. **Adjust.** Open the plan, tap 일정 조정하기, choose one study session and
+   adjust it. On success the view
    jumps to the moved session's week; the moved session keeps its topic and
    duration, lies inside the plan's original windows, ends by the exam date and
    overlaps nothing, and every other row is unchanged. Relaunch the app and
@@ -726,7 +1284,7 @@ adb install -r app/build/outputs/apk/live/debug/app-live-debug.apk
 ```
 
 In the app, create two plans (A, then B with different windows), open A from
-계획 조정, choose a study session and adjust it. Every request, response
+내 계획, tap 일정 조정하기, choose a study session and adjust it. Every request, response
 status and scripted event (for example `saved`, `not-saved`,
 `changed-elsewhere`) is appended to `requests.jsonl` in the output directory;
 count POSTs and GETs there, since a screenshot cannot show that nothing was
@@ -748,20 +1306,21 @@ between actions (each tap within about 5 s of the previous result):
   away; both POSTs return 200. Choose an exam date at least a week after the
   chosen session, or the simulated move is refused with `NOT_ENOUGH_TIME`.
 - `legacy-plan`: create A and B, open A and adjust a study session. The error
-  panel shows 이 계획에는 시험일 정보가 저장되어 있지 않아요. 목록으로 돌아가 새
-  계획을 만든 뒤 다시 조정해 주세요.; A and B keep their rows, the session stays
-  selected, and `requests.jsonl` shows a single POST with no automatic GET or
-  generation. 목록으로 and then 새 계획 만들기 continue from there.
+  panel shows 이 계획에는 시험일 정보가 저장되어 있지 않아요. 홈의 '계획 생성'에서
+  새 계획을 만든 뒤 그 계획에서 조정해 주세요.; A and B keep their rows, the session
+  stays selected, and `requests.jsonl` shows a single POST with no automatic GET or
+  generation. The failure footer offers 다시 시도 and 시간 직접 옮기기 only; Back
+  returns to A's plan view, which shows no recovery alert, and then to the list.
 
 These checks show how the app handles the scripted responses. They are not
 evidence about the real backend or model.
 
 Passing CI's unit tests, contract check, coverage, build, and lint is offline
-evidence only. CI's separate live E2E job runs the
-[live instrumentation test](#live-instrumentation-test) on an emulator against
-the fixed-response backend fixture; it does not run live model planning, the
-deployed server, or the UI screens. Those still need the manual live and
-emulator checks above.
+evidence only. CI's separate gated emulator job runs the backend-free
+[demo Compose UI tests](#demo-compose-ui-tests) and the
+[live instrumentation test](#live-instrumentation-test) against the fixed-response
+backend fixture. Live model planning, the deployed server and live UI/device
+behavior still need the manual live and emulator checks above.
 
 ## Evaluation inputs
 
@@ -772,18 +1331,149 @@ Both cases choose 기본 기능은 알아요 and answer every example question
 correctly, with preparation starting 2026-10-19. The demo results below were
 observed on 2026-10-17 with the earlier five-question build (answers B, B, A, A,
 C) and the earlier demo workload rule; the 18-question bank has more topics and
-the demo now uses per-topic quotas, so re-observe them before comparing.
+the demo now fills every free minute, so re-observe them before comparing. With
+every window filled, case A's recorded moves no longer apply: adjusting a session
+is expected to report 옮길 수 있는 시간이 없어요, as in case B, and the session can
+still be moved with 시간 직접 옮기기. This expectation has not been re-observed.
 
 | Case | Exam date and study windows | Demo result (five-question build, 2026-10-17) |
 | --- | --- | --- |
 | A: adjustment | 2026-12-14; Mon 18:00 for 2 h, Tue 18:00 for 1 h, Wed 18:00 for 2 h | Six sessions. Adjusting `study-1` moves it to 10/26 19:00–20:00; adjusting it again moves it to 10/28 19:00–20:00. |
 | B: no free slot | 2026-11-02; Mon, Wed, Fri 18:00 for 1 h | Six sessions fill every slot; adjusting one reports 옮길 수 있는 시간이 없어요. |
 
-In the live build, model output varies, so run each case several times. Check
+In the live build, the backend sets each date's total and the topic split, and
+the 18 reviewed questions need no model classification, so repeated runs should
+return the same rows unless the model call fails. Run each case several times
+to check that and the response time. Check
 the returned `schedules` against the inputs: sessions inside the chosen windows,
 no overlaps, everything before the exam date, topic coverage, and response
 time. Live adjustment results mean nothing until the backend dependency in
 [Plan adjustment](#plan-adjustment) is met.
+
+## Study reports
+
+Every study session in the plan view (내 계획) of a new or reopened plan, and
+in 일정 조정, shows its report, or 아직 기록하지 않았어요, with a separate
+공부 기록하기 / 기록 수정하기 action under the row. Existing calendar rows have no
+action. The action does not select the session for adjustment, and closing the
+editor returns to the same week with any selection unchanged. It waits while a
+request or save runs (it is disabled during a save or an adjustment).
+
+A new report starts on the session's scheduled day, by the device's local date
+(a 19:00 session can be reported earlier that day). An unreported session on a
+later date shows 일정 당일부터 기록할 수 있어요 instead of the action, and the
+editor does not open for it. The date is read again whenever the rows are shown
+and when the editor opens, so after midnight the session offers 공부 기록하기
+once its week is shown again (for example after changing weeks or reopening the
+plan). A session that already has a report keeps it and stays editable, even
+after an adjustment or move places it on a later date.
+
+The editor shows the plan, topic, scheduled time and planned duration, then the
+status (다 했어요 / 일부 했어요 / 못 했어요; none is preselected for a new report) and
+the actual minutes as a separate field. 다 했어요 suggests the planned minutes;
+both 다 했어요 and 일부 했어요 accept any positive whole number of minutes, including
+more than planned; 못 했어요 disables the field and saves 0. Invalid entries show
+an error and keep the saved report. 기록 저장하기 / 기록 수정하기 saves explicitly
+and returns to the plan; 취소 or back writes nothing. Rows show the saved status
+and actual minutes (for example 다 했어요 · 실제 20분) apart from the scheduled
+duration.
+
+If the save fails, the editor says 공부 기록을 저장하지 못했어요 and offers
+다시 저장하기; after closing it, the row shows the edit with 저장 안 됨 and the plan
+screen offers the same local retry. See **Saving a study report** above for
+blocking and device-local limits. Reports do not change the schedule, are not
+sent to the server or the calendar, and do not estimate mastery; there is no
+skip (이미 아는 내용이에요) action and no history of earlier reports.
+
+## Remaining study re-planning
+
+The plan view of a generated or reopened plan offers **남은 공부 다시 계획하기**
+(일정 조정 does not) independently
+of single-session movement and reporting. Its scrollable review identifies the
+selected plan, each current study row's status and planned/actual/remaining
+minutes, and the total. Cancel writes nothing. A zero total shows
+다시 배치할 남은 공부가 없어요 with no request or save. Explicit confirmation
+(**남은 공부 다시 배치하기**) submits exactly one batch. The result lists the
+accepted session count/minutes and complete dated times; 계획 보기 returns to
+the plan view it started from, at the first affected week. Back, 취소 and
+계획으로 돌아가기 return to that plan view too. A first-fit failure preserves the original plan and says the
+current placement rules could not fit the whole batch.
+
+The live request uses `POST /schedules/adjust` with `mode: remaining`,
+`schedule_csv_file`, the complete `schedules`, original `weekly_availability`,
+`availability_overrides`, `preparation_start`, `exam_date`, captured `replan_from`,
+and derived `remaining_sessions` only. Instructions contain `schedule_id`,
+`remaining_minutes` and `replacement_schedule_id`. Ordinary window-search requests
+omit all manual fields. After a confirmed calendar-free preview, every item also
+carries its `new_start_date` and the top level carries boolean
+`confirm_outside_availability`, true when any destination is outside the entered
+windows. Top-level `schedule_id`, `new_start_date` and `confirm_external_overlap`
+remain absent. Reports, keep digests,
+calendar occurrence keys and local ordinals remain local. The batch is deterministic
+and makes zero provider requests. An unsupported server shows update guidance
+without falling back to generation or another adjustment mode.
+
+Review, dispatch and saving hold the selected source against competing mutations,
+calendar/manual reviews, exports, report/draft edits and plan switching. Existing
+unsaved work anywhere in the collection must be resolved first, including a closed
+report or keep card. Foreground calendar notice reads wait until review/request
+releases its source. The ordinary remaining-work operation reads no calendar and
+writes no phone events; it uses retained external rows. Existing foreground notice
+checks and a later explicit calendar export remain separate operations.
+
+After a no-fit, 「캘린더에서 빈 시간 찾기」 requests read permission on that
+explicit tap and previews a complete batch in the same usual band as single-session
+search. It excludes kept rows, calendar occurrences and earlier placements, and
+starts no earlier than preparation, `replan_from` and the next current minute,
+rounded up to 10 minutes. A missing fit proposes no partial batch. The preview
+shows every topic/date/time/minutes and one-time outside-window labels.
+
+「이번 한 번만 이 시간으로 다시 계획하기」 re-reads the calendar and recomputes
+the batch. Changed times require a new confirmation; identical times enter the
+same durable lifecycle below. Live validates exact returned starts; demo applies
+the same destination rules locally. The server validates the supplied times and
+does not search. A server that rejects the optional item fields shows
+「서버 업데이트가 필요해요」 without retry. Movement-code rejections offer
+「다시 찾기」; uncertain outcomes still require reload. Denied/unavailable/no-time
+states preserve the plan and reports and offer returning to the plan view to move
+rows individually with 일정 조정하기 and 시간 직접 옮기기.
+Calendar timing and identities stay on the device; only confirmed starts are sent.
+
+Before a live POST the complete v5 collection, all reports/keeps and the independent
+saved creation draft are saved with a generic reload-required marker. A failed
+pre-save sends nothing; local recovery restores the previous committed snapshot
+and requires a fresh review. Lost/malformed responses, conflicts and server/storage
+failures require explicit selected-plan reload, with no mutation replay after
+restart. Accepted rows show saving, saved, or unsaved accurately; **다시 저장하기**
+retries only that captured local snapshot and settles only its matching result.
+Existing v1–v5 collections still load without rewriting; explicit saves use v5.
+Replaced partly/missed source reports remain stored under their old IDs and leave
+the current schedule. The fresh remainder starts unreported. Calendar copies need
+the existing separate export flow and are never synchronized by this action.
+
+## Remaining study calculation
+
+Remaining work uses each current study row's scheduled whole minutes: done → 0,
+missed or unreported → the full duration, partly → max(planned − actual, 0).
+A done/20, partly/20, missed/0 and unreported set of four 60-minute rows contributes
+0 + 40 + 60 + 60 = 160 minutes. Partial effort at or above the planned time
+contributes zero without changing the report. Overdue, in-progress and future
+unreported rows all contribute their full duration; external rows and reports for
+absent rows contribute nothing.
+
+Unreported rows retain their IDs. Positive reported remainders receive fresh IDs
+above current study rows and all historical report and calendar acknowledgment
+keys. Reports and acknowledgment maps stay under their original IDs; new rows
+start unreported. Re-planning an unreported remainder uses its current duration,
+so previous actual minutes are not subtracted again. Unsupported durations or
+exhausted numeric IDs are refused visibly.
+
+The local demo batch places complete sessions in source start/end/numeric-ID
+order from the next minute, within the original preparation/exam bounds and
+effective study windows, including overnight carry-in and whole-week overrides.
+It avoids retained study/external rows and preserves existing protected overlaps.
+A failure to fit any whole session rejects the complete batch. This deterministic
+operation has no network, model or calendar dependency.
 
 ## Known limitations
 
@@ -801,21 +1491,20 @@ time. Live adjustment results mean nothing until the backend dependency in
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
-- Calendar events are read once, when a plan is created. Adjustment uses the
-  saved plan's external rows; re-reading the calendar after a plan is saved,
-  detecting newly conflicting study sessions and rescheduling them are not
-  implemented.
+- Calendar checks are foreground snapshots and explicit action reviews. Background
+  monitoring, synchronization and system notifications remain outside the flow.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server
   failure with retry, not as a storage problem. Retrying cannot succeed until the
   saved plan file on the server is repaired; the plan stays viewable and unchanged.
-- Form state is held in memory and is lost if the process is killed. The
-  generated-plan list is saved on this device only (no sync or server import).
-- Live plans come from the OpenRouter Luna model, so session counts can vary for the same inputs.
-- Demo session counts follow the fixed demonstration rule in
-  [Flavors](#flavors) (32 sessions for all 모르겠음 at beginner level,
-  eight for a perfect advanced score). They are not the live model's allocation
-  or an estimate of the preparation the exam needs, and the 2026-10-17 demo
-  evaluation results predate this rule.
+- Unsaved form edits are held in memory. An explicitly saved creation draft and
+  the generated-plan list can be reopened on the same device.
+- Live plans pass through the OpenRouter Luna model, but with the 18 reviewed
+  questions it decides neither the amount nor the dates: the backend fills every
+  usable entered minute and splits it by score. A model failure or timeout still
+  fails generation, and unreviewed questions still need model classification.
+- Demo plans follow the local rule in [Flavors](#flavors). They fill every free
+  minute and are not an estimate of the preparation the exam needs. The
+  2026-10-17 demo evaluation results predate this rule.
 - Proven live insufficient capacity arrives as HTTP 422 and is shown as described
   in [Validation errors](#validation-errors), with retry and “입력 수정하기”. It
   does not open the demo shortfall screen; the warning-origin exam-date editor

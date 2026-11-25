@@ -66,6 +66,24 @@ class AndroidCalendarReadRepositoryTest {
         assertTrue(snapshot.schedules.all { it.scheduleId.all(Char::isDigit) })
     }
 
+    @Test fun localOccurrenceIdentitySurvivesQuerySetsAndDetectsSubMinuteEdits() {
+        val start = ZonedDateTime.of(2031, 3, 3, 19, 0, 10, 0, CALENDAR_ZONE)
+        val first = timed(42, start, start.plusHours(1), recurring = true)
+        val next = timed(42, start.plusWeeks(1), start.plusWeeks(1).plusHours(1), recurring = true)
+        val full = mapCalendarInstances(listOf(first, next, first))
+        val subset = mapCalendarInstances(listOf(next))
+        assertEquals(2, full.occurrences.size)
+        assertEquals(full.occurrences[1], subset.occurrences.single())
+        assertEquals(full.occurrences[0].seriesKey, full.occurrences[1].seriesKey)
+        assertTrue(full.occurrences[0].key != full.occurrences[1].key)
+        val edited = mapCalendarInstances(listOf(first.copy(beginMillis = first.beginMillis + 1000)))
+        assertEquals(full.schedules.first(), edited.schedules.single())
+        assertTrue(full.occurrences.first().key != edited.occurrences.single().key)
+        val wire = ApiJson.encodeToString(com.swpp.licenseplanner.data.model.StudyPlanRequest.serializer(),
+            (RequestMapper.map(com.swpp.licenseplanner.TestFixtures.completeState()) as MappingResult.Ready).request.copy(busySchedules = full.schedules))
+        assertFalse(full.occurrences.any { wire.contains(it.key) || wire.contains(it.seriesKey!!) })
+    }
+
     @Test fun allDayOccurrenceBlocksWholeLocalDates() {
         val snapshot = mapCalendarInstances(listOf(allDay(9, LocalDate.of(2026, 11, 5), LocalDate.of(2026, 11, 7))))
         assertEquals(1, snapshot.allDayOccurrences)

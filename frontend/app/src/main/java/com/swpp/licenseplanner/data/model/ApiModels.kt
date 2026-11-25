@@ -39,6 +39,8 @@ data class StudyPlanRequest(
     @SerialName("study_days_per_week") val studyDaysPerWeek: Int,
     @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
     @SerialName("busy_schedules") val busySchedules: List<ScheduleRow> = emptyList(),
+    /** Monday `YYYY/MM/DD` → replacement week; always sent, `{}` when there is none. */
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>> = emptyMap(),
 )
 
 @Serializable
@@ -59,8 +61,23 @@ data class AssessmentResult(
     @SerialName("possible_score") val possibleScore: Double,
 )
 
+/**
+ * One study window. Requests send `start` + `duration_minutes`; responses also carry a derived
+ * `end`. Older saved plans and servers use the same-day `start` + `end` form.
+ */
 @Serializable
-data class TimeWindow(val start: String, val end: String)
+data class TimeWindow(
+    val start: String,
+    val end: String? = null,
+    @SerialName("duration_minutes") val durationMinutes: Int? = null,
+)
+
+/** A plan's retained base week and full week-replacement map, as returned by the server. */
+@Serializable
+data class AvailabilitySnapshot(
+    @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>>,
+)
 
 /** One returned schedule row; `topic` stays exactly as returned. */
 @Serializable
@@ -82,6 +99,7 @@ data class StudyPlanResponse(
     @SerialName("schedule_csv") val scheduleCsv: String = "",
     @SerialName("agent_summary") val agentSummary: String? = null,
     @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
+    @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot? = null,
 )
 
 /**
@@ -95,6 +113,13 @@ data class ScheduleAdjustmentRequest(
     val schedules: List<ScheduleRow>,
     @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
     @SerialName("exam_date") val examDate: String,
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>> = emptyMap(),
+    /** Null for the automatic move; `"manual"` with [newStartDate] for a chosen time. */
+    val mode: String? = null,
+    @SerialName("new_start_date") val newStartDate: String? = null,
+    @SerialName("confirm_outside_availability") val confirmOutsideAvailability: Boolean? = null,
+    @SerialName("confirm_external_overlap") val confirmExternalOverlap: Boolean? = null,
+    @SerialName("preparation_start") val preparationStart: String? = null,
 )
 
 /** `POST /schedules/adjust` response; `tool_calls` and future fields are ignored. */
@@ -106,6 +131,40 @@ data class ScheduleAdjustmentResponse(
     @SerialName("target_schedule_id") val targetScheduleId: String,
     @SerialName("agent_summary") val agentSummary: String? = null,
     @SerialName("schedule_csv_file") val scheduleCsvFile: String? = null,
+    @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot? = null,
+)
+
+@Serializable
+data class RemainingSession(
+    @SerialName("schedule_id") val scheduleId: String,
+    @SerialName("remaining_minutes") val remainingMinutes: Int,
+    @SerialName("replacement_schedule_id") val replacementScheduleId: String,
+    @SerialName("new_start_date") val newStartDate: String? = null,
+)
+
+/** Destinations and one-time consent are omitted for the ordinary window search. */
+@Serializable
+data class RemainingStudyRequest(
+    val mode: String = "remaining",
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    val schedules: List<ScheduleRow>,
+    @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>>,
+    @SerialName("preparation_start") val preparationStart: String,
+    @SerialName("exam_date") val examDate: String,
+    @SerialName("replan_from") val replanFrom: String,
+    @SerialName("remaining_sessions") val remainingSessions: List<RemainingSession>,
+    @SerialName("confirm_outside_availability") val confirmOutsideAvailability: Boolean? = null,
+)
+
+@Serializable
+data class RemainingStudyResponse(
+    val schedules: List<ScheduleRow>,
+    @SerialName("schedule_csv") val scheduleCsv: String,
+    val action: String,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot,
+    @SerialName("agent_summary") val agentSummary: String? = null,
 )
 
 /**

@@ -55,6 +55,7 @@ class RecoveryFixtureTests(unittest.TestCase):
     def request(self, plan, schedule_id="study-1", **overrides):
         payload = {"schedule_csv_file": plan["schedule_csv_file"], "schedule_id": schedule_id,
                    "schedules": copy.deepcopy(plan["schedules"]), "weekly_availability": WINDOWS,
+                   "availability_overrides": {},
                    "exam_date": overrides.pop("exam_date", "2026/11/16/00/00")}
         payload.update(overrides)
         return payload
@@ -81,11 +82,17 @@ class RecoveryFixtureTests(unittest.TestCase):
     def test_current_app_fields_and_exam_date_are_required(self):
         self.start()
         plan = self.generate("2026/11/16/00/00")
-        fields = "request must contain exactly the current app's five adjustment fields"
-        missing = self.request(plan)
-        del missing["exam_date"]
-        self.assert_rejected(missing, fields)
+        fields = "request must contain exactly the current app's six adjustment fields"
+        for name in ("exam_date", "availability_overrides"):
+            with self.subTest(missing=name):
+                missing = self.request(plan)
+                del missing[name]
+                self.assert_rejected(missing, fields)
         self.assert_rejected(self.request(plan, extra=1), fields)
+        for value in (None, [], "{}"):
+            with self.subTest(overrides=value):
+                self.assert_rejected(self.request(plan, availability_overrides=value),
+                                     "availability_overrides must be an object")
         for value in (None, "2026-11-16", "2026/11/16", 20261116):
             with self.subTest(value=value):
                 self.assert_rejected(self.request(plan, exam_date=value),

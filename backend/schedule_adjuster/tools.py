@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from study_availability import as_context, context_payload
+
 from .models import AdjustmentOutcome, AdjustmentRequest, ToolTrace
 from .schedule_logic import move_study_entry, remove_external_entry
 from .settings import DATETIME_FORMAT
@@ -42,18 +44,14 @@ class ScheduleAdjustmentTools:
         self.inspected_schedule = True
         availability = None
         if self.weekly_availability is not None and target.schedule_type == "study":
-            weekday_names = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-            availability = {
-                weekday: [{"start": window.start_time.strftime("%H:%M"),
-                           "end": window.end_time.strftime("%H:%M")}
-                          for window in self.weekly_availability.for_weekday(index)]
-                for index, weekday in enumerate(weekday_names)
-            }
+            availability = context_payload(as_context(self.weekly_availability), include_end=True)
         return {"schedule_id": target.schedule_id, "schedule_type": target.schedule_type,
                 "start_date": target.start_datetime.strftime(DATETIME_FORMAT),
                 "end_date": target.end_datetime.strftime(DATETIME_FORMAT),
                 "topic": target.topic,
-                "weekly_availability": availability,
+                "weekly_availability": availability["weekly_availability"] if availability else None,
+                **({"availability_overrides": availability["availability_overrides"]}
+                   if availability and availability["availability_overrides"] else {}),
                 "instruction": (("Inspect the exact topic with inspect_topic_schedule, then use reschedule_failed_study."
                                  if target.topic else "Use reschedule_failed_study; this legacy row has no topic.")
                                 if target.schedule_type == "study"

@@ -31,7 +31,7 @@ internal const val EXPORT_SUBTITLE = "선택한 캘린더로 단방향 내보내
 
 internal fun exportBlockText(block: ExportBlock) = when (block) {
     ExportBlock.NoStudy -> "내보낼 공부 일정이 없어요"
-    ExportBlock.Recovery -> "계획 조정 화면에서 이 계획의 상태를 먼저 확인해 주세요"
+    ExportBlock.Recovery -> "'일정 조정하기'에서 이 계획의 상태를 먼저 확인해 주세요"
     ExportBlock.Storage -> "계획을 기기에 저장한 뒤 내보낼 수 있어요"
     ExportBlock.Busy -> "진행 중인 작업이 끝나면 내보낼 수 있어요"
 }
@@ -116,6 +116,7 @@ fun CalendarExportDialog(
                         PrimaryButton("설정 열기", onOpenSettings)
                         SecondaryButton("닫기", onClose)
                     }
+                    CalendarExportPhase.Checking -> LoadingBlock("캘린더 시간을 확인하는 중이에요")
                     CalendarExportPhase.LoadingCalendars -> {
                         LoadingBlock("캘린더 목록을 불러오는 중이에요")
                         SecondaryButton("취소", onClose)
@@ -169,6 +170,7 @@ fun CalendarExportDialog(
                         }
                         Note("새 일정으로 추가돼요. $DUPLICATE_WARNING")
                         Note(NO_UPDATE_WARNING)
+                        Note(if (state.unchecked) UNCHECKED_NOTICE else CALENDAR_SNAPSHOT_NOTICE)
                         Note("이 기기의 캘린더에 추가해요. 다른 기기와의 동기화는 캘린더 계정에 따라 달라요.")
                         PrimaryButton("${count}개 일정 추가", onConfirm)
                         SecondaryButton("캘린더 다시 선택", onChooseAnother)

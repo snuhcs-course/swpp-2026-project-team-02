@@ -8,12 +8,18 @@ import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.defaultAvailability
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.mockwebserver.SocketPolicy
+import okhttp3.EventListener
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,6 +29,7 @@ import org.junit.Test
 import java.net.Socket
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
 
 /**
  * Successive requests on one shared client against a server that answers HTTP/1.0 with a
@@ -33,6 +40,15 @@ class ApiHttpTest {
     private lateinit var server: MockWebServer
     private val client = createApiHttpClient()
     private lateinit var base: String
+
+    @Test fun serverDiagnosticsParticipateInEqualityAndCopy() {
+        val failure = errorForStatus(500, "first") as ApiError.ServerFailure
+        assertEquals("first", failure.copy().rawDiagnostic)
+        assertFalse(failure == errorForStatus(500, "second"))
+        val unavailable = errorForStatus(503, "first") as ApiError.ServerUnavailable
+        assertEquals("first", unavailable.copy().rawDiagnostic)
+        assertFalse(unavailable == errorForStatus(503, "second"))
+    }
 
     @Before fun setUp() {
         server = MockWebServer().apply { start() }
@@ -97,6 +113,30 @@ class ApiHttpTest {
     }
 
     @Test
+    fun cancellingGenerationExchangeCancelsUnderlyingOkHttpCall() = runBlocking {
+        val callCancelled = CountDownLatch(1)
+        var callFailure: String? = null
+        val cancellableClient = client.newBuilder()
+            .eventListenerFactory {
+                object : EventListener() {
+                    override fun callFailed(call: okhttp3.Call, ioe: java.io.IOException) {
+                        callFailure = ioe.message
+                        callCancelled.countDown()
+                    }
+                }
+            }
+            .build()
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+
+        val request = Request.Builder().url(base + "study-plans").post("{}".toRequestBody()).build()
+        val pending = async(Dispatchers.IO) { cancellableClient.executeApiCancellable(request) }
+        takeRequest()
+        pending.cancelAndJoin()
+
+        assertTrue("cancellation should reach the OkHttp call; failure=$callFailure", callCancelled.await(2, TimeUnit.SECONDS))
+    }
+
+    @Test
     fun explicitRouteErrorRetryReachesTheServerImmediately() {
         val repo = LiveAdjustmentRepository(base, client)
         val input = AdjustmentInput(originalA, file, rows, "study-1")
@@ -139,8 +179,8 @@ class ApiHttpTest {
         val sent = json(recorded[2])
         val expected = ApiJson.parseToJsonElement("""
             {"schedule_csv_file":"$file","schedule_id":"study-1","schedules":[$refreshedJson],
-             "weekly_availability":{"monday":[{"start":"18:00","end":"20:00"}]},
-             "exam_date":"2026/11/16/00/00"}
+             "weekly_availability":{"monday":[{"start":"18:00","duration_minutes":120}]},
+             "exam_date":"2026/11/16/00/00","availability_overrides":{}}
         """).jsonObject
         assertEquals(expected, sent)
     }

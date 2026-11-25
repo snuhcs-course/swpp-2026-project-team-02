@@ -10,10 +10,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.domain.LocalTopics
@@ -47,6 +43,8 @@ import com.swpp.licenseplanner.ui.userMessage
 fun QuestionsScreen(
     form: PlanFormState,
     loadState: QuestionLoadState,
+    index: Int,
+    onShowQuestion: (Int) -> Unit,
     onLoad: () -> Unit,
     onAnswer: (questionId: Int, choiceKey: String) -> Unit,
     onExit: () -> Unit,
@@ -54,9 +52,8 @@ fun QuestionsScreen(
 ) {
     LaunchedEffect(Unit) { onLoad() }
     val questions = form.questions
-    var index by rememberSaveable { mutableIntStateOf(0) }
     val loaded = loadState == QuestionLoadState.Loaded && questions.isNotEmpty()
-    BackHandler(enabled = loaded && index > 0) { index-- }
+    BackHandler(enabled = loaded && index > 0) { onShowQuestion(index - 1) }
 
     val question = questions.getOrNull(index.coerceAtMost(questions.lastIndex))
     val selected = question?.let { form.answers[it.id] }
@@ -71,7 +68,7 @@ fun QuestionsScreen(
                 PrimaryButton(
                     text = if (isLast) "결과 보기" else "다음",
                     enabled = selected != null,
-                    onClick = { if (isLast) onFinished() else index++ },
+                    onClick = { if (isLast) onFinished() else onShowQuestion(index + 1) },
                 )
             }
         } else null,
@@ -79,6 +76,7 @@ fun QuestionsScreen(
         when {
             loadState is QuestionLoadState.Failure -> {
                 Heading("예시 문항을 불러오지 못했어요", loadState.error.userMessage())
+                ErrorDetails(loadState.error)
                 Note("입력한 시험, 날짜, 실력은 그대로 있어요.")
                 PrimaryButton("다시 시도", onLoad)
                 SecondaryButton("이전으로", onExit)
@@ -132,7 +130,7 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
         onNav = onBack,
         footer = { PrimaryButton("공부 시간 정하기", onContinue) },
     ) {
-        Heading("로컬 예시 문항 점수", "${questions.size}문항 중 ${correct}문항 정답. ‘모르겠음’은 0점이에요.")
+        Heading("예시 문항 결과", "${questions.size}문항 중 ${correct}문항 정답. ‘모르겠음’은 0점이에요.")
         OutlinedCard {
             for (score in Scoring.topicScores(questions, form.answers)) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -144,9 +142,6 @@ fun ResultsScreen(form: PlanFormState, onBack: () -> Unit, onContinue: () -> Uni
                 }
             }
         }
-        Note(
-            "앱 안에서 예시 문항 번호로 나눈 단원과 점수예요. 서버의 통계가 아니며, " +
-                "계획을 만드는 플래너는 주제를 다르게 분류할 수 있어요.",
-        )
+        Note("단원별 예시 문항 점수예요. 공부 계획의 단원 구분은 이 결과와 다를 수 있어요.")
     }
 }

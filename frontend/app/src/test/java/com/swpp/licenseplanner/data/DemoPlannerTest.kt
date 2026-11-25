@@ -3,6 +3,7 @@ package com.swpp.licenseplanner.data
 import com.swpp.licenseplanner.TestFixtures
 import com.swpp.licenseplanner.data.model.ScheduleRow
 import com.swpp.licenseplanner.data.model.StudyPlanRequest
+import com.swpp.licenseplanner.data.model.TimeWindow
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.LocalTopics
@@ -15,7 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.DayOfWeek
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -34,8 +35,38 @@ class DemoPlannerTest {
         TestFixtures.completeState(questions, answers, level, availability, exam = exam),
     ) as MappingResult.Ready).request
 
-    private fun sessions(request: StudyPlanRequest): Int =
-        (DemoPlanner.plan(request) as DemoResult.Plan).response.schedules.size
+    private fun busy(id: Int, start: String, end: String, topic: String = CALENDAR_BUSY_TOPIC) =
+        ScheduleRow(id.toString(), start, end, topic)
+
+    private fun study(result: DemoResult) =
+        (result as DemoResult.Plan).response.schedules.filter { it.scheduleId.startsWith("study-") }
+
+    private fun times(rows: List<ScheduleRow>) = rows.map { it.startDate to it.endDate }
+
+    private fun minutesOf(row: ScheduleRow): Long =
+        Duration.between(WireDateTime.parseOrNull(row.startDate)!!, WireDateTime.parseOrNull(row.endDate)!!).toMinutes()
+
+    private fun totalMinutes(rows: List<ScheduleRow>) = rows.sumOf { minutesOf(it) }
+
+    private fun minutesByTopic(rows: List<ScheduleRow>): Map<String, Long> =
+        rows.groupBy { it.topic }.mapValues { (_, topicRows) -> totalMinutes(topicRows) }
+
+    /** Topics in the order they first appear in time. */
+    private fun topicOrder(rows: List<ScheduleRow>) = rows.map { it.topic }.distinct()
+
+    private fun overlaps(a: ScheduleRow, b: ScheduleRow): Boolean {
+        val aStart = WireDateTime.parseOrNull(a.startDate)!!
+        val aEnd = WireDateTime.parseOrNull(a.endDate)!!
+        val bStart = WireDateTime.parseOrNull(b.startDate)!!
+        val bEnd = WireDateTime.parseOrNull(b.endDate)!!
+        return aStart < bEnd && bStart < aEnd
+    }
+
+    private val mondayOnly = defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120))
+
+    /** All correct on Mondays 18:00–20:00; the default exam leaves the Mondays 2026-10-05 and 2026-10-12. */
+    private fun mondayPlan(vararg rows: ScheduleRow, exam: LocalDate = LocalDate.of(2026, 10, 13), answers: Map<Int, String> = allCorrect) =
+        DemoPlanner.plan(request(answers, CurrentLevel.ADVANCED, mondayOnly, exam).copy(busySchedules = rows.toList()))
 
     @Test
     fun sameInputGivesIdenticalOutput() {
@@ -44,84 +75,120 @@ class DemoPlannerTest {
     }
 
     @Test
-    fun fewerCorrectAnswersNeverReduceSessions() {
-        for (level in CurrentLevel.entries) {
-            var previous = 0
-            // Remove correct answers one question at a time.
-            for (wrong in 0..questions.size) {
-                val answers = questions.mapIndexed { i, q -> q.id to if (i < wrong) UNKNOWN_KEY else q.correctAnswer }.toMap()
-                val count = sessions(request(answers, level))
-                assertTrue("level=$level wrong=$wrong count=$count previous=$previous", count >= previous)
-                previous = count
-            }
+    fun twoWeeklyWindowsOverTwoWeeksAreFullyPlannedAsDemo() {
+        val twoEvenings = defaultAvailability() + mapOf(
+            Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 60),
+            Weekday.THURSDAY to DayAvailability(true, LocalTime.of(18, 0), 60),
+        )
+        val req = request(allUnknown, CurrentLevel.BEGINNER, twoEvenings, LocalDate.of(2026, 10, 19))
+        val rows = study(DemoPlanner.plan(req))
+
+        assertEquals(240L, totalMinutes(rows))
+        val windowDates = listOf("2026/10/05", "2026/10/08", "2026/10/12", "2026/10/15")
+        assertTrue(rows.all { row ->
+            val date = row.startDate.take(10)
+            date in windowDates && row.startDate >= "$date/18/00" && row.endDate <= "$date/19/00"
+        })
+        assertEquals(windowDates.map { "$it/18/00" to "$it/19/00" }.toSet(),
+            windowDates.map { date -> rows.filter { it.startDate.startsWith(date) } }
+                .map { it.first().startDate to it.last().endDate }.toSet())
+        val outcome = runBlocking { DemoPlanningRepository().generate(req) }
+        assertTrue(outcome is PlanOutcome.Success && outcome.isDemo)
+    }
+
+    @Test
+    fun busyRowAtWindowStartLeavesTheRestOfTheWindowPlanned() {
+        val result = mondayPlan(busy(7, "2026/10/05/18/00", "2026/10/05/18/30"), exam = LocalDate.of(2026, 10, 6))
+        val rows = study(result)
+
+        assertEquals(90L, totalMinutes(rows))
+        val external = ScheduleRow("external-7", "2026/10/05/18/00", "2026/10/05/18/30", CALENDAR_BUSY_TOPIC)
+        assertTrue(rows.none { overlaps(it, external) })
+        assertEquals(external, (result as DemoResult.Plan).response.schedules.first())
+        // Equal scores split the 90 minutes evenly, in catalog order.
+        assertEquals(
+            listOf("2026/10/05/18/30" to "2026/10/05/19/00", "2026/10/05/19/00" to "2026/10/05/19/30",
+                "2026/10/05/19/30" to "2026/10/05/20/00"),
+            times(rows),
+        )
+        assertEquals(listOf(LocalTopics.SPREADSHEET_BASICS, LocalTopics.FUNCTIONS_AND_DATA, LocalTopics.CHARTS_AND_ANALYSIS),
+            rows.map { it.topic })
+    }
+
+    @Test
+    fun weakestTopicIsPlacedFirstAndGetsNoFewerMinutes() {
+        val chartsMissed = allCorrect + (4 to UNKNOWN_KEY)
+        val rows = study(DemoPlanner.plan(request(chartsMissed)))
+
+        assertEquals(LocalTopics.CHARTS_AND_ANALYSIS, rows.first().topic)
+        val minutes = minutesByTopic(rows)
+        assertTrue(minutes.toString(), minutes.values.all { it <= minutes.getValue(LocalTopics.CHARTS_AND_ANALYSIS) })
+        // Each topic's minutes are consecutive; equal scores follow catalog order.
+        assertEquals(listOf(LocalTopics.CHARTS_AND_ANALYSIS, LocalTopics.SPREADSHEET_BASICS, LocalTopics.FUNCTIONS_AND_DATA),
+            topicOrder(rows))
+        assertEquals(topicOrder(rows), rows.map { it.topic }.zipWithNext().filter { (a, b) -> a != b }
+            .map { it.second }.let { listOf(rows.first().topic) + it })
+    }
+
+    @Test
+    fun budgetSplitsMinutesByScoreWeight() {
+        // 스프레드시트 기본 2/2, 함수와 데이터 관리 1/2, 차트와 분석 0/1.
+        val answers = mapOf(1 to allCorrect.getValue(1), 5 to allCorrect.getValue(5), 2 to allCorrect.getValue(2), 3 to UNKNOWN_KEY, 4 to UNKNOWN_KEY)
+        val rows = study(mondayPlan(exam = LocalDate.of(2026, 10, 6), answers = answers))
+
+        // 120 minutes: one reserved minute each, 117 by weights 2 : 1.5 : 1.
+        assertEquals(
+            mapOf(LocalTopics.CHARTS_AND_ANALYSIS to 53L, LocalTopics.FUNCTIONS_AND_DATA to 40L, LocalTopics.SPREADSHEET_BASICS to 27L),
+            minutesByTopic(rows),
+        )
+        assertEquals(
+            listOf("2026/10/05/18/00" to "2026/10/05/18/53", "2026/10/05/18/53" to "2026/10/05/19/33",
+                "2026/10/05/19/33" to "2026/10/05/20/00"),
+            times(rows),
+        )
+        assertEquals(listOf(LocalTopics.CHARTS_AND_ANALYSIS, LocalTopics.FUNCTIONS_AND_DATA, LocalTopics.SPREADSHEET_BASICS),
+            rows.map { it.topic })
+    }
+
+    @Test
+    fun selfAssessmentLevelDoesNotChangeThePlan() {
+        for (answers in listOf(allCorrect, allUnknown, allCorrect + (4 to UNKNOWN_KEY))) {
+            val plans = CurrentLevel.entries.map { DemoPlanner.plan(request(answers, it)) }
+            assertTrue(plans.all { it == plans.first() })
         }
     }
 
     @Test
-    fun lowerChosenLevelNeverReducesSessions() {
-        for (answers in listOf(allCorrect, allUnknown)) {
-            val advanced = sessions(request(answers, CurrentLevel.ADVANCED))
-            val intermediate = sessions(request(answers, CurrentLevel.INTERMEDIATE))
-            val beginner = sessions(request(answers, CurrentLevel.BEGINNER))
-            assertTrue(intermediate >= advanced && beginner >= intermediate)
-        }
-        // All correct: one base session per topic, rounded up from 0.5 when advanced; beginner doubles it.
-        assertEquals(3, sessions(request(allCorrect, CurrentLevel.ADVANCED)))
-        assertEquals(6, sessions(request(allCorrect, CurrentLevel.BEGINNER)))
-        // All unknown is weak and beginner-level everywhere: (1 + 1) × 2 per topic.
-        assertEquals(12, sessions(request(allUnknown, CurrentLevel.ADVANCED)))
-    }
+    fun shortfallWhenFreeMinutesAreFewerThanTopics() {
+        // Two free minutes for three topics.
+        val tight = busy(1, "2026/10/05/18/00", "2026/10/05/19/58")
+        assertEquals(DemoResult.Shortfall(required = 3, available = 2), mondayPlan(tight, exam = LocalDate.of(2026, 10, 6)))
+        val req = request(allCorrect, CurrentLevel.ADVANCED, mondayOnly, LocalDate.of(2026, 10, 6)).copy(busySchedules = listOf(tight))
+        assertEquals(PlanOutcome.DemoShortfall(3, 2), runBlocking { DemoPlanningRepository().generate(req) })
 
-    @Test
-    fun saturdayOnlySessionsRespectWindowStartAndExam() {
-        val saturday = defaultAvailability() + (Weekday.SATURDAY to DayAvailability(true, LocalTime.of(10, 0), 180))
-        val req = request(allCorrect, CurrentLevel.ADVANCED, saturday)
-        val rows = (DemoPlanner.plan(req) as DemoResult.Plan).response.schedules
-        assertEquals(3, rows.size)
-        for (row in rows) {
-            val start = WireDateTime.parseOrNull(row.startDate)!!
-            val end = WireDateTime.parseOrNull(row.endDate)!!
-            assertEquals(DayOfWeek.SATURDAY, start.dayOfWeek)
-            assertTrue(!start.toLocalTime().isBefore(LocalTime.of(10, 0)) && !end.toLocalTime().isAfter(LocalTime.of(13, 0)))
-            assertTrue(!start.toLocalDate().isBefore(LocalDate.of(2026, 10, 5)) && start.toLocalDate().isBefore(longExam))
-        }
-        assertEquals("2026/10/10/10/00", rows.first().startDate)
-        assertEquals("2026/10/10/11/00", rows.first().endDate)
-    }
+        // A window fully covered by an imported event leaves nothing.
+        assertEquals(DemoResult.Shortfall(required = 3, available = 0),
+            mondayPlan(busy(1, "2026/10/05/00/00", "2026/10/06/00/00"), exam = LocalDate.of(2026, 10, 6)))
 
-    @Test
-    fun shortWindowUsesWholeWindow() {
-        val shortWindow = defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(7, 0), 30))
-        val rows = (DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, shortWindow)) as DemoResult.Plan).response.schedules
-        assertEquals("2026/10/05/07/00", rows.first().startDate)
-        assertEquals("2026/10/05/07/30", rows.first().endDate)
-    }
-
-    @Test
-    fun shortfallReturnsCountsWithoutRows() {
-        val saturday = defaultAvailability() + (Weekday.SATURDAY to DayAvailability(true, LocalTime.of(10, 0), 60))
-        // 2026-10-05 → 2026-11-02 has four Saturdays; all-unknown beginner needs 3 topics × 4 = 12.
-        val result = DemoPlanner.plan(request(allUnknown, CurrentLevel.BEGINNER, saturday, LocalDate.of(2026, 11, 2)))
-        assertEquals(DemoResult.Shortfall(required = 12, available = 4), result)
-        val outcome = runBlocking { DemoPlanningRepository().generate(request(allUnknown, CurrentLevel.BEGINNER, saturday, LocalDate.of(2026, 11, 2))) }
-        assertEquals(PlanOutcome.DemoShortfall(12, 4), outcome)
+        // One minute per topic is enough.
+        val rows = study(mondayPlan(busy(1, "2026/10/05/18/00", "2026/10/05/19/57"), exam = LocalDate.of(2026, 10, 6)))
+        assertEquals(listOf(1L, 1L, 1L), rows.map { minutesOf(it) })
     }
 
     @Test
     fun rowsUseStudyIdsCsvHeaderOrderAndNoSummary() {
         val response = (DemoPlanner.plan(request(allUnknown, CurrentLevel.INTERMEDIATE)) as DemoResult.Plan).response
         assertEquals((1..response.schedules.size).map { "study-$it" }, response.schedules.map { it.scheduleId })
+        assertEquals(response.schedules.sortedBy { it.startDate }, response.schedules)
         val lines = response.scheduleCsv.trimEnd('\n').split('\n')
         assertEquals("schedule_id,start_date,end_date,topic", lines.first())
         assertEquals(response.schedules.size + 1, lines.size)
         val first = response.schedules.first()
         assertEquals("${first.scheduleId},${first.startDate},${first.endDate},${first.topic}", lines[1])
         assertEquals("", response.agentSummary)
-        // Sorted by start, weakest topic first (all 0%: catalog order).
-        assertEquals("스프레드시트 기본", response.schedules[0].topic)
-        assertEquals("함수와 데이터 관리", response.schedules[1].topic)
-        assertEquals("차트와 분석", response.schedules[2].topic)
-        assertTrue(runBlocking { DemoPlanningRepository().generate(request()) }.let { it is PlanOutcome.Success && it.isDemo })
+        // All 0%: catalog order.
+        assertEquals(listOf(LocalTopics.SPREADSHEET_BASICS, LocalTopics.FUNCTIONS_AND_DATA, LocalTopics.CHARTS_AND_ANALYSIS),
+            topicOrder(response.schedules))
     }
 
     @Test
@@ -130,115 +197,32 @@ class DemoPlannerTest {
         val answers = bank.associate { it.id to if (it.id in 6..14) UNKNOWN_KEY else it.correctAnswer }
         val req = (RequestMapper.map(TestFixtures.completeState(bank, answers, CurrentLevel.ADVANCED, exam = longExam))
             as MappingResult.Ready).request
-        val rows = (DemoPlanner.plan(req) as DemoResult.Plan).response.schedules
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).toSet(), rows.map { it.topic }.toSet())
-        assertEquals(listOf(LocalTopics.SYSTEM_USE, LocalTopics.INTERNET_DATA, LocalTopics.SYSTEM_PROTECTION),
-            rows.take(3).map { it.topic })
-    }
-
-    // --- Full onboarding selection: per-topic quotas (demo workload assumptions) ---
-
-    private val fullBank = TestFixtures.publicQuestions()
-    private val weekdayEvenings = defaultAvailability() +
-        Weekday.entries.take(5).associateWith { DayAvailability(true, LocalTime.of(18, 0), 60) }
-
-    private fun fullRequest(
-        answers: Map<Int, String>,
-        level: CurrentLevel,
-        exam: LocalDate = LocalDate.of(2027, 1, 4),
-        availability: Map<Weekday, DayAvailability> = weekdayEvenings,
-    ): StudyPlanRequest = (RequestMapper.map(
-        TestFixtures.completeState(fullBank, answers, level, availability, start = LocalDate.of(2026, 11, 9), exam = exam),
-    ) as MappingResult.Ready).request
-
-    private fun topicCounts(request: StudyPlanRequest): Map<String, Int> =
-        study(DemoPlanner.plan(request)).groupingBy { it.topic }.eachCount()
-
-    private fun answersMissing(vararg ids: Int) = fullBank.associate { it.id to if (it.id in ids) UNKNOWN_KEY else it.correctAnswer }
-
-    @Test
-    fun fullWeakBeginnerSelectionFitsFourSessionsPerTopicInFortyWeekdaySlots() {
-        val request = fullRequest(fullBank.associate { it.id to UNKNOWN_KEY }, CurrentLevel.BEGINNER)
-        val rows = study(DemoPlanner.plan(request))
-
-        assertEquals(32, rows.size)
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 4 }, topicCounts(request))
-        assertEquals(DemoResult.Shortfall(required = 32, available = 25),
-            DemoPlanner.plan(request.copy(examDate = "2026/12/14/00/00")))
-        val weekdays = generateSequence(LocalDate.of(2026, 11, 9)) { it.plusDays(1) }
-            .takeWhile { it.isBefore(LocalDate.of(2027, 1, 4)) }.count { it.dayOfWeek.value <= 5 }
-        assertEquals(40, weekdays)
-        assertTrue(rows.all { !WireDateTime.parseOrNull(it.startDate)!!.toLocalDate().isAfter(LocalDate.of(2027, 1, 3)) })
+        val rows = study(DemoPlanner.plan(req))
+        // The three 0% 컴퓨터 일반 topics come first, then the others in catalog order.
+        assertEquals(LocalTopics.catalogOrder.dropLast(1), topicOrder(rows))
     }
 
     @Test
-    fun perfectAdvancedSelectionKeepsOneSessionForEveryTopic() {
-        val request = fullRequest(fullBank.associate { it.id to it.correctAnswer }, CurrentLevel.ADVANCED)
-
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 1 }, topicCounts(request))
-    }
-
-    @Test
-    fun mixedScoresGiveEachTopicItsOwnQuota() {
-        // 16/18 overall is advanced: the weak 시스템 활용 topic gets 1 + 1, every other topic 1.
-        val advanced = fullRequest(answersMissing(7, 8), CurrentLevel.ADVANCED)
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 2 else 1 },
-            topicCounts(advanced))
-        // 14/18 is intermediate: 시스템 활용 (0/3) is weak, 인터넷 자료 활용 (3/4) is not.
-        val intermediate = fullRequest(answersMissing(6, 7, 8, 9), CurrentLevel.ADVANCED)
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 2 else 1 },
-            topicCounts(intermediate))
-        // A beginner choice doubles both components.
-        val beginner = fullRequest(answersMissing(6, 7, 8, 9), CurrentLevel.BEGINNER)
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { if (it == LocalTopics.SYSTEM_USE) 4 else 2 },
-            topicCounts(beginner))
-        // The first round runs weakest first, then catalog order.
-        assertEquals(LocalTopics.SYSTEM_USE, study(DemoPlanner.plan(beginner)).first().topic)
-    }
-
-    @Test
-    fun scoreAndLevelThresholdsAreInclusive() {
-        val unmapped = (101..105).map { id ->
-            fullBank.first().copy(id = id, prompt = "예시 문항 $id")
+    fun fullBankPlanAvoidsImportedEventsAndFillsTheRest() {
+        val bank = TestFixtures.publicQuestions()
+        val weekdayEvenings = defaultAvailability() +
+            Weekday.entries.take(5).associateWith { DayAvailability(true, LocalTime.of(18, 0), 60) }
+        val busyRows = listOf("2026/11/10", "2026/11/18", "2026/12/03").mapIndexed { index, day ->
+            busy(index + 1, "$day/17/30", "$day/18/30")
         }
-        fun count(correct: Int) = sessions((RequestMapper.map(TestFixtures.completeState(
-            unmapped, unmapped.mapIndexed { index, q -> q.id to if (index < correct) q.correctAnswer else UNKNOWN_KEY }.toMap(),
-            CurrentLevel.ADVANCED, exam = longExam)) as MappingResult.Ready).request)
-        // 60% is neither weak nor beginner-level; 40% is both.
-        assertEquals(1, count(3))
-        assertEquals(4, count(2))
-        assertEquals(1, count(5))
-    }
+        val req = (RequestMapper.map(TestFixtures.completeState(bank, bank.associate { it.id to UNKNOWN_KEY }, CurrentLevel.BEGINNER,
+            weekdayEvenings, start = LocalDate.of(2026, 11, 9), exam = LocalDate.of(2027, 1, 4))) as MappingResult.Ready).request
+            .copy(busySchedules = busyRows)
 
-    @Test
-    fun fullSelectionScoresAndLevelsNeverReduceSessions() {
-        for (level in CurrentLevel.entries) {
-            var previous = 0
-            for (wrong in 0..fullBank.size) {
-                val answers = fullBank.mapIndexed { i, q -> q.id to if (i < wrong) UNKNOWN_KEY else q.correctAnswer }.toMap()
-                val count = sessions(fullRequest(answers, level, exam = LocalDate.of(2027, 6, 1)))
-                assertTrue("level=$level wrong=$wrong count=$count previous=$previous", count >= previous)
-                previous = count
-            }
-        }
-        val answers = answersMissing(1, 6, 10, 18)
-        val counts = CurrentLevel.entries.sortedDescending().map { sessions(fullRequest(answers, it, exam = LocalDate.of(2027, 6, 1))) }
-        assertEquals(counts.sorted(), counts)
-    }
-
-    @Test
-    fun fullSelectionIsDeterministicAndAvoidsImportedEvents() {
-        val busyDays = listOf("2026/11/10", "2026/11/18", "2026/12/03")
-        val request = fullRequest(fullBank.associate { it.id to UNKNOWN_KEY }, CurrentLevel.BEGINNER)
-            .copy(busySchedules = busyDays.mapIndexed { index, day -> busy(index + 1, "$day/17/30", "$day/18/30") })
-
-        val first = DemoPlanner.plan(request) as DemoResult.Plan
-        assertEquals(first, DemoPlanner.plan(request))
+        val first = DemoPlanner.plan(req) as DemoResult.Plan
+        assertEquals(first, DemoPlanner.plan(req))
         val rows = study(first)
-        assertEquals(32, rows.size)
-        assertEquals(LocalTopics.catalogOrder.dropLast(1).associateWith { 4 }, topicCounts(request))
-        assertTrue(busyDays.all { day -> rows.none { it.startDate.startsWith(day) } })
-        assertEquals(3, first.response.schedules.count { it.scheduleId.startsWith("external-") })
+        // 40 weekday hours, 30 minutes of three of them taken.
+        assertEquals(40L * 60 - 3 * 30, totalMinutes(rows))
+        assertEquals(LocalTopics.catalogOrder.dropLast(1).toSet(), rows.map { it.topic }.toSet())
+        val external = first.response.schedules.filter { it.scheduleId.startsWith("external-") }
+        assertEquals(3, external.size)
+        assertTrue(rows.none { row -> external.any { overlaps(row, it) } })
     }
 
     @Test
@@ -251,26 +235,12 @@ class DemoPlannerTest {
         assertEquals("미분류 예시 문항", rows.first().topic)
     }
 
-    private val mondayOnly = defaultAvailability() + (Weekday.MONDAY to DayAvailability(true, LocalTime.of(18, 0), 120))
-
-    private fun busy(id: Int, start: String, end: String, topic: String = CALENDAR_BUSY_TOPIC) =
-        ScheduleRow(id.toString(), start, end, topic)
-
-    /** Advanced, all correct: three study sessions on Mondays 18:00–20:00 from 2026-10-05. */
-    private fun mondayPlan(vararg rows: ScheduleRow, exam: LocalDate = longExam) =
-        DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, mondayOnly, exam).copy(busySchedules = rows.toList()))
-
-    private fun study(result: DemoResult) =
-        (result as DemoResult.Plan).response.schedules.filter { it.scheduleId.startsWith("study-") }
-
-    private fun times(rows: List<ScheduleRow>) = rows.map { it.startDate to it.endDate }
-
     @Test
-    fun busyEventAtWindowStartMovesThatDaysSessionAfterIt() {
+    fun busyEventAtWindowStartIsKeptAndStudyFollowsIt() {
         val result = mondayPlan(busy(7, "2026/10/05/18/00", "2026/10/05/19/00")) as DemoResult.Plan
         assertEquals(
             listOf("2026/10/05/19/00" to "2026/10/05/20/00", "2026/10/12/18/00" to "2026/10/12/19/00",
-                "2026/10/19/18/00" to "2026/10/19/19/00"),
+                "2026/10/12/19/00" to "2026/10/12/20/00"),
             times(study(result)),
         )
         val external = ScheduleRow("external-7", "2026/10/05/18/00", "2026/10/05/19/00", CALENDAR_BUSY_TOPIC)
@@ -286,35 +256,47 @@ class DemoPlannerTest {
             busy(3, "2026/10/05/18/30", "2026/10/05/19/00"),
         )
         assertEquals("2026/10/05/19/00" to "2026/10/05/20/00", times(study(result)).first())
+        assertEquals(180L, totalMinutes(study(result)))
         assertEquals(6, (result as DemoResult.Plan).response.schedules.size)
     }
 
     @Test
-    fun eventsTouchingTheSessionAreNotConflicts() {
+    fun eventsTouchingTheWindowAreNotConflicts() {
         val result = mondayPlan(
             busy(1, "2026/10/05/17/00", "2026/10/05/18/00"),
             busy(2, "2026/10/05/19/00", "2026/10/05/20/00"),
         )
         assertEquals("2026/10/05/18/00" to "2026/10/05/19/00", times(study(result)).first())
+        assertEquals(180L, totalMinutes(study(result)))
     }
 
     @Test
-    fun allDayEventRemovesThatDaysSession() {
-        val result = mondayPlan(busy(9, "2026/10/05/00/00", "2026/10/06/00/00"))
-        assertEquals(listOf("2026/10/12/18/00", "2026/10/19/18/00", "2026/10/26/18/00"), study(result).map { it.startDate })
+    fun allDayEventRemovesThatDaysWindow() {
+        val rows = study(mondayPlan(busy(9, "2026/10/05/00/00", "2026/10/06/00/00")))
+        assertTrue(rows.all { it.startDate.startsWith("2026/10/12/") })
+        assertEquals(120L, totalMinutes(rows))
     }
 
     @Test
-    fun fragmentedWindowsAreNotSplitOrShortened() {
-        // Two Mondays before 2026-10-13; each 18:00–20:00 window leaves only 30-minute gaps.
+    fun fragmentedWindowsAreFilledAndSplitOnlyAtGapsOrBudgetEnds() {
+        // Each 18:00–20:00 window leaves 18:00–18:30 and 19:00–19:30 free: 120 minutes, 40 per topic.
         val fragments = listOf("2026/10/05", "2026/10/12").flatMapIndexed { index, day ->
             listOf(busy(index * 2 + 1, "$day/18/30", "$day/19/00"), busy(index * 2 + 2, "$day/19/30", "$day/20/00"))
         }
-        assertEquals(DemoResult.Shortfall(required = 3, available = 0),
-            mondayPlan(*fragments.toTypedArray(), exam = LocalDate.of(2026, 10, 13)))
-        // One fragmented Monday among enough free ones contributes nothing; the others keep their slots.
-        val result = mondayPlan(*fragments.take(2).toTypedArray())
-        assertEquals(listOf("2026/10/12/18/00", "2026/10/19/18/00", "2026/10/26/18/00"), study(result).map { it.startDate })
+        val rows = study(mondayPlan(*fragments.toTypedArray()))
+        assertEquals(
+            listOf(
+                "2026/10/05/18/00" to "2026/10/05/18/30", "2026/10/05/19/00" to "2026/10/05/19/10",
+                "2026/10/05/19/10" to "2026/10/05/19/30", "2026/10/12/18/00" to "2026/10/12/18/20",
+                "2026/10/12/18/20" to "2026/10/12/18/30", "2026/10/12/19/00" to "2026/10/12/19/30",
+            ),
+            times(rows),
+        )
+        assertEquals(
+            listOf(LocalTopics.SPREADSHEET_BASICS, LocalTopics.SPREADSHEET_BASICS, LocalTopics.FUNCTIONS_AND_DATA,
+                LocalTopics.FUNCTIONS_AND_DATA, LocalTopics.CHARTS_AND_ANALYSIS, LocalTopics.CHARTS_AND_ANALYSIS),
+            rows.map { it.topic },
+        )
     }
 
     @Test
@@ -344,6 +326,41 @@ class DemoPlannerTest {
         assertEquals(DemoPlanner.plan(plain.copy(busySchedules = emptyList())), result)
         assertFalse(result.response.schedules.any { it.scheduleId.startsWith("external-") })
         assertEquals("2026/10/05/18/00", result.response.schedules.first().startDate)
-        assertEquals(sessions(plain), study(result).size)
+        assertEquals(result.response.schedules.size, study(result).size)
+    }
+
+    private val sundayLate = defaultAvailability() + (Weekday.SUNDAY to DayAvailability(true, LocalTime.of(23, 30), 60))
+
+    @Test
+    fun windowOverlappingMidnightIsFullyUsed() {
+        // 2026-10-11 is the only Sunday before 2026-10-18; its window runs to 00:30 the next day.
+        val rows = study(DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, sundayLate, LocalDate.of(2026, 10, 18))))
+        assertEquals(60L, totalMinutes(rows))
+        assertEquals("2026/10/11/23/30", rows.first().startDate)
+        assertEquals("2026/10/12/00/30", rows.last().endDate)
+
+        // An exam at Monday 00:00 clips the spilling window to the 30 minutes before it.
+        val clipped = study(DemoPlanner.plan(request(allCorrect, CurrentLevel.ADVANCED, sundayLate, LocalDate.of(2026, 10, 19))))
+        assertEquals(90L, totalMinutes(clipped))
+        assertEquals("2026/10/19/00/00", clipped.last().endDate)
+    }
+
+    @Test
+    fun overrideWeekReplacesThatWeeksWindows() {
+        val base = request(allCorrect, CurrentLevel.ADVANCED, sundayLate, LocalDate.of(2026, 10, 19))
+
+        // Emptying the week of Monday 2026-10-05 skips Sunday 2026-10-11.
+        val emptyFirstWeek = study(DemoPlanner.plan(base.copy(availabilityOverrides = mapOf("2026/10/05" to emptyMap()))))
+        assertEquals(30L, totalMinutes(emptyFirstWeek))
+        assertEquals("2026/10/18/23/30", emptyFirstWeek.first().startDate)
+
+        // A replacement Tuesday window is used instead of that week's Sunday.
+        val replaced = study(DemoPlanner.plan(base.copy(availabilityOverrides = mapOf(
+            "2026/10/05" to mapOf("tuesday" to listOf(TimeWindow(start = "09:00", durationMinutes = 45))),
+        ))))
+        assertEquals(75L, totalMinutes(replaced))
+        assertEquals("2026/10/06/09/00", replaced.first().startDate)
+        assertTrue(replaced.none { it.startDate.startsWith("2026/10/11") })
+        assertEquals("2026/10/19/00/00", replaced.last().endDate)
     }
 }
