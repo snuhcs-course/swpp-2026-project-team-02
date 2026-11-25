@@ -1070,6 +1070,15 @@ class MainFlowUiTest {
         show("어떤 시험을 준비하나요?")
     }
 
+    @Test fun rapidTopBarBackFromSavedPlansKeepsHomeUsable() = withApp {
+        click("내 계획")
+        awaitPlanList()
+        compose.onNodeWithContentDescription("뒤로").performTouchInput { click(center); click(center) }
+        show("무엇을 할까요?")
+        click("내 계획")
+        awaitPlanList()
+    }
+
     @Test fun rapidSystemBackFromAdjustmentKeepsAValidPlanRoute() = withApp { host ->
         seedFullPlanForFreeTime(host)
         adjustShownPlan()
