@@ -213,6 +213,8 @@ data class ReassessmentRequest(
     @SerialName("keep_schedule_ids") val keepScheduleIds: List<String>,
     @SerialName("first_new_study_id") val firstNewStudyId: String,
     @SerialName("assessment_results") val assessmentResults: AssessmentResults,
+    /** Only on a confirmation: the rows the learner approved, so the server saves nothing else. */
+    @SerialName("previewed_schedules") val previewedSchedules: List<ScheduleRow>? = null,
 )
 
 @Serializable

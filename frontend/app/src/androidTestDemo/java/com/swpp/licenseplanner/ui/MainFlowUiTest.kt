@@ -2234,7 +2234,8 @@ class MainFlowUiTest {
         val rows = listOf(
             ScheduleRow("study-1", "2026/11/12/18/00", "2026/11/12/19/00", "공부 주제 1"),
             ScheduleRow("study-2", "2026/11/13/18/00", "2026/11/13/19/00", "공부 주제 2"),
-        ) + (3..6).map { id -> ScheduleRow("study-$id", "2026/11/${20 + id}/18/00", "2026/11/${20 + id}/20/00", "공부 주제 $id") }
+            ScheduleRow("study-3", "2026/11/23/18/00", "2026/11/23/20/00", "매크로 활용"),
+        ) + (4..6).map { id -> ScheduleRow("study-$id", "2026/11/${20 + id}/18/00", "2026/11/${20 + id}/20/00", "공부 주제 $id") }
         val plan = com.swpp.licenseplanner.domain.SessionPlan.register(1, seededRequest(),
             com.swpp.licenseplanner.data.model.StudyPlanResponse(rows), true)
             .copy(checkIns = mapOf("study-1" to StudyCheckIn(StudyCheckInStatus.Done, 60)))
@@ -2276,10 +2277,13 @@ class MainFlowUiTest {
         val preview = (host.viewModel.reassessment.value as ReassessmentState.Preview).preview
         val oldIds = before.current.schedules.map { it.scheduleId }.toSet()
         val pieces = preview.rows.filter { it.scheduleId !in oldIds }
+        // The first row splits into one piece with its original topic and one with a new topic.
+        val firstSplit = preview.sessions.first()
+        assertEquals(listOf("매크로 활용", "스프레드시트 기본"), firstSplit.pieces.map { it.topic })
+        val firstChangedPiece = firstSplit.pieces[1]
         show("바꿀 수 있는 남은 공부 480분")
-        show("바뀌는 일정 ${pieces.size}개")
-        val firstPiece = pieces.minBy { checkNotNull(WireDateTime.parseOrNull(it.startDate)) }
-        show("공부 주제 3 → ${firstPiece.topic}")
+        show("바뀌는 일정 7개")
+        show("매크로 활용 → ${firstChangedPiece.topic}")
         host.capture("reassessment-preview")
         assertEquals(original, host.snapshot())
         assertEquals(0, host.reassessmentCommits.get())
@@ -2287,7 +2291,7 @@ class MainFlowUiTest {
         click("이대로 바꾸기")
         waitForText("이 기기에 저장했어요")
         host.awaitSaved()
-        show("남은 공부 ${pieces.size}개 일정의 주제를 바꿨어요")
+        show("남은 공부 7개 일정의 주제를 바꿨어요")
         host.capture("reassessment-done")
         assertEquals(1, host.reassessmentCommits.get())
         assertEquals(1, host.reassessmentPreviews.get())
@@ -2305,11 +2309,11 @@ class MainFlowUiTest {
         awaitPlanView()
         show("계획 1 · $CERTIFICATION_NAME")
         val weeks = PlanGrouping.weeks(rows)
-        val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == firstPiece.scheduleId } } }
+        val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == firstChangedPiece.scheduleId } } }
         assertTrue("The changed week follows the first week", index > 0)
         showWeek(weeks[index].monday, index, weeks.size)
         for (piece in pieces) show(piece.topic, lazy = true)
-        compose.onAllNodesWithText("공부 주제 3").assertCountEquals(0)
+        compose.onAllNodesWithText("공부 주제 4").assertCountEquals(0)
         host.capture("reassessment-changed-week")
         assertNull(host.viewModel.reassessment.value)
     }
@@ -2331,7 +2335,7 @@ class MainFlowUiTest {
         val index = weeks.indexOfFirst { week -> week.days.any { day -> day.sessions.any { it.scheduleId == "study-3" } } }
         repeat(index) { clickDescription("다음 주") }
         showWeek(weeks[index].monday, index, weeks.size)
-        for (id in 3..6) show("공부 주제 $id", lazy = true)
+        for (row in rows.drop(2)) show(row.topic, lazy = true)
         show("다시 진단하기", lazy = true)
         compose.onNode(hasText("다시 진단하기") and hasClickAction()).assertIsEnabled()
         host.capture("reassessment-declined")

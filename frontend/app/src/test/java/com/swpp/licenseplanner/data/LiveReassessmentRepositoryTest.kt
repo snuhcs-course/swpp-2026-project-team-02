@@ -73,8 +73,11 @@ class LiveReassessmentRepositoryTest {
     }
 
     @Test fun missingRouteNeedsAServerUpdateAndOtherFailuresStayFailures() {
-        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"NOT_FOUND","message":"no route"}}"""))
+        enqueueError(404, "NOT_FOUND", "API route not found")
         assertEquals(ReassessmentQuestionsOutcome.ServerNeedsUpdate, runBlocking { repository().questions(CERTIFICATION_ID) })
+        enqueueError(404, "NOT_FOUND", "Unsupported certification_id: $CERTIFICATION_ID")
+        assertEquals(ReassessmentQuestionsOutcome.Failure(ApiError.UnknownFailure(status = 404, rawDiagnostic = null)),
+            runBlocking { repository().questions(CERTIFICATION_ID) })
         server.enqueue(MockResponse().setResponseCode(500))
         val failed = runBlocking { repository().questions(CERTIFICATION_ID) } as ReassessmentQuestionsOutcome.Failure
         assertTrue(failed.error is ApiError.ServerFailure)
@@ -111,7 +114,9 @@ class LiveReassessmentRepositoryTest {
         enqueue(response("reassessed"))
         val committed = commit() as ReassessmentOutcome.Committed
         assertEquals(revised, committed.response.schedules)
-        assertTrue(ApiJson.decodeFromString(ReassessmentRequest.serializer(), server.takeRequest().body.readUtf8()).commit)
+        val sent = ApiJson.decodeFromString(ReassessmentRequest.serializer(), server.takeRequest().body.readUtf8())
+        assertTrue(sent.commit)
+        assertEquals(revised, sent.previewedSchedules)
         assertEquals(1, server.requestCount)
     }
 
@@ -145,6 +150,17 @@ class LiveReassessmentRepositoryTest {
         enqueueError(429, "RATE_LIMITED", "slow down")
         assertEquals(ReassessmentOutcome.Failure(ApiError.RateLimited), preview())
         assertEquals(5, server.requestCount)
+    }
+
+    @Test fun noFutureUnreportedSessionsUsesTheNothingLeftOutcome() {
+        enqueueError(422, "INVALID_INPUT", "NOTHING_TO_REVISE: no future unreported study sessions")
+        assertEquals(ReassessmentOutcome.Rejected(ReassessmentFailure.NothingToRevise), preview())
+    }
+
+    @Test fun aServerPlanWithoutStoredStudyContextNeedsAReplacement() {
+        enqueueError(422, "INVALID_INPUT", "This saved plan has no stored preparation period and study times. " +
+            "Create a new plan before re-planning remaining sessions.")
+        assertEquals(ReassessmentOutcome.Rejected(ReassessmentFailure.MissingPlanContext), preview())
     }
 
     @Test fun planWithoutServerIdentitySendsNothing() {

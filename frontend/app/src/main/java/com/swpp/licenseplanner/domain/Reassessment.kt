@@ -12,6 +12,7 @@ data class TopicAnswer(val topic: String, val possibleScore: Double, val isCorre
 /** Why a re-split cannot be produced; each has a matching backend error code. */
 enum class ReassessmentFailure(val code: String) {
     NothingToRevise("INVALID_INPUT"),
+    MissingPlanContext("INVALID_INPUT"),
     NotEnoughTime("NOT_ENOUGH_TIME"),
     PreviewExpired("REASSESSMENT_PREVIEW_EXPIRED"),
 }

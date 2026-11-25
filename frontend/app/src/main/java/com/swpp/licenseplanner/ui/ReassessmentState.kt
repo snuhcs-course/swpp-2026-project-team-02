@@ -81,17 +81,19 @@ sealed interface ReassessmentState {
     data class Invalid(override val source: SessionPlan, val message: String) : ReassessmentState
 }
 
-enum class ReassessmentStop { NothingLeft, NotEnoughTime, Expired, PreviewFailed, CommitFailed }
+enum class ReassessmentStop { NothingLeft, MissingPlanContext, NotEnoughTime, Expired, PreviewFailed, PlanUnavailable, CommitFailed }
 
 /** Whether leaving now could abandon a request or a save in progress; those steps cannot be left. */
 internal val ReassessmentState?.holdsCommit: Boolean
     get() = this is ReassessmentState.Committing || (this is ReassessmentState.Done && save == MoveSave.Saving)
 
-/** Every new row of a preview in time order, each with the topic it replaces. */
+/** Pieces whose topic changed, in time order, each with the topic it replaces. */
 internal fun changedPieces(preview: ReassessmentPreview): List<Pair<String, ScheduleRow>> =
-    preview.sessions.flatMap { session -> session.pieces.map { session.original.topic to it } }
+    preview.sessions.flatMap { session ->
+        session.pieces.filter { it.topic != session.original.topic }.map { session.original.topic to it }
+    }
 
-/** The first new row, so returning to the plan can show its week. */
+/** The first piece with a changed topic, so returning to the plan can show its week. */
 internal fun firstChangedScheduleId(preview: ReassessmentPreview): String? = changedPieces(preview).firstOrNull()?.second?.scheduleId
 
 /** One topic's points in this reassessment beside the plan's first diagnostic, in whole percent. */

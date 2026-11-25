@@ -884,6 +884,21 @@ class RetainedContextAndManualMoveTests(unittest.TestCase):
         self.assertIn("availability_snapshot",
                       next(p for p in listing["plans"] if p["schedule_csv_file"] == self.other))
 
+    def test_context_with_certification_id_is_read_and_left_unchanged(self):
+        metadata = self.metadata(self.identifier)
+        record = json.loads(metadata.read_text(encoding="utf-8"))
+        metadata.write_text(json.dumps({**record, "certification_id": "computer_specialist_level_2"}), encoding="utf-8")
+        self.before = self.files()
+        status, result = self.call("/schedules/adjust", self.manual("2026/11/17/18/00"))
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.target(result)["start_date"], "2026/11/17/18/00")
+        self.assertEqual(metadata.read_bytes(), self.before[metadata.name])
+        for value in ("", " ", 2, None):
+            with self.subTest(certification_id=value):
+                metadata.write_text(json.dumps({**record, "certification_id": value}), encoding="utf-8")
+                self.before = self.files()
+                self.assert_rejected(self.manual("2026/11/17/18/00"), 500, "STORAGE_ERROR")
+
     # Manual mode
 
     def test_manual_move_to_a_free_window_before_the_automatic_order_bound(self):

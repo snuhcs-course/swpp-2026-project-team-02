@@ -73,12 +73,16 @@ internal fun reassessmentChangedText(count: Int): String = "남은 공부 ${coun
 /** Title and body for a preview or update that stopped. */
 internal fun reassessmentStopText(state: ReassessmentState.Stopped): Pair<String, String> = when (state.reason) {
     ReassessmentStop.NothingLeft -> REASSESSMENT_NOTHING_LEFT to "지금부터 주제를 바꿀 수 있는 기록 없는 공부 일정이 없어요. 계획은 그대로예요."
+    ReassessmentStop.MissingPlanContext -> "저장된 준비 정보가 없어요" to
+        "서버에 이 계획의 준비 기간과 공부 시간이 저장되어 있지 않아요. 홈의 '계획 생성'에서 새 계획을 만들어 주세요."
     ReassessmentStop.NotEnoughTime -> "다시 나눌 남은 시간이 부족해요" to
         "남은 공부 시간이 진단한 주제 수보다 적어 주제별로 다시 나눌 수 없어요. 계획은 그대로예요."
     ReassessmentStop.Expired -> "미리 본 내용이 지난 내용이에요" to
         "확인하는 사이 바꿀 수 있던 공부 일정이 시작됐어요. 아무것도 바꾸거나 저장하지 않았어요. 같은 답으로 다시 미리 볼 수 있어요."
     ReassessmentStop.PreviewFailed -> "바뀔 내용을 미리 보지 못했어요" to
         "${(state.error ?: ApiError.InvalidResponse(null)).previewMessage()}\n아무것도 바꾸지 않았어요. 같은 답으로 다시 미리 볼 수 있어요."
+    ReassessmentStop.PlanUnavailable -> "바뀔 내용을 미리 보지 못했어요" to
+        (state.error ?: ApiError.InvalidResponse(null)).previewMessage()
     ReassessmentStop.CommitFailed -> "남은 공부를 바꾸지 못했어요" to when (val error = state.error) {
         is ApiError.ServerFailure, is ApiError.ServerUnavailable ->
             "바꾼 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
@@ -297,7 +301,7 @@ private fun ReassessmentPreviewScreen(
         for ((before, piece) in pieces) {
             MutedBox {
                 Text(reassessmentSessionTime(piece), style = MaterialTheme.typography.titleSmall, color = Ink)
-                Note(if (before == piece.topic) "$before · 주제 그대로" else "$before → ${piece.topic}")
+                Note("$before → ${piece.topic}")
             }
         }
         Note(REASSESSMENT_UNCHANGED_NOTE)

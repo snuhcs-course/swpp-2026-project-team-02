@@ -34,8 +34,12 @@ class LiveReassessmentRepository(
     override suspend fun questions(certificationId: String): ReassessmentQuestionsOutcome {
         val request = Request.Builder().url(apiUrl(baseUrl, "/certifications/$certificationId/reassessment-questions")).get().build()
         return when (val outcome = client.executeApi(request, io)) {
-            is HttpOutcome.Failed -> if (outcome.error == ApiError.Configuration) ReassessmentQuestionsOutcome.ServerNeedsUpdate
-                else ReassessmentQuestionsOutcome.Failure(outcome.error)
+            is HttpOutcome.Failed -> when {
+                outcome.routeNotFound -> ReassessmentQuestionsOutcome.ServerNeedsUpdate
+                outcome.error == ApiError.Configuration ->
+                    ReassessmentQuestionsOutcome.Failure(ApiError.UnknownFailure(status = 404, rawDiagnostic = null))
+                else -> ReassessmentQuestionsOutcome.Failure(outcome.error)
+            }
             is HttpOutcome.Ok -> try {
                 ReassessmentQuestionsOutcome.Loaded(parseQuestions(outcome.body, certificationId))
             } catch (error: InvalidQuestionDataException) {
@@ -58,7 +62,8 @@ class LiveReassessmentRepository(
             weeklyAvailability = source.original.weeklyAvailability, availabilityOverrides = source.original.availabilityOverrides,
             preparationStart = source.original.preparationStart, examDate = source.original.examDate,
             replanFrom = WireDateTime.format(input.replanFrom), keepScheduleIds = input.keep.sorted(),
-            firstNewStudyId = input.firstNewStudyId, assessmentResults = input.assessmentResults(source.original.certificationId))
+            firstNewStudyId = input.firstNewStudyId, assessmentResults = input.assessmentResults(source.original.certificationId),
+            previewedSchedules = previewed)
         val body = OneShotBody(ApiJson.encodeToString(ReassessmentRequest.serializer(), request)
             .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE))
         val http = Request.Builder().url(apiUrl(baseUrl, "/schedules/adjust")).post(body).build()
@@ -89,6 +94,8 @@ class LiveReassessmentRepository(
         val message = (error as? ApiError.InvalidInput)?.message.orEmpty()
         return when {
             error == ApiError.ReassessmentPreviewExpired -> ReassessmentOutcome.Rejected(ReassessmentFailure.PreviewExpired)
+            message.startsWith("NOTHING_TO_REVISE:") -> ReassessmentOutcome.Rejected(ReassessmentFailure.NothingToRevise)
+            message == MISSING_STORED_CONTEXT -> ReassessmentOutcome.Rejected(ReassessmentFailure.MissingPlanContext)
             message.startsWith("NOT_ENOUGH_TIME") -> ReassessmentOutcome.Rejected(ReassessmentFailure.NotEnoughTime)
             message.startsWith("mode must be") -> ReassessmentOutcome.ServerNeedsUpdate
             else -> ReassessmentOutcome.Failure(error)
@@ -115,3 +122,6 @@ class LiveReassessmentRepository(
         override fun isOneShot() = true
     }
 }
+
+private const val MISSING_STORED_CONTEXT = "This saved plan has no stored preparation period and study times. " +
+    "Create a new plan before re-planning remaining sessions."
