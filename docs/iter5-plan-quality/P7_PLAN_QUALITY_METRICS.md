@@ -1,6 +1,6 @@
-# P7: Plan quality metrics (draft)
+# P7: Plan quality metrics
 
-Iteration 5 · 남경민 · 2026-11-22. Thresholds are proposals; P9 validates them on hand-made example plans and fixes them.
+Iteration 5 · 남경민 · drafted 2026-11-22, thresholds confirmed in P9 on 2026-11-25 ([P9 results](P9_RESULTS.md)). P9 changed four definitions; each is marked **(P9)** below.
 
 This page proposes eleven metrics for judging whether a generated plan is not only valid but helps the learner study. They fall into three layers.
 
@@ -53,14 +53,14 @@ One wrong answer gives ŝ = 33%, one right answer 67%, four right answers 83%. w
 
 Each metric is computed per plan; over the evaluation set we report the share of plans that pass.
 
-| Metric | Measures | Computation | Threshold (proposed) | Relation to existing criteria |
+| Metric | Measures | Computation | Threshold | Relation to existing criteria |
 | --- | --- | --- | --- | --- |
-| M1a Weak-order violations | A weaker topic gets fewer minutes | Pairs with ŝ_a < ŝ_b and m_a < m_b | 0 | Q7 (with smoothed scores) |
+| M1a Weak-order violations | A weaker topic gets fewer minutes | Pairs with raw score_a < score_b and m_a < m_b **(P9: raw scores)** | 0 | Q7 |
 | M1b Target-allocation gap | How far the split is from the weakness-based target | D below | D ≤ 0.15 | T5/T6 as one number |
 | M2 Utilization | Share of usable time assigned | U = M / U₀ | 0.50 ≤ U ≤ 0.85 | Q4, new upper bound |
 | M3 Short sessions | Fragments too short to study | P₁₅ = sessions with ℓ_i < 15 / all sessions | P₁₅ ≤ 0.10 | Q5 |
 | M4 Conflicts | Sessions overlapping busy events, other sessions, outside W or outside [S, E) | Sum of violations C | C = 0 | H1–H3, H5 |
-| M5a Movable sessions | Is there room to move a missed session | R below | R ≥ 0.90 | New |
+| M5a Movable sessions | Is there room to move a missed session | R below, over sessions before the final window L **(P9)** | R ≥ 0.90 | New |
 | M5b Adjustment success | Does the adjustment API actually move it | Successful adjustments / requests | ≥ 0.90 | T8 |
 
 **M1b.** The target share τ_t gives every topic a base of 1 plus up to 1 for weakness, so the strongest and weakest topics differ by at most 2×, as in P10's design. D is the distance between actual and target shares: 0 = identical, 1 = completely different.
@@ -75,7 +75,7 @@ Each metric is computed per plan; over the evaluation set we report the share of
 
 **M4 is non-negotiable.** A plan with C > 0 fails whatever its other metrics. A busy event sent in the request but missing from the plan (H5) counts as one violation.
 
-**M5a.** Treat session i as missed and check whether a free interval of ℓ_i minutes exists after it ends and before the exam, without touching other sessions. The free set F is W minus busy events and every session other than i. It needs no model call, so it is computed for every plan.
+**M5a.** For each session i that ends before the final window L (P9: review sessions inside L are excluded, since a missed review just before the exam cannot be made up), treat it as missed and check whether a free interval of ℓ_i minutes exists after it ends and before the exam, without touching other sessions. The free set F is W minus busy events and every session other than i. It needs no model call, so it is computed for every plan.
 
 ```math
 R = \frac{\left|\{\, i : \exists\, [x, y] \subseteq F \setminus \{s_i\},\ x \ge b_i,\ y \le E,\ y - x \ge \ell_i \,\}\right|}{N}
@@ -87,17 +87,17 @@ M5b can be measured only on the 15 adjustment cases; M5a covers every plan. P8 c
 
 A checks rules and priorities. B checks whether the same minutes are arranged so the learner remembers more and gets closer to passing. All three are computed from the plan.
 
-| Metric | Measures | Computation | Threshold (proposed) | Rationale |
+| Metric | Measures | Computation | Threshold | Rationale |
 | --- | --- | --- | --- | --- |
 | M6 Spacing | Is a topic spread over several days instead of one | Among topics with ≥ 60 min, the share appearing on ≥ 2 different days | ≥ 0.80 | The same time spread over days is remembered longer (spacing effect) |
-| M7 Final review | Are topics revisited just before the exam | Topics with a session in the final window L / 8 | ≥ 0.75, and the weakest topic always included | Material not revisited before the exam is forgotten |
-| M8 Subject balance | Is one subject starved, risking a fail | The smaller of the two subjects' minute shares g = Σ m_t (t in subject) / M | ≥ 0.30 | Below 40 points in either subject fails the exam |
+| M7 Final review | Are topics revisited just before the exam | Topics with a session in the final window L / 8 | ≥ 0.50 **(P9, was 0.75)**, and the weakest topic always included | Material not revisited before the exam is forgotten |
+| M8 Subject balance | Is one subject starved, risking a fail | The smaller of the two subjects' minute shares g = Σ m_t (t in subject) / M | ≥ 0.25 **(P9, was 0.30)** | Below 40 points in either subject fails the exam |
 
 **M6 and M3 pull against each other.** Splitting too finely raises short sessions (M3); grouping too much crams a topic into one day (M6). The two are judged together. Topics with under 60 minutes are excluded from M6 because they cannot form two 30-minute sessions.
 
-**Final window L for M7** is the last 20% of the preparation period, at least 3 days (a 21-day plan → the last 4 days). The app has no separate practice-question sessions, so review is measured only as another session on the same topic.
+**Final window L for M7 (P9)** is the stretch before the exam that holds the last 20% of the usable minutes (was: the last 20% of calendar days). With four study days a week, the calendar version left room for only two or three topics, so even a good plan failed. The app has no separate practice-question sessions, so review is measured only as another session on the same topic.
 
-**M8 follows the exam rule.** The 컴활 2급 written exam has 20 questions each in 컴퓨터 일반 and 스프레드시트 일반; a pass needs at least 40 points in each subject and a 60-point average ([source](https://winspec.co.kr/community/freeboard/131339894)). Our topics are 3 in 컴퓨터 일반 and 5 in 스프레드시트 일반, so an even split per topic already gives 컴퓨터 일반 only 37.5%; weak spreadsheet topics can push it lower, hence the 0.30 floor.
+**M8 follows the exam rule.** The 컴활 2급 written exam has 20 questions each in 컴퓨터 일반 and 스프레드시트 일반; a pass needs at least 40 points in each subject and a 60-point average ([source](https://winspec.co.kr/community/freeboard/131339894)). Our topics are 3 in 컴퓨터 일반 and 5 in 스프레드시트 일반, so an even split per topic already gives 컴퓨터 일반 only 37.5%; weak spreadsheet topics can push it lower, hence a floor. P9 lowered it to 0.25: a learner strong in 컴퓨터 일반 gets exactly 0.30 under the weakness weights, so 0.30 failed correct plans.
 
 ## C. Outcome metrics
 
@@ -142,4 +142,4 @@ There is no single composite score: averaging metrics that pull against each oth
 3. Change the planning logic using the fixed metrics. Candidates: a utilization cap (keep slack), spreading each topic over at least two days, a review session in the final window.
 4. Run before and after on the same 46 cases and report per-metric pass rates.
 
-**Still open:** the thresholds (especially the M2 upper bound 0.85 and the M8 floor 0.30), whether to smooth diagnostic scores, and the length of M7's final window — all decided in P9 with the example plans.
+**Decided in P9:** M1a uses raw scores (smoothing stays only in M1b's target), M5a counts only sessions before L, L is the last 20% of usable minutes, M7 ≥ 0.50, M8 ≥ 0.25. M2 (0.50–0.85), M3, M5a (0.90) and M6 thresholds were kept.

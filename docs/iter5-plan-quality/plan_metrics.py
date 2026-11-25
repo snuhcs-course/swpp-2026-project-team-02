@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 FMT = "%Y/%m/%d/%H/%M"
 TH = {"M1a": 0, "M1b": 0.15, "M2_lo": 0.50, "M2_hi": 0.85, "M3": 0.10, "M5a": 0.90,
-      "M6": 0.80, "M7": 0.75, "M8": 0.30}
+      "M6": 0.80, "M7": 0.50, "M8": 0.25}  # P9: M7 0.75 -> 0.50, M8 0.30 -> 0.25
 
 
 def setup(backend):
@@ -74,7 +74,8 @@ def metrics(req, stats, rows, subject_of):
     shat = {t: (c + 1) / (n + 2) for t, (c, n) in stats.items()}
     w = {t: 1 - shat[t] for t in topics}
     # M1
-    inv = sum(1 for x in topics for y in topics if shat[x] < shat[y] and m[x] < m[y])
+    raw = {t: c / n for t, (c, n) in stats.items()}
+    inv = sum(1 for x in topics for y in topics if raw[x] < raw[y] and m[x] < m[y])  # raw scores (P9)
     tau_den = sum(1 + w[t] for t in topics)
     D = 0.5 * sum(abs(m[t] / M - (1 + w[t]) / tau_den) for t in topics) if M else 1.0
     # M2, M3
@@ -89,21 +90,31 @@ def metrics(req, stats, rows, subject_of):
         if any(a < y and x < b for j, (_, x, y) in enumerate(study) if j != i): C += 1
         if subtract([(a, b)], free): C += 1  # part of the session lies outside the entered free time
     C += max(0, len(req.busy_periods) - len(ext))  # H5: busy rows missing from the plan
-    # M5a
-    movable = 0
+    # final window L (P9): the last 20% of usable minutes before the exam
+    acc, L0 = 0.0, S
+    for a, b in sorted(free, reverse=True):
+        need = 0.2 * U0 - acc
+        seg = (b - a).total_seconds() / 60
+        if seg >= need:
+            L0 = b - timedelta(minutes=need); break
+        acc += seg; L0 = a
+    # M5a (P9): sessions before the final window need a later free slot of the same length
+    movable, pre = 0, 0
     for i, (_, a, b) in enumerate(study):
+        if b > L0:
+            continue
+        pre += 1
         others = [(x, y) for j, (_, x, y) in enumerate(study) if j != i]
         segs = subtract(free, others)
         segs = [(max(x, b), min(y, E)) for x, y in segs]
         if any((y - x).total_seconds() / 60 >= lens[i] for x, y in segs if x < y):
             movable += 1
-    R = movable / N if N else 0.0
+    R = movable / pre if pre else 1.0
     # M6
     elig = [t for t in topics if m[t] >= 60]
     days = {t: {a.date() for tt, a, _ in study if tt == t} for t in topics}
     M6 = sum(len(days[t]) >= 2 for t in elig) / len(elig) if elig else 1.0
     # M7
-    L0 = E - max(timedelta(days=3), (E - S) * 0.2)
     final = {t for t, a, b in study if b > L0}
     weakest = min(shat.values()) if shat else 0
     M7 = len(final & set(topics)) / len(topics) if topics else 0.0

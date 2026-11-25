@@ -1,6 +1,6 @@
 # P8: Plan quality of the integration branches
 
-Iteration 5 · 남경민 · 2026-11-25. Metrics and thresholds: [P7](P7_PLAN_QUALITY_METRICS.md) (thresholds still proposed).
+Iteration 5 · 남경민 · 2026-11-25. Metrics: the P7 draft definitions. P9 later revised M1a, M5a, M7 and M8; the same branches recalculated with the final definitions are in [P9 results](P9_RESULTS.md).
 
 **Result:** both integration branches pass the hard constraints (M4) and the weak-topic and subject-balance metrics, but no plan passes every metric. All 42 plans use 100% of the usable time (M2), so no missed session can be moved (M5a = 0), and 98% of plans skip a final review of most topics (M7).
 
