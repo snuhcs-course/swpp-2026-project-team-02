@@ -33,10 +33,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
+import androidx.navigation.NamedNavArgument
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.swpp.licenseplanner.data.CalendarAccess
@@ -68,6 +72,7 @@ import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
 import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
+import kotlinx.coroutines.flow.first
 
 /** One route per step, plus home, plan list, one plan view per plan ordinal, and adjustment. */
 private object Routes {
@@ -91,6 +96,31 @@ private object Routes {
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
+
+private fun NavHostController.canGoBack(entry: NavBackStackEntry?): Boolean =
+    entry != null && currentBackStackEntry === entry && entry.destination.route != Routes.HOME &&
+        entry.lifecycle.currentState == Lifecycle.State.RESUMED
+
+private fun NavHostController.goBack(entry: NavBackStackEntry?, route: String? = null) {
+    if (!canGoBack(entry)) return
+    if (route == null) popBackStack() else popBackStack(route, inclusive = false)
+}
+
+private suspend fun NavHostController.goBackAfterResume(entry: NavBackStackEntry, route: String? = null) {
+    entry.lifecycle.currentStateFlow.first { it == Lifecycle.State.RESUMED || it == Lifecycle.State.DESTROYED }
+    goBack(entry, route)
+}
+
+/** Screen-specific handlers are composed inside this one and take precedence. */
+private fun NavGraphBuilder.screen(
+    nav: NavHostController,
+    route: String,
+    arguments: List<NamedNavArgument> = emptyList(),
+    content: @Composable (NavBackStackEntry) -> Unit,
+) = composable(route, arguments) { entry ->
+    BackHandler { nav.goBack(entry) }
+    content(entry)
+}
 
 /** Replaces the transient generate step with its result, so back returns to availability. */
 private fun NavHostController.showResult(route: String) = navigate(route) {
@@ -150,6 +180,7 @@ private fun exportCount(plan: SessionPlan) = CalendarExport.studyRows(plan.curre
 @Composable
 fun AppNavigation(viewModel: PlanFormViewModel) {
     val nav = rememberNavController()
+    val currentEntry by nav.currentBackStackEntryAsState()
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
@@ -193,11 +224,12 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         if (committedDraft != null) draftPrompt = "new"
         else if (!viewModel.discardDraft(DraftContinuation.NewCreation)) creationWaiting = true
     }
-    fun leaveCreation() {
+    fun leaveCreation(entry: NavBackStackEntry) {
+        if (!nav.canGoBack(entry)) return
         if (viewModel.creationExitNeedsDecision()) {
             draftWaiting = false
             draftPrompt = "exit"
-        } else nav.popBackStack()
+        } else nav.goBack(entry)
     }
     LaunchedEffect(draftDecision) {
         val decision = draftDecision ?: return@LaunchedEffect
@@ -205,7 +237,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         draftPrompt = null
         draftWaiting = false
         if (decision.continuation == DraftContinuation.NewCreation) nav.fromHome(Routes.CERTIFICATION)
-        else nav.popBackStack(Routes.HOME, inclusive = false)
+        else nav.currentBackStackEntry?.let { nav.goBackAfterResume(it, Routes.HOME) }
         viewModel.draftDecisionHandled()
     }
     if (draftPrompt != null || draftDecision != null) {
@@ -351,9 +383,13 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
     }
     calendarConflict?.let { state ->
+        val reviewEntry = currentEntry
         fun closeReview() {
+            if (state.kind == ConflictKind.Creation && !nav.canGoBack(reviewEntry)) return
             viewModel.cancelCalendarConflict()
-            if (state.kind == ConflictKind.Creation && viewModel.calendarConflict.value == null) nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+            if (state.kind == ConflictKind.Creation && viewModel.calendarConflict.value == null) {
+                nav.goBack(reviewEntry, Routes.AVAILABILITY)
+            }
         }
         CalendarConflictDialog(
             state = state,
@@ -421,7 +457,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 conflictNotices = noticeCounts,
             )
         }
-        composable(Routes.PLAN_LIST) {
+        screen(nav, Routes.PLAN_LIST) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             PlanListScreen(
@@ -430,19 +466,19 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 storage = planStorage,
                 onOpen = { ordinal -> nav.go(Routes.plan(ordinal)) },
                 onCreate = ::createPlan,
-                onBack = { nav.popBackStack() },
+                onBack = { nav.goBack(entry) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
                 conflictNotices = noticeCounts,
             )
         }
-        composable(Routes.ADJUST) {
+        screen(nav, Routes.ADJUST) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val selection by viewModel.adjustment.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
             if (plan == null) {
-                LaunchedEffect(Unit) { nav.popBackStack() }
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
             } else {
                 PlanAdjustmentScreen(
                     plan = plan,
@@ -452,7 +488,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
-                    onBack = { nav.popBackStack() },
+                    onBack = { nav.goBack(entry) },
                     onList = { nav.fromHome(Routes.PLAN_LIST) },
                     onCreate = ::createPlan,
                     onRetrySave = viewModel::retrySave,
@@ -476,48 +512,48 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             }
         }
         // The top-bar back, like system back, returns home from the first input step.
-        composable(Routes.CERTIFICATION) {
-            BackHandler(onBack = ::leaveCreation)
-            CertificationScreen(form, viewModel::selectCertification, onBack = ::leaveCreation) {
+        screen(nav, Routes.CERTIFICATION) { entry ->
+            BackHandler { leaveCreation(entry) }
+            CertificationScreen(form, viewModel::selectCertification, onBack = { leaveCreation(entry) }) {
                 viewModel.reachCreationStep(CreationStep.DATES)
                 nav.go(Routes.DATES)
             }
         }
-        composable(Routes.DATES) {
+        screen(nav, Routes.DATES) { entry ->
             DatesScreen(
                 form = form,
                 onStartChange = viewModel::setPreparationStart,
                 onExamChange = viewModel::setExamDate,
-                onBack = { nav.popBackStack() },
+                onBack = { nav.goBack(entry) },
                 onContinue = { viewModel.reachCreationStep(CreationStep.LEVEL); nav.go(Routes.LEVEL) },
             )
         }
-        composable(Routes.LEVEL) {
-            LevelScreen(form, viewModel::setLevel, onBack = { nav.popBackStack() }) {
+        screen(nav, Routes.LEVEL) { entry ->
+            LevelScreen(form, viewModel::setLevel, onBack = { nav.goBack(entry) }) {
                 viewModel.showQuestion(0)
                 viewModel.reachCreationStep(CreationStep.QUESTIONS)
                 nav.go(Routes.QUESTIONS)
             }
         }
-        composable(Routes.QUESTIONS) {
+        screen(nav, Routes.QUESTIONS) { entry ->
             QuestionsScreen(
                 form = form,
                 loadState = questionLoad,
                 index = questionIndex,
-                onShowQuestion = { viewModel.showQuestion(it) },
+                onShowQuestion = { nav.canGoBack(entry) && viewModel.showQuestion(it) },
                 onLoad = viewModel::loadQuestions,
                 onAnswer = viewModel::answer,
-                onExit = { nav.popBackStack(Routes.LEVEL, inclusive = false) },
+                onExit = { nav.goBack(entry, Routes.LEVEL) },
                 onFinished = { viewModel.reachCreationStep(CreationStep.RESULTS); nav.go(Routes.RESULTS) },
             )
         }
-        composable(Routes.RESULTS) {
-            ResultsScreen(form, onBack = { nav.popBackStack() }) {
+        screen(nav, Routes.RESULTS) { entry ->
+            ResultsScreen(form, onBack = { nav.goBack(entry) }) {
                 viewModel.reachCreationStep(CreationStep.AVAILABILITY)
                 nav.go(Routes.AVAILABILITY)
             }
         }
-        composable(Routes.AVAILABILITY) {
+        screen(nav, Routes.AVAILABILITY) { entry ->
             val generation by viewModel.generation.collectAsStateWithLifecycle()
             val availabilityWeek by viewModel.availabilityWeek.collectAsStateWithLifecycle()
             AvailabilityScreen(
@@ -535,7 +571,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onClearWeek = { viewModel.clearWeek(it) },
                     onResetWeek = { viewModel.resetWeek(it) },
                 ),
-                onBack = { nav.popBackStack() },
+                onBack = { nav.goBack(entry) },
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
                 onReadCalendar = { viewModel.startCalendarRead() },
                 onOpenCalendarSettings = { openAppSettings(context) },
@@ -545,7 +581,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         // current value (a host-level collector could still hold the previous result).
         // A new plan is shown once it is saved; a failed save stays here with its own retry.
         // The new plan's view replaces the creation steps, so back from it returns home.
-        composable(Routes.GENERATE) {
+        screen(nav, Routes.GENERATE) { entry ->
             val generation by viewModel.generation.collectAsStateWithLifecycle()
             fun showGeneratedPlan() {
                 viewModel.generatedPlan.value?.let { nav.fromHome(Routes.plan(it)) }
@@ -561,25 +597,27 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 state = generation,
                 storage = storage,
                 onRetry = viewModel::retryGeneration,
-                onEdit = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                onEdit = { nav.goBack(entry, Routes.AVAILABILITY) },
                 onRetrySave = viewModel::retrySave,
                 onShowPlan = ::showGeneratedPlan,
                 onCancelGeneration = {
-                    viewModel.cancelGeneration()
-                    nav.popBackStack(Routes.AVAILABILITY, inclusive = false)
+                    if (nav.canGoBack(entry)) {
+                        viewModel.cancelGeneration()
+                        nav.goBack(entry, Routes.AVAILABILITY)
+                    }
                 },
             )
         }
         // The route names the plan, so every plan view on the stack keeps its own plan; it reads
         // the stored plan, so an adjustment made above it is shown on return.
-        composable(Routes.PLAN, arguments = listOf(navArgument(Routes.PLAN_ORDINAL) { type = NavType.IntType })) { entry ->
+        screen(nav, Routes.PLAN, arguments = listOf(navArgument(Routes.PLAN_ORDINAL) { type = NavType.IntType })) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val generatedPlan by viewModel.generatedPlan.collectAsStateWithLifecycle()
             val ordinal = entry.arguments?.getInt(Routes.PLAN_ORDINAL)
             val plan = plans.firstOrNull { it.ordinal == ordinal }
             if (plan == null) {
-                LaunchedEffect(Unit) { nav.popBackStack() }
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
             } else {
                 PlanScreen(
                     plan = plan,
@@ -589,10 +627,10 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onExport = { viewModel.startCalendarExport(plan.ordinal) },
                     onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
                     regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
-                    onBack = { nav.popBackStack() },
+                    onBack = { nav.goBack(entry) },
                     onEditInputs = { nav.resumeCreation(CreationStep.AVAILABILITY) },
                     onCreate = ::createPlan,
-                    onHome = { nav.popBackStack(Routes.HOME, inclusive = false) },
+                    onHome = { nav.goBack(entry, Routes.HOME) },
                     onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
                     storage = storage,
@@ -607,13 +645,13 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         }
         // Re-planning sits above the plan view it was started from, so every exit pops back to it;
         // a placed result also shows the week of its first new session there.
-        composable(Routes.REMAINING_STUDY) {
+        screen(nav, Routes.REMAINING_STUDY) { entry ->
             val current = remainingStudy
             fun close() {
-                if (viewModel.closeRemainingStudy()) nav.popBackStack()
+                if (nav.canGoBack(entry) && viewModel.closeRemainingStudy()) nav.goBack(entry)
             }
             if (current == null) {
-                LaunchedEffect(Unit) { nav.popBackStack(Routes.REMAINING_STUDY, inclusive = true) }
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
             } else {
                 RemainingStudyScreen(current, storage,
                     onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
@@ -627,9 +665,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                             val ids = result.input.work.instructions.map { it.replacementScheduleId }.toSet()
                             result.rows.firstOrNull { it.scheduleId in ids }?.scheduleId
                         }
-                        if (viewModel.closeRemainingStudy()) {
+                        if (nav.canGoBack(entry) && viewModel.closeRemainingStudy()) {
                             remainingFocus = focus
-                            nav.popBackStack()
+                            nav.goBack(entry)
                         }
                     })
             }
@@ -637,7 +675,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         // The report editor sits above the plan or saved-plan screen it was opened from, so closing
         // it returns to the same week with the adjustment selection untouched. A confirmed save
         // closes it; popping is idempotent, so a repeated empty frame cannot leave that screen.
-        composable(Routes.CHECK_IN) {
+        screen(nav, Routes.CHECK_IN) { entry ->
             val editor by viewModel.checkIn.collectAsStateWithLifecycle()
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val current = editor
@@ -648,7 +686,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             if (current == null || plan == null) {
                 LaunchedEffect(Unit) {
                     viewModel.closeCheckIn()
-                    nav.popBackStack(Routes.CHECK_IN, inclusive = true)
+                    nav.goBackAfterResume(entry)
                 }
             } else {
                 StudyCheckInScreen(
@@ -658,32 +696,32 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onMinutes = viewModel::setCheckInMinutes,
                     onSave = { viewModel.saveCheckIn() },
                     onRetrySave = viewModel::retrySave,
-                    onClose = viewModel::closeCheckIn,
+                    onClose = { if (nav.canGoBack(entry)) viewModel.closeCheckIn() },
                 )
             }
         }
-        composable(Routes.SHORTFALL) {
+        screen(nav, Routes.SHORTFALL) { entry ->
             val generation by viewModel.generation.collectAsStateWithLifecycle()
             val shortfall = generation as? GenerationState.DemoShortfall
             if (shortfall == null) {
-                LaunchedEffect(Unit) { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) }
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry, Routes.AVAILABILITY) }
             } else {
                 ShortfallScreen(
                     required = shortfall.required,
                     available = shortfall.available,
                     onEditDates = { nav.go(Routes.EDIT_EXAM_DATE) },
-                    onEditAvailability = { nav.popBackStack(Routes.AVAILABILITY, inclusive = false) },
+                    onEditAvailability = { nav.goBack(entry, Routes.AVAILABILITY) },
                 )
             }
         }
         // A changed date commits and recalculates once,
         // replacing the old warning and this editor; back or an unchanged date returns to the warning.
         // A tap that lands after the editor started leaving is ignored, so it cannot pop the new result.
-        composable(Routes.EDIT_EXAM_DATE) { entry ->
-            ExamDateEditScreen(form, onBack = { nav.popBackStack() }) { date ->
+        screen(nav, Routes.EDIT_EXAM_DATE) { entry ->
+            ExamDateEditScreen(form, onBack = { nav.goBack(entry) }) { date ->
                 when {
-                    !entry.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) -> Unit
-                    date == form.examDate -> nav.popBackStack()
+                    !nav.canGoBack(entry) -> Unit
+                    date == form.examDate -> nav.goBack(entry)
                     else -> {
                         viewModel.setExamDate(date)
                         if (viewModel.generate()) {

@@ -1054,6 +1054,50 @@ class MainFlowUiTest {
         compose.waitForIdle()
     }
 
+    @Test fun rapidTopBarBackFromCertificationKeepsHomeUsable() = withApp {
+        click("계획 생성", substring = true)
+        show("어떤 시험을 준비하나요?")
+        compose.onNodeWithContentDescription("뒤로").performTouchInput {
+            click(center)
+            click(center)
+        }
+        show("무엇을 할까요?")
+        click("계획 생성", substring = true)
+        show("어떤 시험을 준비하나요?")
+    }
+
+    @Test fun rapidTopBarBackFromSavedPlansKeepsHomeUsable() = withApp {
+        click("내 계획")
+        awaitPlanList()
+        compose.onNodeWithContentDescription("뒤로").performTouchInput {
+            click(center)
+            click(center)
+        }
+        show("무엇을 할까요?")
+        click("내 계획")
+        awaitPlanList()
+    }
+
+    @Test fun rapidSystemBackFromAdjustmentKeepsAValidPlanRoute() = withApp { host ->
+        seedFullPlanForFreeTime(host)
+        adjustShownPlan()
+        val activity = compose.activity
+        compose.runOnUiThread { repeat(4) { activity.onBackPressedDispatcher.onBackPressed() } }
+        if (!activity.isFinishing && !activity.isDestroyed) {
+            compose.waitUntil("Back leaves a visible plan route or home", 10_000) {
+                listOf(planViewTitle(), hasText(PLAN_LIST_HEADING), hasText("무엇을 할까요?")).any {
+                    compose.onAllNodes(it).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            repeat(2) {
+                if (compose.onAllNodesWithText("무엇을 할까요?").fetchSemanticsNodes().isEmpty()) pressBack()
+            }
+            show("무엇을 할까요?")
+            click("내 계획")
+            awaitPlanList()
+        }
+    }
+
     @Test
     fun createsWrittenDemoPlanThroughEveryQuestionAndBrowsesWeeks() = withApp { host ->
         generatePlan(host)
