@@ -1,0 +1,173 @@
+diff --git a/backend/license_planner/plan_quality.py b/backend/license_planner/plan_quality.py
+new file mode 100644
+index 0000000..447ffc4
+--- /dev/null
++++ b/backend/license_planner/plan_quality.py
+@@ -0,0 +1,117 @@
++"""P9 plan-quality adjustments for diagnosed plans (Iteration 5).
++
++Two changes on top of the P10 topic split, both keeping every topic's total
++and the weak-topic order:
++
++1. Buffer days: before the final review window, every BUFFER_EVERY-th study
++   date is left empty, so a missed session has a later free slot to move to.
++2. Final review: the dates holding the last FINAL_SHARE of the study minutes
++   rotate through the topics, weakest first, in chunks of at least
++   MIN_REVIEW_MINUTES, instead of finishing one topic's contiguous block.
++"""
++from __future__ import annotations
++
++from .topic_budget import rebalance_topic_minutes
++
++FINAL_SHARE = 0.2
++BUFFER_EVERY = 4
++MIN_REVIEW_MINUTES = 30
++REVIEW_SESSION = 45
++
++
++def final_window_dates(workload: list[dict]) -> set[str]:
++    """Dates (from the end) that hold the last FINAL_SHARE of the workload."""
++    total = sum(item["minutes"] for item in workload)
++    chosen, acc = set(), 0
++    for item in sorted(workload, key=lambda row: row["date"], reverse=True):
++        if acc >= FINAL_SHARE * total:
++            break
++        chosen.add(item["date"])
++        acc += item["minutes"]
++    return chosen
++
++
++def reserve_buffer_days(workload: list[dict], minimum_total: int) -> list[dict]:
++    """Empty the last date before the final window and every BUFFER_EVERY-th date counting back from it."""
++    final = final_window_dates(workload)
++    early = sorted((item for item in workload if item["date"] not in final), key=lambda row: row["date"])
++    buffers = {item["date"] for back, item in enumerate(reversed(early)) if back % BUFFER_EVERY == 0}
++    kept = [item for item in workload if item["date"] not in buffers]
++    if sum(item["minutes"] for item in kept) < minimum_total or len(kept) == len(final):
++        return workload  # too little time or nothing left before the final window: keep the original
++    return sorted(kept, key=lambda row: row["date"])
++
++
++def _pack(dates: list[tuple[str, int]], order: list[tuple[str, int]]) -> list[dict]:
++    """Fill dates in order with each topic's minutes as one contiguous run."""
++    rows, queue = [], [list(item) for item in order if item[1] > 0]
++    for day, capacity in dates:
++        while capacity > 0 and queue:
++            topic, left = queue[0]
++            take = min(capacity, left)
++            rows.append({"date": day, "topic": topic, "minutes": take})
++            capacity -= take
++            queue[0][1] -= take
++            if queue[0][1] == 0:
++                queue.pop(0)
++    return rows
++
++
++def _merge(rows: list[dict]) -> list[dict]:
++    merged: list[dict] = []
++    for row in rows:
++        if row["minutes"] <= 0:
++            continue
++        if merged and merged[-1]["date"] == row["date"] and merged[-1]["topic"] == row["topic"]:
++            merged[-1]["minutes"] += row["minutes"]
++        else:
++            merged.append(dict(row))
++    return merged
++
++
++def add_final_review(plan: list[dict], weakest_first: list[str], statistics) -> list[dict]:
++    """Rotate the final window through the topics, weakest first, keeping every topic and date total.
++
++    The earlier dates keep P10's packing; only the minutes exchanged with the
++    final window are relabelled, latest rows first, to keep splits few.
++    """
++    per_date: dict[str, int] = {}
++    totals: dict[str, int] = {}
++    for row in plan:
++        per_date[row["date"]] = per_date.get(row["date"], 0) + row["minutes"]
++        totals[row["topic"]] = totals.get(row["topic"], 0) + row["minutes"]
++    final = sorted(final_window_dates([{"date": d, "minutes": m} for d, m in per_date.items()]))
++    final_minutes = sum(per_date[day] for day in final)
++    order = [topic for topic in weakest_first if topic in totals]
++    count = min(len(order), final_minutes // MIN_REVIEW_MINUTES)
++    if count < 2 or len(final) == len(per_date):
++        return plan
++    original_late: dict[str, int] = {}
++    for row in plan:
++        if row["date"] in final:
++            original_late[row["topic"]] = original_late.get(row["topic"], 0) + row["minutes"]
++    # Split each final date into sessions of about REVIEW_SESSION minutes (never under the minimum)
++    # and give the sessions to topics in rotation, weakest first.
++    sessions = []
++    for day in final:
++        capacity = per_date[day]
++        pieces = max(1, capacity // REVIEW_SESSION)
++        base, extra = divmod(capacity, pieces)
++        sessions += [(day, base + (1 if k < extra else 0)) for k in range(pieces)]
++    review: dict[str, int] = {t: 0 for t in order}
++    late = []
++    k = 0
++    for day, minutes in sessions:
++        for _ in range(len(order)):  # next topic in rotation that still has minutes to give
++            topic = order[k % len(order)]
++            k += 1
++            if review[topic] + minutes <= totals[topic] - 1:
++                break
++        else:
++            return plan
++        review[topic] += minutes
++        late.append({"date": day, "topic": topic, "minutes": minutes})
++    early_budget = {t: totals[t] - review[t] for t in order}
++    early_workload = [{"date": day, "minutes": minutes} for day, minutes in sorted(per_date.items()) if day not in final]
++    early, _ = rebalance_topic_minutes(statistics, early_workload, budget=early_budget)
++    return _merge(early) + _merge(late)
+diff --git a/backend/license_planner/tools.py b/backend/license_planner/tools.py
+index 91ded2f..60fdacf 100644
+--- a/backend/license_planner/tools.py
++++ b/backend/license_planner/tools.py
+@@ -10,6 +10,7 @@ from .scheduler import (
+     summarize_topic_results, usable_minutes_by_date,
+ )
+ from .settings import DATETIME_FORMAT
++from .plan_quality import add_final_review, reserve_buffer_days
+ from .topic_budget import POLICY_VERSION, PLACEMENT_POLICY_VERSION, rebalance_topic_minutes, validate_topic_budget
+ 
+ 
+@@ -204,7 +205,12 @@ class PlannerTools:
+                 if not workload:
+                     # 날짜·가능 시간 누락은 일정 배치기의 기존 오류 문구로 보고합니다.
+                     generate_schedule(self.request, cert, self.topic_statistics, [])
++                # P9: keep buffer days for missed sessions, then rotate the final window for review.
++                workload = reserve_buffer_days(workload, len(self.topic_statistics))
+                 normalized_plan, topic_budget = rebalance_topic_minutes(self.topic_statistics, workload)
++                weakest_first = [s.topic for s in sorted(self.topic_statistics,
++                                                         key=lambda s: (s.score_percent, s.topic.casefold()))]
++                normalized_plan = add_final_review(normalized_plan, weakest_first, self.topic_statistics)
+                 schedule = generate_schedule(self.request, cert, self.topic_statistics, normalized_plan,
+                                              preserve_topic_order=True)
+                 total = sum(row["minutes"] for row in workload)
+diff --git a/backend/license_planner/topic_budget.py b/backend/license_planner/topic_budget.py
+index 415dc62..eeca5ca 100644
+--- a/backend/license_planner/topic_budget.py
++++ b/backend/license_planner/topic_budget.py
+@@ -136,7 +136,8 @@ def validate_topic_budget(statistics: tuple[TopicStatistics, ...], budget: dict[
+             raise ValueError("topic budget violates weak-topic order")
+ 
+ 
+-def rebalance_topic_minutes(statistics: tuple[TopicStatistics, ...], daily_plan: list[dict]) -> tuple[list[dict], dict[str, int]]:
++def rebalance_topic_minutes(statistics: tuple[TopicStatistics, ...], daily_plan: list[dict],
++                            budget: dict[str, int] | None = None) -> tuple[list[dict], dict[str, int]]:
+     """Preserve every proposed date's total while meeting exact global budgets.
+ 
+     The caller validates the original plan before rebalancing, and runs the
+@@ -153,7 +154,9 @@ def rebalance_topic_minutes(statistics: tuple[TopicStatistics, ...], daily_plan:
+     for item in daily_plan:
+         daily_totals[item["date"]] += item["minutes"]
+     total = sum(daily_totals.values())
+-    budget = calculate_topic_budget(statistics, total)
++    if budget is None:
++        budget = calculate_topic_budget(statistics, total)
++    budget = {topic: minutes for topic, minutes in budget.items() if minutes > 0}
+     topics = list(budget)
+     amounts = list(budget.values())
+     days = sorted(daily_totals)
