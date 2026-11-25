@@ -114,7 +114,9 @@ class LiveReassessmentRepositoryTest {
         enqueue(response("reassessed"))
         val committed = commit() as ReassessmentOutcome.Committed
         assertEquals(revised, committed.response.schedules)
-        assertTrue(ApiJson.decodeFromString(ReassessmentRequest.serializer(), server.takeRequest().body.readUtf8()).commit)
+        val sent = ApiJson.decodeFromString(ReassessmentRequest.serializer(), server.takeRequest().body.readUtf8())
+        assertTrue(sent.commit)
+        assertEquals(revised, sent.previewedSchedules)
         assertEquals(1, server.requestCount)
     }
 

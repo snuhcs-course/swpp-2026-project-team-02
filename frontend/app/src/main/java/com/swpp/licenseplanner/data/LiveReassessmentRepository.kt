@@ -62,7 +62,8 @@ class LiveReassessmentRepository(
             weeklyAvailability = source.original.weeklyAvailability, availabilityOverrides = source.original.availabilityOverrides,
             preparationStart = source.original.preparationStart, examDate = source.original.examDate,
             replanFrom = WireDateTime.format(input.replanFrom), keepScheduleIds = input.keep.sorted(),
-            firstNewStudyId = input.firstNewStudyId, assessmentResults = input.assessmentResults(source.original.certificationId))
+            firstNewStudyId = input.firstNewStudyId, assessmentResults = input.assessmentResults(source.original.certificationId),
+            previewedSchedules = previewed)
         val body = OneShotBody(ApiJson.encodeToString(ReassessmentRequest.serializer(), request)
             .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE))
         val http = Request.Builder().url(apiUrl(baseUrl, "/schedules/adjust")).post(body).build()
