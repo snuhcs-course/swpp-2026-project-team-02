@@ -1499,6 +1499,7 @@ class PlanFormViewModel(
 
     private fun stopFor(failure: ReassessmentFailure): ReassessmentStop = when (failure) {
         ReassessmentFailure.NothingToRevise -> ReassessmentStop.NothingLeft
+        ReassessmentFailure.MissingPlanContext -> ReassessmentStop.MissingPlanContext
         ReassessmentFailure.NotEnoughTime -> ReassessmentStop.NotEnoughTime
         ReassessmentFailure.PreviewExpired -> ReassessmentStop.Expired
     }

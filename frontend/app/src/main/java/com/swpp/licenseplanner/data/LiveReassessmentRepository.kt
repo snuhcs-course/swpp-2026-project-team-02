@@ -89,6 +89,8 @@ class LiveReassessmentRepository(
         val message = (error as? ApiError.InvalidInput)?.message.orEmpty()
         return when {
             error == ApiError.ReassessmentPreviewExpired -> ReassessmentOutcome.Rejected(ReassessmentFailure.PreviewExpired)
+            message.startsWith("NOTHING_TO_REVISE:") -> ReassessmentOutcome.Rejected(ReassessmentFailure.NothingToRevise)
+            message == MISSING_STORED_CONTEXT -> ReassessmentOutcome.Rejected(ReassessmentFailure.MissingPlanContext)
             message.startsWith("NOT_ENOUGH_TIME") -> ReassessmentOutcome.Rejected(ReassessmentFailure.NotEnoughTime)
             message.startsWith("mode must be") -> ReassessmentOutcome.ServerNeedsUpdate
             else -> ReassessmentOutcome.Failure(error)
@@ -115,3 +117,6 @@ class LiveReassessmentRepository(
         override fun isOneShot() = true
     }
 }
+
+private const val MISSING_STORED_CONTEXT = "This saved plan has no stored preparation period and study times. " +
+    "Create a new plan before re-planning remaining sessions."

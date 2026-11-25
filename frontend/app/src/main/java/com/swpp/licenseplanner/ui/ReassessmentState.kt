@@ -81,7 +81,7 @@ sealed interface ReassessmentState {
     data class Invalid(override val source: SessionPlan, val message: String) : ReassessmentState
 }
 
-enum class ReassessmentStop { NothingLeft, NotEnoughTime, Expired, PreviewFailed, CommitFailed }
+enum class ReassessmentStop { NothingLeft, MissingPlanContext, NotEnoughTime, Expired, PreviewFailed, CommitFailed }
 
 /** Whether leaving now could abandon a request or a save in progress; those steps cannot be left. */
 internal val ReassessmentState?.holdsCommit: Boolean

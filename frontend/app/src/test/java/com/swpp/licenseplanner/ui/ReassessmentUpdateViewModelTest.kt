@@ -230,6 +230,21 @@ class ReassessmentUpdateViewModelTest {
         assertEquals(0, o.server.commits.size)
     }
 
+    @Test fun missingServerContextAsksForANewPlanWithoutOfferingRetry() = runTest(dispatcher) {
+        val o = open()
+        o.server.previewFailures += ReassessmentOutcome.Rejected(ReassessmentFailure.MissingPlanContext)
+        results(o)
+        assertTrue(o.vm.previewReassessment())
+        advanceUntilIdle()
+
+        val stopped = o.vm.reassessment.value as ReassessmentState.Stopped
+        assertEquals(ReassessmentStop.MissingPlanContext, stopped.reason)
+        assertTrue(reassessmentStopText(stopped).second.contains("새 계획을 만들어 주세요"))
+        assertFalse(o.vm.previewReassessment())
+        assertEquals(listOf(a, b), o.vm.plans.value)
+        assertEquals(0, o.store.count)
+    }
+
     @Test fun failedPreviewUsesAdjustmentWordingKeepsTheAnswersAndChangesNothing() = runTest(dispatcher) {
         for (error in listOf(ApiError.Connection, ApiError.PlanConflict, ApiError.PlanNotFound, ApiError.RateLimited,
             ApiError.ServerFailure(500))) {

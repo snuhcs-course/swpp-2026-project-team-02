@@ -147,6 +147,17 @@ class LiveReassessmentRepositoryTest {
         assertEquals(5, server.requestCount)
     }
 
+    @Test fun noFutureUnreportedSessionsUsesTheNothingLeftOutcome() {
+        enqueueError(422, "INVALID_INPUT", "NOTHING_TO_REVISE: no future unreported study sessions")
+        assertEquals(ReassessmentOutcome.Rejected(ReassessmentFailure.NothingToRevise), preview())
+    }
+
+    @Test fun aServerPlanWithoutStoredStudyContextNeedsAReplacement() {
+        enqueueError(422, "INVALID_INPUT", "This saved plan has no stored preparation period and study times. " +
+            "Create a new plan before re-planning remaining sessions.")
+        assertEquals(ReassessmentOutcome.Rejected(ReassessmentFailure.MissingPlanContext), preview())
+    }
+
     @Test fun planWithoutServerIdentitySendsNothing() {
         val outcome = runBlocking { repository().preview(fixture.input(demo = true)) } as ReassessmentOutcome.Failure
         assertTrue(outcome.error is ApiError.InvalidInput)

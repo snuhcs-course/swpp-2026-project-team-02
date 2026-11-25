@@ -73,6 +73,8 @@ internal fun reassessmentChangedText(count: Int): String = "남은 공부 ${coun
 /** Title and body for a preview or update that stopped. */
 internal fun reassessmentStopText(state: ReassessmentState.Stopped): Pair<String, String> = when (state.reason) {
     ReassessmentStop.NothingLeft -> REASSESSMENT_NOTHING_LEFT to "지금부터 주제를 바꿀 수 있는 기록 없는 공부 일정이 없어요. 계획은 그대로예요."
+    ReassessmentStop.MissingPlanContext -> "저장된 준비 정보가 없어요" to
+        "서버에 이 계획의 준비 기간과 공부 시간이 저장되어 있지 않아요. 홈의 '계획 생성'에서 새 계획을 만들어 주세요."
     ReassessmentStop.NotEnoughTime -> "다시 나눌 남은 시간이 부족해요" to
         "남은 공부 시간이 진단한 주제 수보다 적어 주제별로 다시 나눌 수 없어요. 계획은 그대로예요."
     ReassessmentStop.Expired -> "미리 본 내용이 지난 내용이에요" to
