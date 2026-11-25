@@ -287,7 +287,10 @@ def get_reassessment_questions(certification_id: str) -> dict[str, Any]:
     item must have complete validated content, a catalog topic and explanation.
     Never select all drafts implicitly or promote them to reviewed records.
     """
-    snapshot = _snapshot(certification_id)
+    return _reassessment_questions(certification_id, _snapshot(certification_id))
+
+
+def _reassessment_questions(certification_id: str, snapshot: _BankSnapshot) -> dict[str, Any]:
     document = json.loads(snapshot.document_json)
     ids = document.get("reassessment_question_ids")
     try:
@@ -310,22 +313,20 @@ def get_reassessment_questions(certification_id: str) -> dict[str, Any]:
         check_total([float(question["possible_score"]) for question in selected], "reassessment questions")
         if {question["topic"] for question in selected} != {question.topic for question in snapshot.selected}:
             raise QuestionContentError("reassessment and onboarding topic coverage must match")
-    except QuestionContentError as error:
+    except (QuestionContentError, KeyError) as error:
         raise AssessmentConfigurationError(certification_id, str(error)) from error
     return {"certification_id": certification_id, "certification_name": snapshot.certification_name,
             "questions": selected}
 
 
-def reassessment_topic_results(assessment: Any) -> list[tuple[str, float, bool]]:
+def reassessment_topic_results(certification_id: str, assessment: Any) -> list[tuple[str, float, bool]]:
     """Validate the whole selected quiz against server records, never client-supplied topics or keys."""
-    if not isinstance(assessment, dict) or not isinstance(assessment.get("certification_id"), str):
-        raise ValueError("assessment_results.certification_id must be a string")
-    certification_id = assessment["certification_id"]
+    submitted = parse_assessment_results(certification_id, assessment)
     try:
-        questions = get_reassessment_questions(certification_id)["questions"]
+        snapshot = _snapshot(certification_id)
     except KeyError:
         raise ValueError("Unsupported assessment_results.certification_id") from None
-    submitted = parse_assessment_results(certification_id, assessment)
+    questions = _reassessment_questions(certification_id, snapshot)["questions"]
     by_id = {question["id"]: question for question in questions}
     if {item.problem_id for item in submitted} != set(by_id):
         raise ValueError("assessment_results must contain every selected reassessment question exactly once")

@@ -48,20 +48,40 @@ def running_readers(read, stop, count=4):
     """Stop/join readers before temporary sources or module patches are restored."""
     readers = [threading.Thread(target=read) for _ in range(count)]
     started = []
+    body_error = None
     try:
         for reader in readers:
             reader.start()
             started.append(reader)
         yield readers
+    except BaseException as error:
+        body_error = error
+        raise
     finally:
         stop.set()
         for reader in started:
             reader.join(timeout=10)
         if any(reader.is_alive() for reader in started):
-            raise AssertionError("question-bank reader did not terminate")
+            message = "question-bank reader did not terminate"
+            if body_error is None:
+                raise AssertionError(message)
+            body_error.add_note(message)
 
 
 class SnapshotCacheTests(unittest.TestCase):
+    def test_reader_timeout_preserves_writer_error(self):
+        with patch("threading.Thread") as reader:
+            reader.return_value.is_alive.return_value = True
+            failure = PermissionError("could not replace bank")
+            with self.assertRaises(PermissionError) as raised:
+                with running_readers(lambda: None, threading.Event(), count=1):
+                    raise failure
+            self.assertIs(raised.exception, failure)
+            self.assertEqual(failure.__notes__, ["question-bank reader did not terminate"])
+            with self.assertRaisesRegex(AssertionError, "question-bank reader did not terminate"):
+                with running_readers(lambda: None, threading.Event(), count=1):
+                    pass
+
     def counting(self):
         """Count source reads, selector-catalog loads and bank validations."""
         counts = {"reads": 0, "selector": 0, "validations": 0}

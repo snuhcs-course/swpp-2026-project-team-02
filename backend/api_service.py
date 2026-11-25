@@ -44,6 +44,8 @@ SINGLE_TARGET_FIELDS = ("schedule_id", "new_start_date", "confirm_outside_availa
 REMAINING_SESSION_KEYS = {"schedule_id", "remaining_minutes", "replacement_schedule_id"}
 MISSING_STORED_CONTEXT = ("This saved plan has no stored preparation period and study times. "
                           "Create a new plan before re-planning remaining sessions.")
+# Level 2 was the only supported certification before sidecars retained the ID.
+LEGACY_PLAN_CERTIFICATION_ID = "computer_specialist_level_2"
 
 
 def current_korea_minute() -> datetime:
@@ -59,7 +61,7 @@ def owner_plan_store(token: str) -> StudyPlanStore:
 def _save_study_plan_csv(content: str, request: PlanRequest, store: StudyPlanStore) -> str:
     return store.create(
         content, request.exam_date, preparation_start=request.preparation_start,
-        availability=request.weekly_availability)
+        availability=request.weekly_availability, certification_id=request.certification_id)
 
 
 def read_study_plan_csv(filename: str, store: StudyPlanStore) -> tuple[str, str]:
@@ -430,7 +432,8 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
         raise ValueError("preparation_start, exam_date and study times must match the selected plan's stored context")
     if cutoff >= exam:
         raise ValueError("replan_from must be before exam_date")
-    results = reassessment_topic_results(payload["assessment_results"])
+    certification_id = snapshot.certification_id or LEGACY_PLAN_CERTIFICATION_ID
+    results = reassessment_topic_results(certification_id, payload["assessment_results"])
     revised = resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
                            now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
     csv_text = render_adjusted_csv(revised)

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from api_admission import AdmissionLimiter
+from api_admission import AdmissionLimiter, REASSESSMENT_PREVIEW_BUCKET
 from api_service import (adjust_schedule, create_study_plan, delete_study_plan, owner_plan_store, read_availability,
                          read_study_plan_csv, write_availability, list_study_plans)
 from assessment_service import (AssessmentConfigurationError, get_public_certifications,
@@ -53,7 +53,8 @@ INVALID_DEVICE_TOKEN_MESSAGE = "A valid device token is required."
 RATE_LIMITED_MESSAGE = "Too many requests. Try again later."
 CLIENT_ADDRESS_MESSAGE = "The service cannot identify the client address. Try again later."
 ROUTE_NOT_FOUND = {"error": {"code": "NOT_FOUND", "message": "API route not found"}}
-PROTECTED_POST_PATHS = frozenset({f"{API_PREFIX}/study-plans", f"{API_PREFIX}/schedules/adjust"})
+ADJUSTMENT_PATH = f"{API_PREFIX}/schedules/adjust"
+PROTECTED_POST_PATHS = frozenset({f"{API_PREFIX}/study-plans", ADJUSTMENT_PATH})
 
 
 def is_protected_get(path: str) -> bool:
@@ -255,22 +256,22 @@ def make_handler(config: dict[str, Any], admission: AdmissionLimiter | None = No
                 return None
             return owner_plan_store(token)
 
-        def _admitted(self, path: str, store: StudyPlanStore) -> bool:
-            """입력 값: 예산 POST 경로와 토큰 소유자 저장소
-            출력 값: 본문 읽기 전에 요청을 받아들였는지 여부
-            기능: 클라이언트 IP를 정하고 소유자·IP·서비스 칸을 한 번에 예약하며, 실패 시 503 또는 429를 보냅니다.
-            """
+        def _client_ip(self, path: str) -> str | None:
             client_ip = proxied_client_ip(self.client_address[0], self.headers, trust_local_proxy)
             if client_ip is None:
                 LOGGER.warning("Rejected a proxied request on %s without one valid X-Real-IP", path)
                 self._reject_unread(503, {"error": {"code": "SERVICE_UNAVAILABLE", "message": CLIENT_ADDRESS_MESSAGE}})
-                return False
-            retry_after = limiter.admit(path, store.directory.name, client_ip)
-            if retry_after is not None:
-                self._reject_unread(429, {"error": {"code": "RATE_LIMITED", "message": RATE_LIMITED_MESSAGE}},
-                                    {"Retry-After": str(retry_after)})
-                return False
-            return True
+            return client_ip
+
+        def _admitted(self, bucket: str, store: StudyPlanStore, client_ip: str, *, body_read: bool = False) -> bool:
+            """Reserve owner, IP and service capacity before performing any plan or model work."""
+            retry_after = limiter.admit(bucket, store.directory.name, client_ip)
+            if retry_after is None:
+                return True
+            reject = self._send_json if body_read else self._reject_unread
+            reject(429, {"error": {"code": "RATE_LIMITED", "message": RATE_LIMITED_MESSAGE}},
+                   {"Retry-After": str(retry_after)})
+            return False
 
         def do_OPTIONS(self) -> None:
             """입력 값: 브라우저 CORS preflight 요청
@@ -384,6 +385,7 @@ def make_handler(config: dict[str, Any], admission: AdmissionLimiter | None = No
             self._protected = False
             try:
                 store = None
+                is_adjustment = method == "POST" and path == ADJUSTMENT_PATH
                 if method == "DELETE":
                     prefix = f"{API_PREFIX}/study-plans/"
                     filename = path.removeprefix(prefix)
@@ -408,16 +410,29 @@ def make_handler(config: dict[str, Any], admission: AdmissionLimiter | None = No
                     return
                 if method == "POST" and path in PROTECTED_POST_PATHS:
                     store = self._owner_store()
-                    if store is None or not self._admitted(path, store):
+                    if store is None:
+                        return
+                    client_ip = self._client_ip(path)
+                    if client_ip is None or (not is_adjustment and not self._admitted(path, store, client_ip)):
                         return
                 elif method == "PUT" and path == f"{API_PREFIX}/availability" and not shared_availability:
                     # 공용 프로필을 끈 배포는 본문을 읽기 전에 경로 자체가 없는 것처럼 응답합니다.
                     self._reject_unread(404, ROUTE_NOT_FOUND)
                     return
-                payload = self._read_json()
+                try:
+                    payload = self._read_json()
+                except ValueError:
+                    if is_adjustment and not self._admitted(path, store, client_ip, body_read=True):
+                        return
+                    raise
                 if method == "POST" and path == f"{API_PREFIX}/study-plans":
                     result = create_study_plan(payload, store, shared_availability=shared_availability)
-                elif method == "POST" and path == f"{API_PREFIX}/schedules/adjust":
+                elif is_adjustment:
+                    # Classify only the exact read-only request after bounded JSON decoding.
+                    preview = payload.get("mode") == "reassessment" and payload.get("commit") is False
+                    bucket = REASSESSMENT_PREVIEW_BUCKET if preview else path
+                    if not self._admitted(bucket, store, client_ip, body_read=True):
+                        return
                     result = adjust_schedule(payload, store, shared_availability=shared_availability)
                 elif method == "PUT" and path == f"{API_PREFIX}/availability":
                     result = write_availability(payload)

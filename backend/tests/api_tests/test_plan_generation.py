@@ -185,6 +185,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual({key: metadata[key] for key in ("version", "exam_date", "preparation_start")},
                                  {"version": 2, "exam_date": recorded["request"]["exam_date"],
                                   "preparation_start": recorded["request"]["preparation_start"]})
+                self.assertEqual(metadata["certification_id"], "computer_specialist_level_2")
                 stored_context = metadata["availability_snapshot"]
                 returned_context = body["availability_snapshot"]
                 for week in (stored_context["weekly_availability"],

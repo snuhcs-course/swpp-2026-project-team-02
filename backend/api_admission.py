@@ -22,9 +22,12 @@ class RouteLimits:
 
 
 WINDOW_SECONDS = 3600
+REASSESSMENT_PREVIEW_BUCKET = "reassessment_preview"
+_ADJUSTMENT_LIMITS = RouteLimits(per_owner=12, per_ip=40, service=60)
 DEFAULT_ROUTE_LIMITS = {
     "/api/v1/study-plans": RouteLimits(per_owner=3, per_ip=12, service=24),
-    "/api/v1/schedules/adjust": RouteLimits(per_owner=12, per_ip=40, service=60),
+    "/api/v1/schedules/adjust": _ADJUSTMENT_LIMITS,
+    REASSESSMENT_PREVIEW_BUCKET: _ADJUSTMENT_LIMITS,
 }
 
 

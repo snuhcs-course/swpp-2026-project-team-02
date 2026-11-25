@@ -176,6 +176,22 @@ class ReassessmentApiTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assert_invalid(self.payload(**{field: value}))
 
+    def test_valid_quiz_for_a_different_certification_cannot_revise_plan(self):
+        different_plan = self.store.create(self.csv, datetime(2026, 12, 10),
+                                           preparation_start=datetime(2026, 12, 1), availability=self.context,
+                                           certification_id="computer_specialist_level_1")
+        for commit in (False, True):
+            with self.subTest(commit=commit):
+                self.assert_invalid(self.payload(schedule_csv_file=different_plan, commit=commit))
+
+    def test_missing_question_field_is_a_configuration_error(self):
+        with patch("assessment_service.check_reviewed_record", side_effect=KeyError("missing question field")):
+            with self.assertLogs("api_server", level="ERROR"):
+                self.assert_invalid(self.payload(), "INTERNAL_ERROR", 500)
+                status, body = self.call(QUESTIONS_PATH)
+        self.assertEqual((status, body["error"]["code"]), (500, "INTERNAL_ERROR"))
+        self.assertNotIn("missing question field", body["error"]["message"])
+
     def test_legacy_plan_without_context_is_rejected(self):
         legacy = self.store.create(self.csv, datetime(2026, 12, 10))
         self.assert_invalid(self.payload(schedule_csv_file=legacy))
