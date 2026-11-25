@@ -187,7 +187,9 @@ class ReassessmentUpdateViewModelTest {
         // Every unreported future row changes; each new piece keeps a time inside the row it replaces.
         assertEquals(listOf("study-3", "study-4", "study-5"), preview.sessions.map { it.original.scheduleId })
         val pieces = changedPieces(preview)
-        assertTrue(pieces.all { (before, _) -> before == LocalTopics.SPREADSHEET_BASICS })
+        assertTrue(preview.sessions.any { session -> session.pieces.any { it.topic == session.original.topic } })
+        assertTrue(pieces.all { (before, piece) -> before == LocalTopics.SPREADSHEET_BASICS && piece.topic != before })
+        assertEquals(topics.toSet() - LocalTopics.SPREADSHEET_BASICS, pieces.map { it.second.topic }.toSet())
         assertEquals("11월 24일 화요일 · 18:00–" + WireDateTime.formatTime(WireDateTime.parseOrNull(pieces[0].second.endDate)!!.toLocalTime()),
             com.swpp.licenseplanner.ui.screens.reassessmentSessionTime(pieces[0].second))
         // Nothing was written or sent beyond the one preview, and no recovery gate was set.
@@ -246,8 +248,7 @@ class ReassessmentUpdateViewModelTest {
     }
 
     @Test fun failedPreviewUsesAdjustmentWordingKeepsTheAnswersAndChangesNothing() = runTest(dispatcher) {
-        for (error in listOf(ApiError.Connection, ApiError.PlanConflict, ApiError.PlanNotFound, ApiError.RateLimited,
-            ApiError.ServerFailure(500))) {
+        for (error in listOf(ApiError.Connection, ApiError.RateLimited, ApiError.ServerFailure(500))) {
             val o = open()
             o.server.previewFailures += ReassessmentOutcome.Failure(error)
             results(o)
@@ -267,9 +268,36 @@ class ReassessmentUpdateViewModelTest {
             assertEquals(o.server.previews[0].answers, o.server.previews[1].answers)
             assertEquals(0, o.server.commits.size)
         }
-        assertEquals(ApiError.PlanConflict.adjustmentMessage(), ApiError.PlanConflict.previewMessage())
         assertEquals(ApiError.RateLimited.adjustmentMessage(), ApiError.RateLimited.previewMessage())
         assertFalse(ApiError.Connection.previewMessage().contains("반영되었을 수"))
+    }
+
+    @Test fun previewOfAStaleOrMissingPlanSavesRecoveryAndCannotBeRetried() = runTest(dispatcher) {
+        for ((error, recovery) in listOf(
+            ApiError.PlanConflict to PlanRecovery.ReloadRequired,
+            ApiError.PlanNotFound to PlanRecovery.Missing,
+        )) {
+            val o = open()
+            o.server.previewFailures += ReassessmentOutcome.Failure(error)
+            results(o)
+            assertTrue(o.vm.previewReassessment())
+            advanceUntilIdle()
+
+            val stopped = o.vm.reassessment.value as ReassessmentState.Stopped
+            assertEquals(ReassessmentStop.PlanUnavailable, stopped.reason)
+            assertEquals(error, stopped.error)
+            assertEquals(error.adjustmentMessage(), reassessmentStopText(stopped).second)
+            assertFalse(stopped.canPreviewAgain)
+            assertFalse(o.vm.previewReassessment())
+            assertEquals(1, o.server.previews.size)
+            assertTrue(o.server.commits.isEmpty())
+            val plans = listOf(a.copy(recovery = recovery), b)
+            assertEquals(plans, o.vm.plans.value)
+            assertEquals(plans, restored(o).plans)
+            assertNull(restored(o).inFlightAdjustmentOrdinal)
+            assertTrue(o.vm.closeReassessment())
+            assertFalse(o.vm.startReassessment(1))
+        }
     }
 
     @Test fun confirmingSendsOneCommitUnderTheRecoveryGateAndSavesThePreviewedRows() = runTest(dispatcher) {

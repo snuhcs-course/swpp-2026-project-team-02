@@ -73,8 +73,11 @@ class LiveReassessmentRepositoryTest {
     }
 
     @Test fun missingRouteNeedsAServerUpdateAndOtherFailuresStayFailures() {
-        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":{"code":"NOT_FOUND","message":"no route"}}"""))
+        enqueueError(404, "NOT_FOUND", "API route not found")
         assertEquals(ReassessmentQuestionsOutcome.ServerNeedsUpdate, runBlocking { repository().questions(CERTIFICATION_ID) })
+        enqueueError(404, "NOT_FOUND", "Unsupported certification_id: $CERTIFICATION_ID")
+        assertEquals(ReassessmentQuestionsOutcome.Failure(ApiError.UnknownFailure(status = 404, rawDiagnostic = null)),
+            runBlocking { repository().questions(CERTIFICATION_ID) })
         server.enqueue(MockResponse().setResponseCode(500))
         val failed = runBlocking { repository().questions(CERTIFICATION_ID) } as ReassessmentQuestionsOutcome.Failure
         assertTrue(failed.error is ApiError.ServerFailure)

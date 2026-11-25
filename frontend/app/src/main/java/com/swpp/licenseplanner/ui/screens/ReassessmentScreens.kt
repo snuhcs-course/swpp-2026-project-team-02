@@ -81,6 +81,8 @@ internal fun reassessmentStopText(state: ReassessmentState.Stopped): Pair<String
         "확인하는 사이 바꿀 수 있던 공부 일정이 시작됐어요. 아무것도 바꾸거나 저장하지 않았어요. 같은 답으로 다시 미리 볼 수 있어요."
     ReassessmentStop.PreviewFailed -> "바뀔 내용을 미리 보지 못했어요" to
         "${(state.error ?: ApiError.InvalidResponse(null)).previewMessage()}\n아무것도 바꾸지 않았어요. 같은 답으로 다시 미리 볼 수 있어요."
+    ReassessmentStop.PlanUnavailable -> "바뀔 내용을 미리 보지 못했어요" to
+        (state.error ?: ApiError.InvalidResponse(null)).previewMessage()
     ReassessmentStop.CommitFailed -> "남은 공부를 바꾸지 못했어요" to when (val error = state.error) {
         is ApiError.ServerFailure, is ApiError.ServerUnavailable ->
             "바꾼 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
@@ -299,7 +301,7 @@ private fun ReassessmentPreviewScreen(
         for ((before, piece) in pieces) {
             MutedBox {
                 Text(reassessmentSessionTime(piece), style = MaterialTheme.typography.titleSmall, color = Ink)
-                Note(if (before == piece.topic) "$before · 주제 그대로" else "$before → ${piece.topic}")
+                Note("$before → ${piece.topic}")
             }
         }
         Note(REASSESSMENT_UNCHANGED_NOTE)

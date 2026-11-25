@@ -1462,8 +1462,8 @@ class PlanFormViewModel(
 
     /**
      * Asks how the shown results would change future study, or asks again with the same answers
-     * after an out-of-date or failed preview. Study may change from the current minute. A preview
-     * changes nothing, so it sets no recovery gate and its failures leave every plan as it was.
+     * after an out-of-date preview or a retryable failure. A preview can revise study from the
+     * current minute and only saves recovery status if the server reports a stale or missing plan.
      * Returns whether a request started.
      */
     fun previewReassessment(): Boolean {
@@ -1489,7 +1489,20 @@ class PlanFormViewModel(
                 is ReassessmentOutcome.Previewed -> ReassessmentState.Preview(input, outcome.preview)
                 is ReassessmentOutcome.Rejected -> ReassessmentState.Stopped(input, stopFor(outcome.failure))
                 ReassessmentOutcome.ServerNeedsUpdate -> ReassessmentState.ServerNeedsUpdate(source)
-                is ReassessmentOutcome.Failure -> ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, outcome.error)
+                is ReassessmentOutcome.Failure -> {
+                    val recovery = when (outcome.error) {
+                        ApiError.PlanConflict -> PlanRecovery.ReloadRequired
+                        ApiError.PlanNotFound -> PlanRecovery.Missing
+                        else -> null
+                    }
+                    if (recovery != null) {
+                        updatePlan(source.ordinal) { it.copy(recovery = recovery, recoveryScheduleId = null) }
+                        _reassessment.value = ReassessmentState.Stopped(input, ReassessmentStop.PlanUnavailable, outcome.error)
+                        commit(_plans.value)
+                        return@launch
+                    }
+                    ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, outcome.error)
+                }
                 is ReassessmentOutcome.Committed ->
                     ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, ApiError.InvalidResponse("unexpected update"))
             }

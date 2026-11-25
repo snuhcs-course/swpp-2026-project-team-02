@@ -34,8 +34,12 @@ class LiveReassessmentRepository(
     override suspend fun questions(certificationId: String): ReassessmentQuestionsOutcome {
         val request = Request.Builder().url(apiUrl(baseUrl, "/certifications/$certificationId/reassessment-questions")).get().build()
         return when (val outcome = client.executeApi(request, io)) {
-            is HttpOutcome.Failed -> if (outcome.error == ApiError.Configuration) ReassessmentQuestionsOutcome.ServerNeedsUpdate
-                else ReassessmentQuestionsOutcome.Failure(outcome.error)
+            is HttpOutcome.Failed -> when {
+                outcome.routeNotFound -> ReassessmentQuestionsOutcome.ServerNeedsUpdate
+                outcome.error == ApiError.Configuration ->
+                    ReassessmentQuestionsOutcome.Failure(ApiError.UnknownFailure(status = 404, rawDiagnostic = null))
+                else -> ReassessmentQuestionsOutcome.Failure(outcome.error)
+            }
             is HttpOutcome.Ok -> try {
                 ReassessmentQuestionsOutcome.Loaded(parseQuestions(outcome.body, certificationId))
             } catch (error: InvalidQuestionDataException) {
