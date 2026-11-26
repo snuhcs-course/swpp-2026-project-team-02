@@ -197,3 +197,32 @@ object ScoreSerializer : KSerializer<Double> {
 
     override fun deserialize(decoder: Decoder): Double = decoder.decodeDouble()
 }
+
+/** Reassessment preview (`commit: false`) or confirmed update (`commit: true`) of one stored plan. */
+@Serializable
+data class ReassessmentRequest(
+    val mode: String = "reassessment",
+    val commit: Boolean,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    val schedules: List<ScheduleRow>,
+    @SerialName("weekly_availability") val weeklyAvailability: Map<String, List<TimeWindow>>,
+    @SerialName("availability_overrides") val availabilityOverrides: Map<String, Map<String, List<TimeWindow>>>,
+    @SerialName("preparation_start") val preparationStart: String,
+    @SerialName("exam_date") val examDate: String,
+    @SerialName("replan_from") val replanFrom: String,
+    @SerialName("keep_schedule_ids") val keepScheduleIds: List<String>,
+    @SerialName("first_new_study_id") val firstNewStudyId: String,
+    @SerialName("assessment_results") val assessmentResults: AssessmentResults,
+    /** Only on a confirmation: the rows the learner approved, so the server saves nothing else. */
+    @SerialName("previewed_schedules") val previewedSchedules: List<ScheduleRow>? = null,
+)
+
+@Serializable
+data class ReassessmentResponse(
+    val schedules: List<ScheduleRow>,
+    @SerialName("schedule_csv") val scheduleCsv: String,
+    val action: String,
+    @SerialName("schedule_csv_file") val scheduleCsvFile: String,
+    @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot,
+    @SerialName("agent_summary") val agentSummary: String? = null,
+)

@@ -5,6 +5,12 @@ data class TopicScore(val topic: String, val earned: Double, val possible: Doubl
     val percent: Double get() = if (possible > 0) earned / possible * 100 else 0.0
 }
 
+sealed interface QuestionResult {
+    data object Correct : QuestionResult
+    data class Wrong(val chosen: String, val correct: String) : QuestionResult
+    data class Unknown(val correct: String) : QuestionResult
+}
+
 /** Local scoring of example answers; not the backend's weighted statistics. */
 object Scoring {
     /** A normal answer is correct when it equals the correct key; UNKNOWN is never correct. */
@@ -13,6 +19,14 @@ object Scoring {
 
     fun earned(question: Question, answer: String?): Double =
         if (isCorrect(question, answer)) question.possibleScore else 0.0
+
+    fun questionResult(question: Question, answer: String): QuestionResult {
+        if (isCorrect(question, answer)) return QuestionResult.Correct
+        val choices = question.answerChoices
+        val correct = "${question.correctAnswer}. ${choices.getValue(question.correctAnswer)}"
+        return if (answer == UNKNOWN_KEY) QuestionResult.Unknown(correct)
+        else QuestionResult.Wrong("$answer. ${choices.getValue(answer)}", correct)
+    }
 
     /** Earned/possible totals by local label, in [LocalTopics.catalogOrder]. */
     fun topicScores(questions: List<Question>, answers: Map<Int, String>): List<TopicScore> {

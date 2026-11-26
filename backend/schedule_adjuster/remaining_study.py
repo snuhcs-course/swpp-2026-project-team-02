@@ -8,6 +8,7 @@ schedule or a ``ValueError``; nothing is partially applied.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, time, timedelta
 
 from study_availability import AvailabilityContext
@@ -15,6 +16,7 @@ from study_availability import AvailabilityContext
 from .models import ScheduleEntry
 from .schedule_logic import ManualMoveError, classify_schedule_id, fits_one_window, intervals_overlap
 from .settings import STUDY_ID_PREFIX
+from .study_sessions import keeps_study_sessions, next_entry_end
 
 NEXT_MINUTE = timedelta(minutes=1)
 
@@ -72,8 +74,13 @@ def _validated_sources(schedule: tuple[ScheduleEntry, ...],
 
 
 def _earliest_fit(lower_bound: datetime, duration: timedelta, busy: list[ScheduleEntry],
-                  availability: AvailabilityContext, exam_date: datetime) -> datetime | None:
-    """Earliest start at or after ``lower_bound`` whose whole interval lies in one window before the exam."""
+                  availability: AvailabilityContext, exam_date: datetime,
+                  accept: Callable[[datetime], bool] | None = None) -> datetime | None:
+    """Earliest start at or after ``lower_bound`` whose whole interval lies in one window before the exam.
+
+    A free start that ``accept`` rejects is skipped; the search continues from
+    the next row end after it, which includes every study row's end.
+    """
     day = lower_bound.date()
     while datetime.combine(day, time()) < exam_date:
         for window_start, window_end in availability.windows_for(day):
@@ -82,10 +89,16 @@ def _earliest_fit(lower_bound: datetime, duration: timedelta, busy: list[Schedul
             while start + duration <= window_end:
                 conflict = next((entry for entry in busy if intervals_overlap(
                     start, start + duration, entry.start_datetime, entry.end_datetime)), None)
-                if conflict is None:
+                if conflict is not None:
+                    # Any start before this busy row's end would still overlap it.
+                    start = conflict.end_datetime
+                    continue
+                if accept is None or accept(start):
                     return start
-                # Any start before this busy row's end would still overlap it.
-                start = conflict.end_datetime
+                next_start = next_entry_end(start, busy)
+                if next_start is None:
+                    break
+                start = next_start
         day += timedelta(days=1)
     return None
 
@@ -98,15 +111,28 @@ def place_remaining_sessions(schedule: tuple[ScheduleEntry, ...], instructions: 
 
     Unselected rows are kept unchanged and act as busy time.  Each remainder
     keeps its source topic and starts no earlier than the latest of the
-    preparation start, ``replan_from`` and the minute after ``now``.
+    preparation start, ``replan_from`` and the minute after ``now``.  Every
+    placed remainder must sit in a study session of at least the minimum
+    length, and once the last remainder is placed no session starting at or
+    after that lower bound may have been cut below the minimum by removing
+    the sources.
     """
     pairs = _validated_sources(schedule, instructions)
     selected = {source.schedule_id for source, _ in pairs}
     candidate = [entry for entry in schedule if entry.schedule_id not in selected]
     lower_bound = max(preparation_start, replan_from, now + NEXT_MINUTE)
-    for source, instruction in pairs:
+    placed_ids: set[str] = set()
+    for index, (source, instruction) in enumerate(pairs):
         duration = timedelta(minutes=instruction.remaining_minutes)
-        start = _earliest_fit(lower_bound, duration, candidate, availability, exam_date)
+        replacement_id = instruction.replacement_schedule_id
+        placed_ids.add(replacement_id)
+        future_from = lower_bound if index == len(pairs) - 1 else None
+
+        def keeps_sessions(start: datetime) -> bool:
+            row = ScheduleEntry(replacement_id, start, start + duration, source.topic)
+            return keeps_study_sessions((*candidate, row), placed_ids, schedule, future_from)
+
+        start = _earliest_fit(lower_bound, duration, candidate, availability, exam_date, accept=keeps_sessions)
         if start is None:
             raise ValueError(
                 f"NOT_ENOUGH_TIME: {instruction.remaining_minutes} remaining minutes of "

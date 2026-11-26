@@ -681,6 +681,39 @@ class PlanAdjustmentViewModelTest {
         }
     }
 
+    @Test fun definiteAdmissionRejectionsAddNoReloadRequirementAndSendNothingMore() = runTest(dispatcher) {
+        for (error in listOf(ApiError.RateLimited, ApiError.DeviceTokenRejected, ApiError.DeviceTokenUnavailable)) {
+            val adjustment = FakeAdjustment()
+            val vm = failA(error, adjustment)
+            assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.Failure(error)), vm.adjustment.value)
+            assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+            assertNull(vm.plan(1).recoveryScheduleId)
+            assertEquals(rowsA, vm.plan(1).current.schedules)
+            assertEquals(fileA, vm.plan(1).scheduleCsvFile)
+            assertEquals(error.userMessage(), error.adjustmentMessage())
+            advanceUntilIdle()
+            assertEquals(1, adjustment.inputs.size) // no automatic retry
+            assertTrue(adjustment.reloadIdentities.isEmpty())
+        }
+    }
+
+    @Test fun admissionRejectionDuringReloadKeepsTheExistingReloadRequirement() = runTest(dispatcher) {
+        for (error in listOf(ApiError.DeviceTokenRejected, ApiError.RateLimited)) {
+            val adjustment = FakeAdjustment()
+            val vm = failA(ApiError.PlanConflict, adjustment)
+            adjustment.reloads += ReloadOutcome.Failure(error)
+            assertTrue(vm.reloadPlan())
+            advanceUntilIdle()
+            assertEquals(AdjustmentSelection(1, "study-1", AdjustmentState.ReloadFailure(error)), vm.adjustment.value)
+            assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+            assertEquals("study-1", vm.plan(1).recoveryScheduleId)
+            assertEquals(rowsA, vm.plan(1).current.schedules)
+            assertAdjustmentBlocked(vm, adjustment)
+            assertEquals(1, adjustment.reloadIdentities.size)
+            assertEquals(1, adjustment.inputs.size)
+        }
+    }
+
     @Test fun failedThenSuccessfulReloadRequiresAFreshSelection() = runTest(dispatcher) {
         val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA))
         val vm = failA(ApiError.PlanConflict, adjustment)

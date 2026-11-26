@@ -43,10 +43,8 @@ data class PlanSnapshot(
     val plans: List<SessionPlan>,
     val inFlightAdjustmentOrdinal: Int? = null,
     val creationDraft: CreationDraft? = null,
+    val nextOrdinal: Int = (plans.maxOfOrNull { it.ordinal } ?: 0) + 1,
 ) {
-    /** One more than any saved ordinal, so a later generation never reuses one. */
-    val nextOrdinal: Int get() = (plans.maxOfOrNull { it.ordinal } ?: 0) + 1
-
     companion object {
         val EMPTY = PlanSnapshot(emptyList())
     }
@@ -69,7 +67,8 @@ object PlanStorageScope {
 }
 
 /**
- * JSON form of a [PlanSnapshot]. Saving writes version 5 with timing-only kept conflict digests.
+ * JSON form of a [PlanSnapshot]. Version 6 stores the next plan number across deletions.
+ * Version 5 introduced timing-only kept conflict digests.
  * Version 4 added an optional `creation_draft`
  * next to the entries; each entry carries its study reports (`check_ins`), and creation requests
  * may carry `start` + `duration_minutes` windows and week replacements. Versions 3 (no draft),
@@ -81,12 +80,14 @@ object PlanStorageScope {
  * for readiness to generate.
  */
 internal object PlanSnapshotCodec {
-    const val VERSION = 5
+    const val VERSION = 6
+    const val KEPT_CONFLICTS_VERSION = 5
     const val DRAFT_VERSION = 4
     const val CHECK_IN_VERSION = 3
     const val NO_CHECK_IN_VERSION = 2
     const val LEGACY_VERSION = 1
-    private val SUPPORTED_VERSIONS = setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION, CHECK_IN_VERSION, DRAFT_VERSION, VERSION)
+    private val SUPPORTED_VERSIONS = setOf(LEGACY_VERSION, NO_CHECK_IN_VERSION, CHECK_IN_VERSION, DRAFT_VERSION,
+        KEPT_CONFLICTS_VERSION, VERSION)
 
     // Unlike the API JSON, unknown keys are rejected: this file is only ever written by this codec.
     private val json = Json {
@@ -115,6 +116,7 @@ internal object PlanSnapshotCodec {
             },
             inFlightAdjustmentOrdinal = snapshot.inFlightAdjustmentOrdinal,
             creationDraft = snapshot.creationDraft?.let { StoredDraft.of(it) },
+            nextOrdinal = snapshot.nextOrdinal,
         ),
     )
 
@@ -136,7 +138,7 @@ internal object PlanSnapshotCodec {
         if (envelope.scope != scope || !envelope.isValid()) return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
         val draft = when {
             envelope.creationDraft == null -> null
-            envelope.version !in setOf(DRAFT_VERSION, VERSION) -> return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
+            envelope.version < DRAFT_VERSION -> return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
             else -> envelope.creationDraft.domainOrNull() ?: return PlanStoreLoad.Failed(PlanLoadFailure.Invalid)
         }
         val plans = envelope.entries.map { entry ->
@@ -146,12 +148,14 @@ internal object PlanSnapshotCodec {
                 checkIns = checkIns, keptConflicts = entry.keptConflicts.orEmpty().mapValues { it.value.toSet() })
             plan.copy(recoveryScheduleId = entry.recoveryScheduleId?.takeIf { recovery == PlanRecovery.ReloadRequired && plan.isStudy(it) })
         }
-        return PlanStoreLoad.Loaded(PlanSnapshot(plans, creationDraft = draft))
+        val nextOrdinal = envelope.nextOrdinal ?: ((plans.maxOfOrNull { it.ordinal } ?: 0) + 1)
+        return PlanStoreLoad.Loaded(PlanSnapshot(plans, creationDraft = draft, nextOrdinal = nextOrdinal))
     }
 
     private fun Envelope.isValid(): Boolean {
         val ordinals = entries.map { it.ordinal }
         if (ordinals.any { it <= 0 } || ordinals.toSet().size != ordinals.size) return false
+        if (nextOrdinal != null && (version < VERSION || nextOrdinal <= (ordinals.maxOrNull() ?: 0))) return false
         val demo = scope == PlanStorageScope.DEMO
         if (entries.any { it.isDemo != demo || !it.isValid(version) }) return false
         val unresolved = inFlightAdjustmentOrdinal ?: return true
@@ -174,7 +178,7 @@ internal object PlanSnapshotCodec {
         } else {
             checkIns != null && checkIns.all { (id, stored) -> SessionPlan.isStudyId(id) && stored.domain.isValid }
         }
-        val keepsOk = if (version == VERSION) {
+        val keepsOk = if (version >= KEPT_CONFLICTS_VERSION) {
             keptConflicts != null && keptConflicts.all { (id, digests) ->
                 SessionPlan.isStudyId(id) && digests.isNotEmpty() && digests.distinct().size == digests.size &&
                     digests.all { it.matches(Regex("[0-9a-f]{64}")) }
@@ -200,6 +204,7 @@ internal object PlanSnapshotCodec {
         @SerialName("in_flight_adjustment_ordinal") val inFlightAdjustmentOrdinal: Int? = null,
         /** Only from version 4 on. */
         @SerialName("creation_draft") val creationDraft: StoredDraft? = null,
+        @SerialName("next_plan_ordinal") val nextOrdinal: Int? = null,
     )
 
     @Serializable

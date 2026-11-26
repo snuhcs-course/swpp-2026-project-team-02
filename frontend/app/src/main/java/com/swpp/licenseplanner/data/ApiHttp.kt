@@ -33,7 +33,7 @@ fun apiUrl(baseUrl: String, path: String): String = baseUrl.trimEnd('/') + path
 /** Result of one HTTP exchange before body interpretation. */
 internal sealed interface HttpOutcome {
     data class Ok(val body: String) : HttpOutcome
-    data class Failed(val error: ApiError) : HttpOutcome
+    data class Failed(val error: ApiError, val routeNotFound: Boolean = false) : HttpOutcome
 }
 
 /**
@@ -51,11 +51,7 @@ internal suspend fun OkHttpClient.executeApi(
 ): HttpOutcome =
     withContext(io) {
         try {
-            newCall(request.newBuilder().header("Connection", "close").build()).execute().use { response ->
-                val body = response.body.string()
-                if (response.isSuccessful) HttpOutcome.Ok(body)
-                else HttpOutcome.Failed(errorForStatus(response.code, body, planErrors))
-            }
+            newCall(request.newBuilder().header("Connection", "close").build()).execute().outcome(planErrors)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -90,10 +86,13 @@ internal suspend fun OkHttpClient.executeApiCancellable(
 private fun Response.outcome(planErrors: Boolean): HttpOutcome = use {
     val body = body.string()
     if (isSuccessful) HttpOutcome.Ok(body)
-    else HttpOutcome.Failed(errorForStatus(code, body, planErrors))
+    else failureForStatus(code, body, planErrors)
 }
 
-internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = false): ApiError {
+internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = false): ApiError =
+    failureForStatus(status, body, planErrors).error
+
+private fun failureForStatus(status: Int, body: String, planErrors: Boolean): HttpOutcome.Failed {
     val error = try {
         ApiJson.decodeFromString(ApiErrorEnvelope.serializer(), body).error
     } catch (_: Exception) {
@@ -101,17 +100,24 @@ internal fun errorForStatus(status: Int, body: String, planErrors: Boolean = fal
     }
     val message = error?.message?.takeIf { it.isNotBlank() }
     // Only the exact status/code pairs; anything else keeps its generic category.
-    return when {
+    val mapped = when {
+        status == 401 && error?.code == INVALID_DEVICE_TOKEN -> ApiError.DeviceTokenRejected
+        status == 429 && error?.code == RATE_LIMITED -> ApiError.RateLimited
         planErrors && status == 404 && error?.code == PLAN_NOT_FOUND -> ApiError.PlanNotFound
         planErrors && status == 409 && error?.code == PLAN_CONFLICT -> ApiError.PlanConflict
+        planErrors && status == 422 && error?.code == REASSESSMENT_PREVIEW_EXPIRED -> ApiError.ReassessmentPreviewExpired
         planErrors && status == 422 && ManualMoveRejection.ofCode(error?.code) != null ->
             ApiError.ManualMoveRejected(ManualMoveRejection.ofCode(error?.code)!!)
         else -> genericError(status, message, body)
     }
+    return HttpOutcome.Failed(mapped, status == 404 && error?.code == "NOT_FOUND" && message == "API route not found")
 }
 
 private const val PLAN_NOT_FOUND = "PLAN_NOT_FOUND"
 private const val PLAN_CONFLICT = "PLAN_CONFLICT"
+private const val REASSESSMENT_PREVIEW_EXPIRED = "REASSESSMENT_PREVIEW_EXPIRED"
+private const val INVALID_DEVICE_TOKEN = "INVALID_DEVICE_TOKEN"
+private const val RATE_LIMITED = "RATE_LIMITED"
 
 private fun genericError(status: Int, message: String?, body: String): ApiError =
     when (status) {
@@ -124,6 +130,9 @@ private fun genericError(status: Int, message: String?, body: String): ApiError 
     }
 
 private fun classifyTransportError(error: Exception): ApiError {
+    if (error is DeviceTokenUnavailableException) return ApiError.DeviceTokenUnavailable
+    // Fixed text: the blocked origin and any credential stay out of diagnostics.
+    if (error is CrossOriginRequestException) return ApiError.UnknownFailure(rawDiagnostic = CROSS_ORIGIN_DIAGNOSTIC)
     val diagnostic = "${error.javaClass.name}: ${error.message.orEmpty()}".take(MAX_DIAGNOSTIC_LENGTH)
     return when (error) {
         is SocketTimeoutException -> ApiError.RequestTimeout(diagnostic)
@@ -139,3 +148,4 @@ private fun responseDiagnostic(message: String?, body: String): String =
         .take(MAX_DIAGNOSTIC_LENGTH)
 
 private const val MAX_DIAGNOSTIC_LENGTH = 4_000
+private const val CROSS_ORIGIN_DIAGNOSTIC = "A redirect or request to another origin was blocked."

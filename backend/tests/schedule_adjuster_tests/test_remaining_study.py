@@ -101,18 +101,21 @@ class RemainingPlacementTests(unittest.TestCase):
         self.assertEqual(result, {
             "study-2": ("2026/11/16/19/00", "2026/11/16/20/00", "차트"),
             "external-3": ("2026/11/17/18/00", "2026/11/17/18/30", ""),
-            # The removed study-4 frees 18:30; study-1 (60 min) no longer fits there but its remainder does.
-            "study-5": ("2026/11/17/18/30", "2026/11/17/18/50", "함수"),
             # Wednesday's overnight window, after Tuesday's single hour is too short.
             "study-1": ("2026/11/18/23/00", "2026/11/19/00/00", "함수"),
+            # The freed Tuesday 18:30 slot would leave this 20-minute remainder alone, so it joins study-1.
+            "study-5": ("2026/11/19/00/00", "2026/11/19/00/20", "함수"),
         })
 
     def test_repeated_topics_keep_their_own_topic_without_same_topic_ordering(self):
+        # A protected study row ending at 18:00 lets the short first remainder start a long session.
         rows = [row("study-1", "2026/11/16/18/00", "2026/11/16/18/30", "함수"),
-                row("study-2", "2026/11/16/18/30", "2026/11/16/19/00", "함수")]
-        result = as_rows(place(entries(rows), ("study-2", 30, "study-2"), ("study-1", 10, "study-3"),
+                row("study-2", "2026/11/16/18/30", "2026/11/16/19/00", "함수"),
+                row("study-3", "2026/11/16/17/30", "2026/11/16/18/00", "차트")]
+        result = as_rows(place(entries(rows), ("study-2", 30, "study-2"), ("study-1", 10, "study-4"),
                                now=datetime(2026, 11, 16, 17, 0), replan_from=datetime(2026, 11, 16, 17, 0)))
-        self.assertEqual(result, {"study-3": ("2026/11/16/18/00", "2026/11/16/18/10", "함수"),
+        self.assertEqual(result, {"study-3": ("2026/11/16/17/30", "2026/11/16/18/00", "차트"),
+                                  "study-4": ("2026/11/16/18/00", "2026/11/16/18/10", "함수"),
                                   "study-2": ("2026/11/16/18/10", "2026/11/16/18/40", "함수")})
 
     def test_original_chronological_order_decides_and_numeric_suffix_breaks_ties(self):

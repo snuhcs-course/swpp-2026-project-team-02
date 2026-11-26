@@ -27,6 +27,10 @@ A date without sessions is a single muted 「일정 없음」 row. The full 계�
 follows Sunday (or the no-rows message) and precedes the unchanged footer
 actions, including calendar export of the whole plan.
 
+The plan view can expand 「주제별 공부 시간」 to show total minutes per topic
+across all weeks. Example-question results list each answer as correct, wrong
+or 모르겠음, with the chosen and correct answers for each missed question.
+
 Cancelling generation stops the app from waiting; the live server may still finish and store that plan in shared storage, where it is not shown in the app.
 
 **Exam-date change (demo):** when the demo planner shows the insufficient-time
@@ -59,10 +63,10 @@ implemented.
   available/assigned time, and a link from an adjustment's original position to
   its destination. The HE branch's review rounds were not merged.
 - The topic budgets from `feat/p10-topic-budget` are merged. Diagnosed live
-  plans use every usable entered minute: the backend, not the model, sets each
-  date's total and splits it across topics by score. The demo planner fills the
-  same free minutes locally. Android displays the returned study rows through
-  the existing plan screen.
+  plans use every free minute in continuous stretches of at least 30 minutes.
+  The backend sets each date's total and splits it across topics by score. The
+  demo planner fills the same free minutes locally. Android displays the
+  returned study rows through the existing plan screen.
 - **Remaining study re-plan.** The [backend batch endpoint](../backend/FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)
   is implemented on this branch. The Android flow is available for new and
   reopened plans. Its review shows scheduled, actual and remaining minutes
@@ -269,7 +273,9 @@ demo instrumentation contacts no server. It loads the 18 onboarding questions, s
 subjects, verifies that a no-fit automatic move leaves the saved plan intact,
 and confirms a one-time manual move outside the study windows. It checks the
 chosen start, exam deadline and other rows, then reads the plan back by its
-exact identity. The backend is
+exact identity with the saved device credential. A separate credential cannot
+read it. A second case generates a plan, deletes it through the app's ViewModel
+and verifies its local and server copies are gone. The backend is
 `backend/test_support/fixed_live_e2e_server.py`: the real API handler,
 scheduler, adjustment loop and plan store with fixed model replies and no
 OpenRouter access (see `backend/README.md`). Its default case,
@@ -322,8 +328,10 @@ about the model or the deployed server.
 
 **Use `demo` for evaluation without a backend.** Its plans are a demonstration
 calculation, not backend or AI output. Demo workload: like a live plan, it
-fills every free minute of the entered windows inside the preparation period,
-outside imported busy rows. It splits those minutes across the topics on the
+fills free stretches of at least 30 continuous minutes inside the entered
+windows and preparation period, outside imported busy rows. Adjacent topic
+blocks form one session and can each be shorter than 30 minutes. It splits
+those minutes across the topics on the
 score screen in the backend's proportions: one reserved minute per topic, the
 rest by weight `2 - score/100` with largest-remainder rounding. It then places
 the weakest topic first in time order, splitting a topic only where a free
@@ -380,8 +388,10 @@ device; it cannot reach a backend. A debug build is signed with the local debug
 certificate, not the release certificate, so installing it over a release build
 (or the reverse) fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Use a separate
 test device or profile, or uninstall the old app only after accepting the loss of
-its device-local plans. The public server is shared and unauthenticated; plans
-created there are visible to anyone who lists them.
+its device-local plans. A server without device scoping is shared: plans created
+there are visible to anyone who lists them. Check [the deployment
+guide](../deploy/README.md) for whether the public server enforces device tokens
+(see [Device credential](#device-credential)).
 
 ### Live release builds
 
@@ -422,6 +432,56 @@ had to treat as an unknown result. The extra connection per request is
 acceptable for local use. Nothing else changed: there is still no automatic
 retry, and a lost or timed-out adjustment still needs 최신 계획 불러오기 (see
 [Plan adjustment](#plan-adjustment)).
+
+### Device credential
+
+The live build sends one installation credential with every API request:
+`Authorization: Bearer <token>`, where the token is 32 random bytes from
+`SecureRandom` written as 64 lowercase hexadecimal characters. It is created on
+the first live API request after a fresh install, saved atomically (`AtomicFile`)
+as its own file in the app's private no-backup directory, separate from the plan
+snapshots, and reused for questions, generation, adjustment, remaining-work
+re-planning and plan reload. It never appears in a URL, a JSON body, the error
+details or logs. The token is read once per process under a lock, so concurrent
+first requests share one durably saved value; a value that is not saved is never
+sent. If the file cannot be read or saved, or holds anything but a valid token,
+the request is not sent, the screen shows 이 기기의 서버 요청 정보를 준비하지
+못했어요 …, and the saved plans stay viewable. The file is never overwritten in
+that case.
+
+The credential goes only to the configured API origin. A redirect to the same
+origin keeps it; a redirect to a different scheme, host or port is stopped
+before anything is sent there, so neither the token nor the request body
+leaves the API origin. That failure uses the existing unknown-failure handling
+(an adjustment then needs 최신 계획 불러오기), and nothing is retried automatically.
+
+A device-scoped backend keeps each token's plans apart, so the server lists,
+reads and adjusts only the plans created with this installation's token.
+
+- **In-place update** (a newer APK installed over the old one with the same
+  signature) keeps the token file and the local plan list. Plans saved before
+  the server required a token stay viewable from the local copy; when reload or
+  adjustment finds no matching server plan, the existing missing-plan handling
+  applies.
+- **Clearing app data or reinstalling** removes the token and the local plan
+  list. The next launch creates a new token, which cannot reach the old token's
+  server plans. No sign-in or recovery screen is offered.
+- **Demo** reads no token and sends no request.
+- **Testers** using scripts or `curl` against a device-scoped backend create
+  their own random 64-character lowercase hex token per disposable client, keep
+  it in memory, and send it only as the `Authorization` header. Do not copy an
+  installation's token or record it in evidence. Cleartext HTTP lets a party on
+  the network path observe and replay the token.
+
+HTTP 429 `RATE_LIMITED` shows 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.
+and HTTP 401 `INVALID_DEVICE_TOKEN` shows 이 기기의 서버 요청을 확인할 수 없어요.
+앱이 최신 버전인지 확인해 주세요. on question loading, generation, adjustment,
+remaining-work re-planning and reload. Only those exact status/code pairs are
+recognized; any other 401 or 429 keeps the generic wording. Inputs, rows and
+selection are kept, nothing is retried automatically, a confirmed rejection adds
+no reload requirement, and a rejected reload keeps the plan's existing reload
+requirement without marking it missing. `Retry-After` is not used for a
+scheduled retry.
 
 ### Validation errors
 
@@ -468,7 +528,10 @@ When automatic adjustment returns `NOT_ENOUGH_TIME`, live and demo show
 「옮길 수 있는 시간이 없어요」 and direct the learner to 「시간 직접 옮기기」.
 With entered windows, the no-fit footer also offers 「캘린더에서 빈 시간 찾기」.
 This explicit action requests read permission if needed and lists up to three free
-times on different dates, at whole 10-minute starts. The usual band runs from the
+times on different dates. Starts are on whole 10-minute marks or directly after
+a study row. Automatic moves and suggestions must form a continuous study
+session of at least 30 minutes and must preserve the minimum for affected
+future sessions. A manual move may form a shorter session. The usual band runs from the
 earliest entered start to the latest entered end across the base and override
 weeks, on any date. Times avoid other study rows, retained external rows and
 eligible device-calendar occurrences, stay after preparation/current time and end
@@ -508,7 +571,8 @@ created before this storage existed, cannot be recovered from the server,
 whose list lacks the original creation inputs. Form input that was not
 explicitly saved as a draft, navigation and the moved-session tag are not saved.
 
-**Snapshot versions.** Saving writes snapshot version 5, including plan-scoped
+**Snapshot versions.** Saving writes snapshot version 6, which retains the next
+plan number even when the newest plan is deleted. Version 5 added plan-scoped
 timing-only conflict digests. Each entry keeps that plan's study-session reports (status and actual minutes) by study-row ID;
 identical IDs in two plans never share a report, and a report whose row is no
 longer in the plan is kept but not shown as a current session's. Next to the
@@ -555,12 +619,17 @@ outcome write fails, the result stays unsaved in memory and local retry writes t
 same plan plus draft removal without another generation. Ending the process before
 that succeeds restores the earlier saved draft, not the unsaved result or request.
 
-Version 1, 2, 3 and 4 lists saved by earlier builds still load (versions 1 and 2
-as plans without reports; v3 retains reports, v4 also retains drafts), without
-keeps, and the file is not rewritten until the next save of the list, which writes version 5. An older
-build cannot read a newer version and shows the load failure above without
-changing the file, so downgrading after a version 5 save needs a compatible
-backup of the earlier file; nothing is converted back automatically.
+Versions 1 through 5 still load. Versions 1 and 2 load without reports, v3
+retains reports, v4 also retains drafts, and v5 retains conflict decisions.
+Older snapshots use the highest saved plan number plus one. The next save
+writes version 6. To downgrade after a version 6 save, use a compatible backup.
+
+To delete a plan, scroll to 「계획 삭제」 in its plan view and confirm. Live
+mode removes the server copy before saving the removal on this device. Demo
+plans and live plans with no server file are deleted locally. The plan stays
+visible if the server outcome is uncertain or the local save fails. 「다시 시도」
+can finish the removal when the server already reports the plan gone. Events
+previously exported to the phone calendar stay there.
 
 At start the app reads the saved list before anything can change it. While it
 reads, home and the list show 저장된 계획을 불러오는 중이에요 instead of a count or
@@ -658,6 +727,8 @@ build. What follows depends on the failure:
 | Live failure | Message | Next step |
 | --- | --- | --- |
 | 422, 500, 502, 503, other statuses | 422: Korean explanation of a recognized cause (see [Validation errors](#validation-errors)), or 요청 정보를 확인하지 못했어요; other errors use app-defined wording | 다시 시도 resends the identical request; choosing another session builds a new one |
+| 429 `RATE_LIMITED` | 요청이 너무 많아요. 잠시 후 다시 시도해 주세요. | 다시 시도 when the learner chooses; no reload requirement is added and nothing is sent automatically |
+| 401 `INVALID_DEVICE_TOKEN`, or the device credential cannot be read or saved | 이 기기의 서버 요청을 확인할 수 없어요. 앱이 최신 버전인지 확인해 주세요. (for the local storage failure: 이 기기의 서버 요청 정보를 준비하지 못했어요 …) | As for 429; nothing was processed |
 | 404 without `PLAN_NOT_FOUND` (wrong URL or old server) | API 경로를 찾을 수 없어요 … (HTTP 404) | 다시 시도, as above; the plan is not treated as deleted |
 | 404 `PLAN_NOT_FOUND` | 서버에서 이 계획을 찾을 수 없어요 … | The plan stays viewable but cannot be adjusted, also after a restart; 목록으로 or 새 계획 만들기 |
 | 409 `PLAN_CONFLICT` | 서버의 계획이 변경되었어요 … | 최신 계획 불러오기 |
@@ -934,14 +1005,11 @@ edited or removed can no longer be recognized and is imported like any other
 busy event; the app does not guess from titles or times and never changes or
 deletes calendar events.
 
-**Demo planner.** The demo planner keeps its usual workload and one session per
-enabled day in that day's first window, with the usual session length (60
-minutes, or the whole window if shorter). On each day it uses the earliest
-start where the whole session fits outside every imported interval (intervals
-are start-inclusive, end-exclusive, so an event ending at 18:00 does not block
-a session starting then). It never splits or shortens a session to fit between
-events; a day without such a gap gets no session, and too few usable days give
-the usual labeled demo shortfall. Imported rows appear in the plan as
+**Demo planner.** The demo planner subtracts imported busy intervals from the
+effective study windows and fills each free stretch of at least 30 continuous
+minutes. Touching windows can form one stretch across midnight. An event ending
+at 18:00 allows study to start at 18:00. Shorter stretches stay empty and are
+excluded from the shortfall's usable-minute count. Imported rows appear in the plan as
 `external-<ID>` rows (기존 일정) in the same order in its JSON and CSV, and they
 are not counted or exported as study sessions.
 
@@ -1374,7 +1442,8 @@ the actual minutes as a separate field. 다 했어요 suggests the planned minut
 both 다 했어요 and 일부 했어요 accept any positive whole number of minutes, including
 more than planned; 못 했어요 disables the field and saves 0. Invalid entries show
 an error and keep the saved report. 기록 저장하기 / 기록 수정하기 saves explicitly
-and returns to the plan; 취소 or back writes nothing. Rows show the saved status
+and returns to the plan unless the saved report offers a follow-up. 취소 or back
+writes nothing before saving. Rows show the saved status
 and actual minutes (for example 다 했어요 · 실제 20분) apart from the scheduled
 duration.
 
@@ -1386,6 +1455,25 @@ sent to the server or the calendar, and do not estimate mastery; there is no
 skip (이미 아는 내용이에요) action and no history of earlier reports.
 
 ## Remaining study re-planning
+
+Saving **못 했어요** or **일부 했어요** on a ready plan with entered study windows
+offers **빈 시간에 이어서 공부하기** when that topic has minutes left. Saving the
+report reads no calendar and sends no request. **나중에** returns to the plan
+with the report saved and the schedule unchanged.
+
+Opening the offer checks calendar read access and lists up to three times on
+different dates in the usual study band before the exam. Each suggestion shows
+the topic, remaining duration and whether it is outside the entered windows.
+Remainders under 30 minutes need adjacent study that brings the continuous
+session to at least 30 minutes. Confirmation re-reads the calendar. A new
+overlap clears the selection and refreshes the suggestions. Denied access, an
+unreadable calendar and no suitable time each offer a return to the plan.
+
+Live sends a remaining-mode request with one session, its chosen
+`new_start_date`, and `confirm_outside_availability: true` only for a confirmed
+outside-window time. Demo saves locally. The new row starts without a report
+and the original report remains associated with its original ID. The follow-up
+uses the save and reload behavior below. Calendar export stays separate.
 
 The plan view of a generated or reopened plan offers **남은 공부 다시 계획하기**
 (일정 조정 does not) independently
@@ -1425,7 +1513,10 @@ After a no-fit, 「캘린더에서 빈 시간 찾기」 requests read permission
 explicit tap and previews a complete batch in the same usual band as single-session
 search. It excludes kept rows, calendar occurrences and earlier placements, and
 starts no earlier than preparation, `replan_from` and the next current minute,
-rounded up to 10 minutes. A missing fit proposes no partial batch. The preview
+rounded up to 10 minutes. Each placement must form a continuous session of at
+least 30 minutes and may join an existing study row or an earlier placement.
+The batch must preserve the minimum for affected future sessions. A missing
+fit proposes no partial batch. The preview
 shows every topic/date/time/minutes and one-time outside-window labels.
 
 「이번 한 번만 이 시간으로 다시 계획하기」 re-reads the calendar and recomputes
@@ -1475,6 +1566,56 @@ It avoids retained study/external rows and preserves existing protected overlaps
 A failure to fit any whole session rejects the complete batch. This deterministic
 operation has no network, model or calendar dependency.
 
+## Reassessment during a plan
+
+The plan view offers **다시 진단하기** right after **남은 공부 다시 계획하기**.
+It is disabled under the same shared rule as remaining-study re-planning: another
+plan operation or an unresolved reload blocks it, and a plan without its
+preparation start, exam date or study windows shows the existing recreation
+guidance. When the exam has passed or no unreported study row starts from the
+current minute on, it shows **바꿀 수 있는 남은 공부가 없어요**. Nothing is read
+or sent until it is tapped.
+
+The quiz uses a separate set of 18 authored example questions with the same
+topic coverage as the first diagnostic. It is labeled as differing from the
+first diagnostic and as neither an official nor a validated assessment, and
+each question offers 모르겠음. **결과 보기** needs every answer. The results
+show each question's answer, correct answer and explanation, and each topic as
+**처음 진단 N%** → **이번 진단 M%**, with no pass or mastery prediction. Results
+are discarded on leaving; no reassessment history is kept.
+
+**남은 공부에 반영해 보기** previews the change without saving it. Only future
+unreported study rows change, and only their topics: dates, times and total
+minutes stay fixed, and a row may split into back-to-back pieces where one topic
+ends and the next begins. Past rows, a row in progress, reported rows, external
+rows, the exam date, the preparation start and the study windows stay unchanged.
+Future minutes are split by the new scores alone (one minute per topic, the rest
+weighted by `2 − score/100`) and packed weakest-first in time order; completed
+study is not subtracted. The preview lists each topic's minutes before → after
+with the same total, and every changed session with its date, time and old → new
+topic. **바뀌는 남은 공부가 없어요** and too little remaining time to re-split
+both leave the plan unchanged.
+
+**이대로 바꾸기** applies the previewed result once; **바꾸지 않기** sends
+nothing. The update uses the remaining-study lock, the durable reload gate,
+uncertain-outcome reload and local-only **다시 저장하기** described above. A
+result that differs from the preview is treated as uncertain. If a revisable
+session starts before confirmation, the preview is out of date and
+**다시 미리 보기** asks again with the same answers. **계획 보기** returns to the
+plan view at the week of the first changed session. Reports, calendar
+acknowledgments and kept conflicts stay under their original IDs, and new pieces
+get fresh study IDs. Calendar copies exported earlier keep their old topics;
+export stays the separate existing action.
+
+Demo uses bundled copies of the 18 questions, computes the preview and update
+locally with the same rules, saves on the device and keeps the local-demo label.
+It makes no network or calendar request. Live loads
+`GET /certifications/{id}/reassessment-questions` and sends
+`POST /schedules/adjust` with `mode: "reassessment"`, first with `commit: false`
+for the preview and then with `commit: true` after confirmation. The backend in
+this checkout implements both endpoints. Live requires deploying that version;
+older servers show **서버 업데이트가 필요해요** and never substitute demo questions.
+
 ## Known limitations
 
 - Written exam only; practical-exam support is an open decision.
@@ -1491,6 +1632,10 @@ operation has no network, model or calendar dependency.
   basics, AI ethics or ICT convergence items) are left to a separate 2027
   update, so from 2027-01-01 the questions are behind the current syllabus. See
   the [question-bank notes](../backend/DEVELOPER_GUIDE.md#문항-은행-유지보수).
+- Live reassessment needs this backend version deployed with the reassessment
+  question route and adjustment mode; deployment is not verified by offline tests.
+  The 18 reassessment questions are drafts awaiting a teammate's review, and
+  their one to four items per topic make topic scores noisy.
 - Calendar checks are foreground snapshots and explicit action reviews. Background
   monitoring, synchronization and system notifications remain outside the flow.
 - A 500 `STORAGE_ERROR` from adjustment or reload is shown as a generic server

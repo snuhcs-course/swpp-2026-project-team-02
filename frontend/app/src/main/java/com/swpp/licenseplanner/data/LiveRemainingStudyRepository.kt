@@ -28,7 +28,9 @@ class LiveRemainingStudyRepository(
             preparationStart = source.original.preparationStart, examDate = source.original.examDate,
             replanFrom = WireDateTime.format(input.replanFrom), remainingSessions = input.work.instructions.map { instruction ->
                 instruction.copy(newStartDate = input.destinations?.get(instruction.scheduleId)?.let(WireDateTime::format))
-            }, confirmOutsideAvailability = input.destinations?.let { input.confirmOutside })
+            }, confirmOutsideAvailability = input.destinations?.let {
+                input.confirmOutside.takeIf { input.followUpScheduleId == null || it }
+            })
         val body = OneShotBody(ApiJson.encodeToString(RemainingStudyRequest.serializer(), request)
             .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE))
         val http = Request.Builder().url(apiUrl(baseUrl, "/schedules/adjust")).post(body).build()

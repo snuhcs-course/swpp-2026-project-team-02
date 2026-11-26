@@ -56,8 +56,12 @@ the app.
 
 The app supports multiple daily study windows, per-week changes, device-local
 creation drafts and study reports, and viewing or moving saved study sessions.
-It can read calendar conflicts and copy study sessions to a chosen device
-calendar. Build and verification instructions are in
+A learner can [reassess during a plan](frontend/README.md#reassessment-during-a-plan)
+with separate example questions and, after a preview and confirmation, change the
+topics of future unreported sessions without moving their times. Both demo and
+the backend support this flow; live use requires deploying this backend version.
+It can read calendar conflicts and copy
+study sessions to a chosen device calendar. Build and verification instructions are in
 [`frontend/README.md`](frontend/README.md#checks). The
 [Iteration 4 source and rollout notes](frontend/README.md#iteration-4-source-status)
 record which HE and topic-budget branch work was merged and the remaining-work rollout.
@@ -90,6 +94,18 @@ public check and the signed release APK are documented in
 [`deploy/README.md`](deploy/README.md). This checkout does not establish which
 revision or configuration the server is running.
 
+The checked-in production configuration requires a per-installation device token
+(`Authorization: Bearer <token>`) on every plan route, stores each token's plans
+in its own directory, disables the shared availability profile, and limits
+generation and adjustment per token, client IP and server process. Health,
+certifications and questions stay public. The token identifies an installation,
+not an account. Over the cleartext HTTP endpoint it can be observed and replayed
+by anyone on the network path, which is an accepted risk of this release. The
+limits are kept in process memory and reset on restart. A pre-token backend must
+never return to public service. The deployment guide gives the coordinated
+backend and APK cutover, including the one-time reviewed wipe of legacy demo
+plans and the release verification sequence.
+
 ## Open decisions
 
 - **Practical exam (실기):** whether and how to support it. The app currently
@@ -114,14 +130,18 @@ revision or configuration the server is running.
 - **Not enough study time:** proven infeasibility returns HTTP 422 with capacity,
   topic basis and recovery advice in `error.message`; the live app presents it in
   Korean. A richer structured shortfall schema remains an open decision.
-- **How much available time a plan uses:** plans now use every usable entered
-  minute (the entered windows minus calendar conflicts), and the backend, not the
-  model, sets each date's total; a missed session usually needs a manual move.
+- **How much available time a plan uses:** assessed live plans and demo plans
+  fill entered windows after subtracting calendar conflicts and discarding free
+  stretches shorter than 30 continuous minutes. The backend sets each date's
+  total for assessed live plans. Automatic adjustment and app-suggested times
+  follow the same session minimum. A manual move may form a shorter session.
   An earlier evaluation observed about 60% median use. Review
   rounds from the HE branch were not merged. User testing still needs to establish whether
   learners mean the entered time as a limit or a target and how they prefer to
   distribute work across weekdays.
 - **Summary labeling:** generation summaries are composed by server code from
   accepted schedule counts. The app labels them “계획 요약” in a plain gray box, without the AI tag.
-- **Deployment:** authentication, per-user storage and plan retention remain
-  open; the public server and release APK use the shared HTTP endpoint above.
+- **Deployment:** plans are isolated per anonymous device token with retention
+  per token; account authentication, HTTPS, token recovery, plan transfer and
+  durable or global usage limits remain open. The public server and release APK
+  use the HTTP endpoint above.

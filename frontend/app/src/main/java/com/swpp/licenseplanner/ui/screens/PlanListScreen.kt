@@ -1,6 +1,7 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,7 +13,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WireDateTime
@@ -20,6 +23,7 @@ import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.components.AppScreen
 import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.LoadingBlock
+import com.swpp.licenseplanner.ui.components.MutedBox
 import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.PrimaryButton
@@ -48,6 +52,7 @@ fun PlanListScreen(
     onRetryLoad: () -> Unit,
     onRetrySave: () -> Unit,
     conflictNotices: @Composable () -> Unit = {},
+    deletionNotice: Boolean = false,
 ) {
     val restored = storage != PlanStorage.Loading && storage != PlanStorage.LoadFailure
     AppScreen(
@@ -63,6 +68,14 @@ fun PlanListScreen(
         } else null,
     ) {
         Heading("어떤 계획을 볼까요?", "이 기기에 저장한 계획이에요. 앱을 다시 열어도 남아 있어요.")
+        if (deletionNotice) {
+            MutedBox {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Image(painterResource(R.drawable.ic_plan_deleted), contentDescription = null)
+                    Text("계획을 삭제했어요.", style = MaterialTheme.typography.labelLarge, color = Ink)
+                }
+            }
+        }
         if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
         StorageAlert(storage, onRetryLoad, onRetrySave)
         conflictNotices()

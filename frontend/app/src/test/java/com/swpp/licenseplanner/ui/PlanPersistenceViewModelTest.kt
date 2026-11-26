@@ -15,6 +15,7 @@ import com.swpp.licenseplanner.data.AdjustmentRepository
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.data.ApiJson
 import com.swpp.licenseplanner.data.BytesPlanStore
+import com.swpp.licenseplanner.data.DeleteOutcome
 import com.swpp.licenseplanner.data.LiveAdjustmentRepository
 import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.MemoryPlanBytes
@@ -103,6 +104,7 @@ class PlanPersistenceViewModelTest {
         val inputs = mutableListOf<AdjustmentInput>()
         var gate: CompletableDeferred<Unit>? = null
         val reloads = ArrayDeque<ReloadOutcome>()
+        val deletions = ArrayDeque<DeleteOutcome>()
         var reloadCalls = 0
         var reloadGate: CompletableDeferred<Unit>? = null
         override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
@@ -116,6 +118,10 @@ class PlanPersistenceViewModelTest {
             events += "reload"
             reloadGate?.await()
             return reloads.removeFirst()
+        }
+        override suspend fun delete(scheduleCsvFile: String): DeleteOutcome {
+            events += "delete $scheduleCsvFile"
+            return deletions.removeFirst()
         }
     }
 
@@ -265,7 +271,7 @@ class PlanPersistenceViewModelTest {
         val legacyB = legacyA.copy(weeklyAvailability = mapOf("wednesday" to listOf(TimeWindow("18:00", "19:00"))))
         val plans = PlanSnapshot(listOf(SessionPlan.register(1, legacyA, planA, false), SessionPlan.register(2, legacyB, planB, false)))
         val current = ApiJson.parseToJsonElement(PlanSnapshotCodec.encode(plans, liveScope)).jsonObject
-        val v1 = JsonObject(current + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(current.getValue("entries").jsonArray.map { entry ->
+        val v1 = JsonObject(current - "next_plan_ordinal" + ("version" to JsonPrimitive(1)) + ("entries" to JsonArray(current.getValue("entries").jsonArray.map { entry ->
             val original = entry.jsonObject.getValue("original").jsonObject
             JsonObject(entry.jsonObject - "check_ins" - "kept_conflicts" + ("original" to JsonObject(original - "availability_overrides")))
         })))
@@ -281,9 +287,58 @@ class PlanPersistenceViewModelTest {
         assertTrue(vm.generateAfterCalendarCheck())
         advanceUntilIdle()
         val saved = ApiJson.parseToJsonElement(disk.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(5), saved["version"])
+        assertEquals(JsonPrimitive(6), saved["version"])
         assertEquals(plans.plans + vm.plan(3), restoredNow())
         assertEquals(mapOf("monday" to listOf(TimeWindow("18:00", "20:00"))), restoredNow()[0].original.weeklyAvailability)
+    }
+
+    @Test fun liveDeletionKeepsBothPlansUntilTheServerAndLocalSaveSucceed() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment()
+        adjustment.deletions.addAll(listOf(DeleteOutcome.Uncertain, DeleteOutcome.Gone, DeleteOutcome.Gone))
+        val (vm, store) = open(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        val before = vm.plans.value
+        val beforeBytes = disk.committed!!.copyOf()
+        val originalSaveCount = store.saves
+        assertTrue(vm.deletePlan(2))
+        assertFalse(vm.deletePlan(2))
+        advanceUntilIdle()
+        assertTrue(vm.planDeletion.value?.status is PlanDeletionStatus.Failed)
+        assertEquals(originalSaveCount, store.saves)
+        assertArrayEquals(beforeBytes, disk.committed)
+
+        store.failingSaves += store.saves + 1
+        assertTrue(vm.deletePlan(2))
+        advanceUntilIdle()
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(before, vm.plans.value)
+        assertArrayEquals(beforeBytes, disk.committed)
+        assertFalse(vm.deletePlan(1))
+
+        assertTrue(vm.deletePlan(2))
+        advanceUntilIdle()
+        assertEquals(PlanDeletion(2, PlanDeletionStatus.Deleted), vm.planDeletion.value)
+        assertEquals(listOf(before.first()), restoredNow())
+        assertEquals(listOf("delete $fileB", "delete $fileB", "save", "delete $fileB", "save"), events.takeLast(5))
+
+        val (restarted, _) = open(FakePlanning(PlanOutcome.Success(planB, false)))
+        assertTrue(restarted.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(listOf(1, 3), restarted.plans.value.map { it.ordinal })
+    }
+
+    @Test fun deletionIsBlockedWhileAnAdjustmentIsInFlight() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(adjustedA)).apply { gate = CompletableDeferred() }
+        val (vm, _) = open(FakePlanning(PlanOutcome.Success(planA, false)), adjustment)
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        vm.select(1, "study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals("이 계획에서 진행 중인 작업이 끝나면 삭제할 수 있어요.", vm.planDeletionBlockReason(1))
+        assertFalse(vm.deletePlan(1))
+        adjustment.gate!!.complete(Unit)
+        advanceUntilIdle()
     }
 
     @Test fun restartRestoresAcceptedUpdatesRecoveryAndMissingStates() = runTest(dispatcher) {

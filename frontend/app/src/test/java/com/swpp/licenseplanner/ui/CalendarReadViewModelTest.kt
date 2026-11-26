@@ -224,17 +224,18 @@ class CalendarReadViewModelTest {
         val imported = vm.form.value
         assertEquals(busy, imported.busySchedules)
 
-        // Only Monday's 60-minute window precedes 2026-11-10, and the import leaves 5 minutes for 8 topics.
+        // Only Monday's 60-minute window precedes 2026-11-10. The import leaves a 5-minute gap, too short
+        // for a session, so no usable minutes remain for 8 topics.
         assertTrue(generateReviewed(vm))
         advanceUntilIdle()
-        assertEquals(GenerationState.DemoShortfall(required = 8, available = 5), vm.generation.value)
+        assertEquals(GenerationState.DemoShortfall(required = 8, available = 0), vm.generation.value)
         assertEquals(busy, planning.requests.single().busySchedules)
 
         // An unchanged date keeps the import and the warning.
         vm.setExamDate(LocalDate.of(2026, 11, 10))
         assertEquals(imported, vm.form.value)
         assertEquals(CalendarReadState.Loaded(2, 0, 0), vm.calendarRead.value)
-        assertEquals(GenerationState.DemoShortfall(8, 5), vm.generation.value)
+        assertEquals(GenerationState.DemoShortfall(8, 0), vm.generation.value)
 
         // A later date clears the import. Explicit generation then reads fresh calendar rows.
         vm.setExamDate(LocalDate.of(2027, 1, 4))
@@ -256,10 +257,11 @@ class CalendarReadViewModelTest {
         val rows = success.response.schedules.filter { it.scheduleId.startsWith("study-") }
         assertEquals(rows.size + 2, success.response.schedules.size)
         assertEquals(8, rows.groupingBy { it.topic }.eachCount().size)
-        // 40 weekday hours before 2027-01-04, less the 115 minutes the fresh import still blocks.
-        assertEquals(40L * 60 - 115, rows.sumOf { studyMinutes(it) })
+        // 40 weekday hours before 2027-01-04, less the 115 minutes the fresh import still blocks and
+        // the 5-minute gap it leaves, which is too short for a session.
+        assertEquals(40L * 60 - 120, rows.sumOf { studyMinutes(it) })
         assertTrue(rows.none { it.startDate.startsWith("2026/11/11/") })
-        assertEquals("2026/11/09/18/55", rows.first().startDate)
+        assertEquals("2026/11/10/18/00", rows.first().startDate)
         assertTrue(success.response.scheduleCsv.contains("외부 일정"))
         assertEquals(1, vm.plans.value.size)
     }

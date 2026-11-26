@@ -17,6 +17,8 @@ from api_server import DEFAULT_API_CONFIG, make_handler
 from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from study_availability import parse_availability_context
 from study_plan_store import StudyPlanStore
+from test_support.admission import roomy_admission
+from test_support.device_tokens import bearer, owner_store
 
 PREPARATION = datetime(2026, 11, 16, 0, 0)
 EXAM = datetime(2026, 12, 7, 0, 0)
@@ -38,8 +40,9 @@ INSTRUCTIONS = [{"schedule_id": "study-1", "remaining_minutes": 60, "replacement
                 {"schedule_id": "study-4", "remaining_minutes": 10, "replacement_schedule_id": "study-7"}]
 EXPECTED = {
     "study-2": ROWS[1], "external-3": ROWS[2], "study-6": ROWS[4],
-    # Tuesday's freed half hour takes the 10-minute remainder; the hour waits for the week after the empty week.
-    "study-7": {"schedule_id": "study-7", "start_date": "2026/11/17/18/30", "end_date": "2026/11/17/18/40",
+    # The hour waits for the week after the empty week; the 10-minute remainder is too short to stand alone in
+    # Tuesday's freed half hour, so it extends that hour into one 70-minute session.
+    "study-7": {"schedule_id": "study-7", "start_date": "2026/11/30/19/00", "end_date": "2026/11/30/19/10",
                 "topic": TOPIC},
     "study-1": {"schedule_id": "study-1", "start_date": "2026/11/30/18/00", "end_date": "2026/11/30/19/00",
                 "topic": TOPIC},
@@ -58,18 +61,19 @@ class RemainingStudyApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name) / "plans"
+        self.plan_root = Path(self.temp.name) / "plans"
         self.profile = Path(self.temp.name) / "profile.json"
         self.profile.write_text(json.dumps({"friday": [{"start": "09:00", "duration_minutes": 60}]}),
                                 encoding="utf-8")
         context = parse_availability_context({"weekly_availability": WEEKLY, "availability_overrides": OVERRIDES})
         self.csv = render_schedule_csv(parse_schedule_rows(ROWS))
-        self.store = StudyPlanStore(self.root)
+        self.store = owner_store(self.plan_root)
+        self.root = self.store.directory
         self.plan = self.store.create(self.csv, EXAM, preparation_start=PREPARATION, availability=context)
         self.other = self.store.create(self.csv, EXAM, preparation_start=PREPARATION, availability=context)
         for name in ("AdjustmentAgent", "PlanningAgent", "load_adjuster_availability"):
             self.patch(name, forbidden)
-        self.patch("STUDY_PLAN_OUTPUT_DIR", self.root)
+        self.patch("STUDY_PLAN_OUTPUT_DIR", self.plan_root)
         self.patch("current_korea_minute", lambda: FROZEN_NOW)
         self.start_server()
         self.before = self.files()
@@ -80,7 +84,7 @@ class RemainingStudyApiTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def start_server(self):
-        handler = make_handler(DEFAULT_API_CONFIG)
+        handler = make_handler(DEFAULT_API_CONFIG, roomy_admission())
         handler.log_message = lambda *args: None
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -91,7 +95,7 @@ class RemainingStudyApiTests(unittest.TestCase):
     def call(self, path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
         request = Request(f"http://127.0.0.1:{self.server.server_port}/api/v1{path}", data=data,
-                          headers={"Content-Type": "application/json"})
+                          headers={"Content-Type": "application/json", **bearer()})
         try:
             response = urlopen(request, timeout=10)
         except HTTPError as error:
@@ -151,7 +155,7 @@ class RemainingStudyApiTests(unittest.TestCase):
                                  "replacement_schedule_id": "study-7"}]))
         self.assertEqual(status, 200, second)
         self.assertEqual(next(r for r in second["schedules"] if r["schedule_id"] == "study-7")["start_date"],
-                         "2026/11/17/18/30")
+                         "2026/11/30/19/00")
         self.assert_only_selected_csv_changed(self.plan)
 
     def test_automatic_and_manual_requests_keep_their_contracts(self):

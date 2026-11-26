@@ -8,6 +8,7 @@ from study_availability import as_context, context_payload
 
 from .catalog import CERTIFICATIONS
 from .models import PlanRequest, ToolTrace
+from .scheduler import MIN_STUDY_SESSION_MINUTES
 from .settings import DATETIME_FORMAT, load_api_key, load_model
 from .tools import (PlannerTools, check_initial_capacity, submitted_question_count, tool_schemas,
                     usable_date_minutes)
@@ -27,6 +28,7 @@ AGENT_SYSTEM_PROMPT = (
     "study time and splits it across the diagnosed topics by score. Do not choose workload, dates or minutes, "
     "and do not output, translate or calculate topic names or topic budgets for schedule creation. "
     "For requests without diagnostics, use the legacy daily_topic_minutes proposal as described by the tool. "
+    f"Each continuous study session must be at least {MIN_STUDY_SESSION_MINUTES} minutes, across any number of topic blocks. "
     "Do not classify users into fixed readiness "
     "levels or apply level multipliers. Do not apply a fixed session duration or daily session-count "
     "limit. If a tool reports an error, explain it. "
@@ -41,8 +43,13 @@ def _build_summary(result: dict) -> str:
     topic_count = len({item["topic"] for item in result["daily_topic_minutes"]})
     planned = result['total_planned_minutes']
     usable = result['usable_minutes']
-    return (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
-            f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
+    summary = (f"{topic_count}개 학습 주제에 학습 일정 {result['study_block_count']}개, 총 {planned}분을 배치했습니다. "
+               f"준비 기간의 공부 가능 시간은 총 {usable}분입니다.")
+    short = result.get("short_segment_minutes") or 0
+    if short:
+        summary += (f" 입력한 시간 중 {short}분은 {MIN_STUDY_SESSION_MINUTES}분보다 짧게 끊긴 빈 시간이라 "
+                    "일정에서 제외했습니다.")
+    return summary
 
 
 class PlanningAgent:

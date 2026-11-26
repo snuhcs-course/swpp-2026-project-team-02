@@ -25,7 +25,7 @@ data class RemainingWork(val contributions: List<RemainingContribution>, val tot
 object RemainingStudy {
     private val studyId = Regex("study-([0-9]+)")
 
-    fun calculate(plan: SessionPlan): RemainingWork {
+    fun calculate(plan: SessionPlan, onlyScheduleId: String? = null): RemainingWork {
         val rows = plan.current.schedules
         require(rows.map { it.scheduleId }.toSet().size == rows.size) { "중복된 일정이 있어요." }
         val current = rows.filterNot { it.scheduleId.startsWith("external-") }
@@ -36,7 +36,8 @@ object RemainingStudy {
             (plan.checkIns.keys + plan.keptConflicts.keys).mapNotNull {
                 if (studyId.matches(it)) suffix(it) else null
             }).maxOrNull() ?: 0L
-        val sorted = current.sortedWith(compareBy<ScheduleRow> { it.startDate }.thenBy { it.endDate }.thenBy { suffix(it.scheduleId) })
+        val sorted = current.filter { onlyScheduleId == null || it.scheduleId == onlyScheduleId }
+            .sortedWith(compareBy<ScheduleRow> { it.startDate }.thenBy { it.endDate }.thenBy { suffix(it.scheduleId) })
         var total = 0L
         val contributions = sorted.map { row ->
             val start = requireNotNull(WireDateTime.parseOrNull(row.startDate)) { "일정 시간을 읽을 수 없어요." }
@@ -58,7 +59,11 @@ object RemainingStudy {
         return RemainingWork(contributions, total)
     }
 
-    /** Complete whole-session first fit; null means no complete placement under this ordering. */
+    /**
+     * Complete whole-session first fit; null means no complete placement under this ordering.
+     * Each remainder must sit in a study session of at least [StudySessions.MIN_MINUTES], and once
+     * the last one is placed no session from the lower bound on may have been cut below it.
+     */
     fun place(plan: SessionPlan, work: RemainingWork, replanFrom: LocalDateTime, now: LocalDateTime): List<ScheduleRow>? {
         val context = AvailabilityWire.context(plan.original) ?: return null
         val preparation = WireDateTime.parseOrNull(plan.original.preparationStart) ?: return null
@@ -66,7 +71,12 @@ object RemainingStudy {
         val lower = maxOf(preparation, replanFrom, now.withSecond(0).withNano(0).plusMinutes(1))
         val sources = work.instructions.map { it.scheduleId }.toSet()
         val candidate = plan.current.schedules.filterNot { it.scheduleId in sources }.toMutableList()
-        for (contribution in work.contributions.filter { it.remainingMinutes > 0 }) {
+        val original = PlanGrouping.sessions(plan.current.schedules)
+        val pending = work.contributions.filter { it.remainingMinutes > 0 }
+        val placedIds = mutableSetOf<String>()
+        for ((index, contribution) in pending.withIndex()) {
+            placedIds += contribution.replacementId
+            val futureFrom = if (index == pending.lastIndex) lower else null
             var date = lower.toLocalDate()
             var placed: ScheduleRow? = null
             while (date.atStartOfDay() < exam && placed == null) {
@@ -75,13 +85,19 @@ object RemainingStudy {
                     val until = minOf(exam, window.end)
                     while (start.plusMinutes(contribution.remainingMinutes.toLong()) <= until) {
                         val end = start.plusMinutes(contribution.remainingMinutes.toLong())
-                        val blockers = PlanGrouping.sessions(candidate).filter { it.start < end && start < it.end }
-                        if (blockers.isEmpty()) {
-                            placed = contribution.source.copy(scheduleId = contribution.replacementId,
-                                startDate = WireDateTime.format(start), endDate = WireDateTime.format(end))
+                        val busy = PlanGrouping.sessions(candidate)
+                        val blockers = busy.filter { it.start < end && start < it.end }
+                        if (blockers.isNotEmpty()) {
+                            start = blockers.maxOf { it.end }
+                            continue
+                        }
+                        val row = contribution.source.copy(scheduleId = contribution.replacementId,
+                            startDate = WireDateTime.format(start), endDate = WireDateTime.format(end))
+                        if (StudySessions.keepsSessions(PlanGrouping.sessions(candidate + row), placedIds, original, futureFrom)) {
+                            placed = row
                             break
                         }
-                        start = blockers.maxOf { it.end }
+                        start = StudySessions.nextEnd(start, busy) ?: break
                     }
                     if (placed != null) break
                 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import secrets
 import threading
 import urllib.error
 import urllib.request
@@ -33,12 +34,15 @@ TEXT_ENCODING = "utf-8"
 
 
 def _request_json(url: str, method: str = "GET", payload: dict | None = None,
-                 origin: str | None = None) -> tuple[int, dict, dict[str, str]]:
-    """입력 값: 요청 URL, HTTP 메서드, 선택 JSON 본문과 Origin
+                 origin: str | None = None, token: str | None = None) -> tuple[int, dict, dict[str, str]]:
+    """입력 값: 요청 URL, HTTP 메서드, 선택 JSON 본문과 Origin, 계획 경로용 기기 토큰
     출력 값: 상태 코드, JSON 응답 객체, 응답 헤더
     기능: 로컬 API에 실제 HTTP 요청을 보내고 응답을 JSON으로 읽습니다.
+    토큰은 Authorization 헤더로만 보내며 결과 파일에는 기록하지 않습니다.
     """
     headers = {}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
     body = None
     if payload is not None:
         body = json.dumps(payload, ensure_ascii=False).encode(TEXT_ENCODING)
@@ -69,7 +73,7 @@ def _request_preflight(url: str, origin: str, requested_method: str) -> tuple[in
     request = urllib.request.Request(url, headers={
         "Origin": origin,
         "Access-Control-Request-Method": requested_method,
-        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Headers": "authorization, content-type",
     }, method="OPTIONS")
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.status, dict(response.headers.items())
@@ -88,6 +92,8 @@ def run() -> dict:
     adjustment_payload = json.loads(ADJUSTMENT_FIXTURE.read_text(encoding=TEXT_ENCODING))
     checks: dict[str, bool] = {}
     result_body: dict = {}
+    # 이 실행만 쓰는 일회용 기기 토큰입니다. 메모리에만 두고 요청 헤더로만 보냅니다.
+    device_token = secrets.token_hex(32)
 
     with TemporaryDirectory(prefix="api-availability-test-") as temporary_directory:
         profile_path = Path(temporary_directory) / "user_availability.json"
@@ -129,7 +135,8 @@ def run() -> dict:
                     health_headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
                     and preflight_status == 204
                     and preflight_headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
-                    and "POST" in preflight_headers.get("Access-Control-Allow-Methods", ""))
+                    and "POST" in preflight_headers.get("Access-Control-Allow-Methods", "")
+                    and "Authorization" in preflight_headers.get("Access-Control-Allow-Headers", ""))
 
                 status, saved, _ = _request_json(
                     f"{base_url}/availability", method="PUT", payload=availability_payload)
@@ -139,19 +146,32 @@ def run() -> dict:
                     day: availability_payload["weekly_availability"].get(day, [])
                     for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
                 }
+                # 응답 창에는 duration_minutes가 더해지므로 입력과 같은 시작·종료 시각만 비교합니다.
+                def windows(weekly: dict | None) -> dict:
+                    return {day: [{"start": window.get("start"), "end": window.get("end")}
+                                  for window in (weekly or {}).get(day, [])] for day in expected_profile}
                 checks["availability_get_round_trip"] = (
-                    status == 200 and loaded.get("weekly_availability") == expected_profile
-                    and saved.get("weekly_availability") == expected_profile)
+                    status == 200 and windows(loaded.get("weekly_availability")) == expected_profile
+                    and windows(saved.get("weekly_availability")) == expected_profile)
 
-                invalid_status, invalid_body, _ = _request_json(
+                tokenless_status, tokenless_body, tokenless_headers = _request_json(
+                    f"{base_url}/schedules/adjust", method="POST", payload=adjustment_payload)
+                checks["plan_route_requires_device_token"] = (
+                    tokenless_status == 401
+                    and tokenless_body.get("error", {}).get("code") == "INVALID_DEVICE_TOKEN"
+                    and tokenless_headers.get("WWW-Authenticate", "").startswith("Bearer "))
+
+                invalid_status, invalid_body, invalid_headers = _request_json(
                     f"{base_url}/study-plans", method="POST",
-                    payload={"busy_schedules": "invalid"})
+                    payload={"busy_schedules": "invalid"}, token=device_token)
                 checks["invalid_input_422"] = (
                     invalid_status == 422
-                    and invalid_body.get("error", {}).get("code") == "INVALID_INPUT")
+                    and invalid_body.get("error", {}).get("code") == "INVALID_INPUT"
+                    and invalid_headers.get("Cache-Control") == "no-store")
 
                 adjust_status, result_body, _ = _request_json(
-                    f"{base_url}/schedules/adjust", method="POST", payload=adjustment_payload)
+                    f"{base_url}/schedules/adjust", method="POST", payload=adjustment_payload,
+                    token=device_token)
                 rows = _parse_csv(result_body.get("schedule_csv", "")) if adjust_status == 200 else []
                 by_id = {row["schedule_id"]: row for row in rows}
                 target = by_id.get(adjustment_payload["schedule_id"])

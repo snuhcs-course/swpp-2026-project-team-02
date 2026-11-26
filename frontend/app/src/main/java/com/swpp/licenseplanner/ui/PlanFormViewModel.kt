@@ -8,10 +8,20 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.swpp.licenseplanner.BuildConfig
 import com.swpp.licenseplanner.data.RemainingStudyInput
 import com.swpp.licenseplanner.data.RemainingStudyRepository
+import com.swpp.licenseplanner.data.ReassessmentInput
+import com.swpp.licenseplanner.data.ReassessmentOutcome
+import com.swpp.licenseplanner.data.ReassessmentQuestionsOutcome
+import com.swpp.licenseplanner.data.reassessmentResponseProblem
+import com.swpp.licenseplanner.data.ReassessmentRepository
+import com.swpp.licenseplanner.data.UnavailableReassessment
 import com.swpp.licenseplanner.data.remainingResponseProblem
 import com.swpp.licenseplanner.domain.FreeTime
+import com.swpp.licenseplanner.domain.RemainingContribution
+import com.swpp.licenseplanner.domain.RemainingWork
 import com.swpp.licenseplanner.ui.screens.isNoFit
 import com.swpp.licenseplanner.domain.RemainingStudy
+import com.swpp.licenseplanner.domain.Reassessment
+import com.swpp.licenseplanner.domain.ReassessmentFailure
 import com.swpp.licenseplanner.data.AdjustmentInput
 import com.swpp.licenseplanner.data.AdjustmentOutcome
 import com.swpp.licenseplanner.data.AdjustmentRepository
@@ -29,6 +39,10 @@ import com.swpp.licenseplanner.data.CalendarReadRepository
 import com.swpp.licenseplanner.data.CalendarReadWindow
 import com.swpp.licenseplanner.data.CalendarWriteOutcome
 import com.swpp.licenseplanner.data.ExportNotStarted
+import com.swpp.licenseplanner.data.DemoRemainingStudyRepository
+import com.swpp.licenseplanner.data.DeleteOutcome
+import com.swpp.licenseplanner.data.DeviceTokenSource
+import com.swpp.licenseplanner.data.DeviceTokenStore
 import com.swpp.licenseplanner.data.FlavorRepositories
 import com.swpp.licenseplanner.data.LocalPlanStore
 import com.swpp.licenseplanner.data.ManualMove
@@ -64,6 +78,7 @@ import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.PlanRecovery
 import com.swpp.licenseplanner.domain.SessionPlan
+import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.StudyCheckIn
 import com.swpp.licenseplanner.domain.StudyCheckInStatus
 import com.swpp.licenseplanner.domain.Weekday
@@ -86,6 +101,14 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+
+data class PlanDeletion(val ordinal: Int, val status: PlanDeletionStatus)
+
+sealed interface PlanDeletionStatus {
+    data object Deleting : PlanDeletionStatus
+    data object Deleted : PlanDeletionStatus
+    data class Failed(val title: String, val body: String) : PlanDeletionStatus
+}
 
 /** Example-question loading: loaded once per form flow, retried only after failure. */
 sealed interface QuestionLoadState {
@@ -271,6 +294,7 @@ data class CheckInEditor(
     val minutesEdited: Boolean,
     val error: CheckInInputError? = null,
     val save: CheckInSave = CheckInSave.Editing,
+    val followUp: RemainingContribution? = null,
 ) {
     /** Minutes can be typed only for done or partly, before saving. */
     val minutesEnabled: Boolean get() = save == CheckInSave.Editing && status != null && status != StudyCheckInStatus.Missed
@@ -308,10 +332,13 @@ class PlanFormViewModel(
      * which is captured once for the creation form.
      */
     private val currentDate: () -> LocalDate = { LocalDate.now() },
-    private val remainingStudyRepository: RemainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
+    /** Refuses live input, so it never stands in for the live repository. */
+    private val remainingStudyRepository: RemainingStudyRepository = DemoRemainingStudyRepository(),
     private val currentMinute: () -> LocalDateTime = {
         LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).withSecond(0).withNano(0)
     },
+    /** Never substitutes questions, so it cannot stand in for either flavor's repository. */
+    private val reassessmentRepository: ReassessmentRepository = UnavailableReassessment,
 ) : ViewModel() {
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
@@ -336,6 +363,10 @@ class PlanFormViewModel(
     private val _remainingStudy = MutableStateFlow<RemainingStudyState?>(null)
     val remainingStudy: StateFlow<RemainingStudyState?> = _remainingStudy.asStateFlow()
 
+    private val _reassessment = MutableStateFlow<ReassessmentState?>(null)
+    val reassessment: StateFlow<ReassessmentState?> = _reassessment.asStateFlow()
+    private var reassessmentAttempt = 0
+
     private val _adjustment = MutableStateFlow(AdjustmentSelection())
     val adjustment: StateFlow<AdjustmentSelection> = _adjustment.asStateFlow()
 
@@ -347,6 +378,9 @@ class PlanFormViewModel(
 
     private val _storage = MutableStateFlow(PlanStorage.Loading)
     val storage: StateFlow<PlanStorage> = _storage.asStateFlow()
+
+    private val _planDeletion = MutableStateFlow<PlanDeletion?>(null)
+    val planDeletion: StateFlow<PlanDeletion?> = _planDeletion.asStateFlow()
 
     /** The collection as last saved; it differs from [plans] only while a save is pending or failed. */
     private val _savedPlans = MutableStateFlow<List<SessionPlan>>(emptyList())
@@ -405,6 +439,8 @@ class PlanFormViewModel(
         val replacementOrdinal: Int? = null,
         val keep: KeepFeedback? = null,
         val remaining: RemainingStudyState.Success? = null,
+        val deletionOrdinal: Int? = null,
+        val reassessment: ReassessmentState.Done? = null,
     )
 
     private var pendingWrite: PendingLocalWrite? = null
@@ -457,13 +493,15 @@ class PlanFormViewModel(
     private val reloading get() = _adjustment.value.state == AdjustmentState.Reloading
     private val exporting get() = _calendarExport.value != null
     private val readingCalendar get() = _calendarRead.value in activeCalendarReads
+    private val deleting get() = _planDeletion.value?.status == PlanDeletionStatus.Deleting
 
     /**
      * An adjustment or reload is in flight, or a calendar export holds its plan; each must finish
      * on the plan it started from.
      */
-    private val busy get() = adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
-        _manualReview.value != null || _freeTimeSearch.value != null || _remainingStudy.value.holdsSource
+    private val busy get() = deleting || adjusting || reloading || exporting || readingCalendar || _calendarConflict.value != null ||
+        _manualReview.value != null || _freeTimeSearch.value != null || _remainingStudy.value.holdsSource ||
+        _reassessment.value != null
 
     /** Plans may change only once restored and while nothing is waiting to be saved. */
     private val storageReady get() = _storage.value == PlanStorage.Ready
@@ -486,6 +524,11 @@ class PlanFormViewModel(
         viewModelScope.launch {
             combine(_plans, _adjustment) { _, _ -> Unit }.collect {
                 _freeTimeSearch.value?.let { if (!freeTimeSourceCurrent(it)) cancelFreeTimeSearch() }
+                val followUp = _remainingStudy.value as? RemainingStudyState.CalendarSearch
+                if (followUp?.input?.followUpScheduleId != null &&
+                    plan(followUp.input.source.ordinal) != followUp.input.source) {
+                    _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
+                }
             }
         }
         viewModelScope.launch {
@@ -615,7 +658,8 @@ class PlanFormViewModel(
         val feedback = KeepFeedback(nextConflictId++, ordinal, scheduleId)
         _keepFeedback.value = feedback
         updatePlan(ordinal) { candidate }
-        val pending = PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), keep = feedback)
+        val pending = PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value,
+            nextOrdinal = nextOrdinal), keep = feedback)
         _storage.value = PlanStorage.Saving
         viewModelScope.launch { write(pending) }
         return true
@@ -881,19 +925,20 @@ class PlanFormViewModel(
         val ownExport = _calendarExport.value?.source?.planOrdinal == ordinal &&
             _calendarConflict.value?.kind == ConflictKind.Export &&
             _calendarConflict.value?.phase in setOf(ConflictPhase.Review, ConflictPhase.Details, ConflictPhase.Unchecked)
-        if (generating || adjusting || reloading || readingCalendar || _questionLoad.value == QuestionLoadState.Loading ||
-            _remainingStudy.value.holdsSource || _freeTimeSearch.value != null || noticeReading || _manualReview.value != null ||
+        if (deleting || generating || adjusting || reloading || readingCalendar || _questionLoad.value == QuestionLoadState.Loading ||
+            _remainingStudy.value.holdsSource || _reassessment.value != null || _freeTimeSearch.value != null || noticeReading || _manualReview.value != null ||
             (_calendarConflict.value != null && !ownExport) || (exporting && !ownExport)) return "진행 중인 작업을 마친 뒤 다시 시도해 주세요."
         return null
     }
 
     private fun regenerationSaveReady(): Boolean = storageReady && pendingWrite == null &&
         (_remainingStudy.value as? RemainingStudyState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
+        (_reassessment.value as? ReassessmentState.Done)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _keepFeedback.value?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _checkIn.value?.save !in setOf(CheckInSave.Saving, CheckInSave.Unsaved) &&
         (_adjustment.value.state as? AdjustmentState.Success)?.save !in setOf(MoveSave.Saving, MoveSave.Unsaved) &&
         _draftDecision.value == null &&
-        PlanSnapshot(_plans.value, creationDraft = _committedDraft.value) == committedSnapshot
+        PlanSnapshot(_plans.value, creationDraft = _committedDraft.value, nextOrdinal = nextOrdinal) == committedSnapshot
 
     /** Leaves an export only after the global save-first gate succeeds. No read or POST yet. */
     fun startRegeneration(ordinal: Int): Boolean {
@@ -1071,7 +1116,7 @@ class PlanFormViewModel(
                         _plans.update { it + plan }
                         _generatedPlan.value = plan.ordinal
                         _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
-                        completeCreation(PlanSnapshot(_plans.value, creationDraft = null))
+                        completeCreation(PlanSnapshot(_plans.value, nextOrdinal = nextOrdinal))
                     }
                 }
                 is PlanOutcome.DemoShortfall -> {
@@ -1234,8 +1279,16 @@ class PlanFormViewModel(
         _remainingStudy.value = search.copy(id = nextConflictId++, phase = FreeTimePhase.RequestingPermission)
     }
 
+    fun selectFollowUpTime(index: Int) {
+        val search = _remainingStudy.value as? RemainingStudyState.CalendarSearch ?: return
+        if (search.phase == FreeTimePhase.Results && index in search.suggestions.indices) {
+            _remainingStudy.value = search.copy(selected = index)
+        }
+    }
+
     fun confirmRemainingFreeTime(): Boolean {
         val search = (_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.takeIf { it.phase == FreeTimePhase.Results } ?: return false
+        if (search.input.followUpScheduleId != null && search.selected == null) return false
         readRemainingFreeTime(search, final = true)
         return true
     }
@@ -1245,11 +1298,15 @@ class PlanFormViewModel(
             _remainingStudy.value = RemainingStudyState.Invalid("계획이 바뀌었어요. 다시 검토해 주세요.")
             return
         }
+        val original = search.input.source.original
+        val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
+        if (search.input.followUpScheduleId != null && currentMinute().plusMinutes(1) >= exam) {
+            _remainingStudy.value = search.copy(phase = FreeTimePhase.NoTime, suggestions = emptyList(), selected = null)
+            return
+        }
         _remainingStudy.value = search.copy(phase = FreeTimePhase.Reading)
         viewModelScope.launch {
             val source = search.input.source
-            val original = source.original
-            val exam = requireNotNull(WireDateTime.parseOrNull(original.examDate))
             val outcome = readCalendar(CalendarReadWindow(currentMinute().toLocalDate(), exam.toLocalDate().plusDays(1)))
             if ((_remainingStudy.value as? RemainingStudyState.CalendarSearch)?.id != search.id) return@launch
             if (plan(source.ordinal) != source || !regenerationSaveReady()) {
@@ -1260,6 +1317,10 @@ class PlanFormViewModel(
                 CalendarReadOutcome.PermissionMissing -> _remainingStudy.value = search.copy(phase = FreeTimePhase.PermissionDenied)
                 CalendarReadOutcome.Unavailable -> _remainingStudy.value = search.copy(phase = FreeTimePhase.Unavailable)
                 is CalendarReadOutcome.Loaded -> {
+                    if (search.input.followUpScheduleId != null) {
+                        applyFollowUpCalendarRead(search, outcome.snapshot, final)
+                        return@launch
+                    }
                     val placed = FreeTime.placeBatch(requireNotNull(AvailabilityWire.context(original)), source.current.schedules,
                         search.input.work.instructions, outcome.snapshot.occurrences,
                         requireNotNull(WireDateTime.parseOrNull(original.preparationStart)), exam, search.input.replanFrom, currentMinute())
@@ -1271,6 +1332,27 @@ class PlanFormViewModel(
                 }
             }
         }
+    }
+
+    private fun applyFollowUpCalendarRead(search: RemainingStudyState.CalendarSearch, snapshot: CalendarBusySnapshot, final: Boolean) {
+        val input = search.input
+        val contribution = input.work.contributions.single()
+        val original = input.source.original
+        val availability = requireNotNull(AvailabilityWire.context(original))
+        val earliest = maxOf(input.replanFrom, currentMinute().withSecond(0).withNano(0).plusMinutes(1))
+        val chosen = if (final) search.selected?.let(search.suggestions::getOrNull) else null
+        // With the source held constant, only the current time and the fresh calendar can invalidate this choice.
+        if (chosen != null && chosen.start >= earliest &&
+            snapshot.occurrences.none { it.start < chosen.end && chosen.start < it.end }) {
+            sendRemainingStudy(input.copy(destinations = mapOf(contribution.source.scheduleId to chosen.start),
+                confirmOutside = chosen.outsideWindows))
+            return
+        }
+        val suggestions = FreeTime.suggest(availability, input.source.current.schedules, contribution.source.scheduleId,
+            snapshot.occurrences, requireNotNull(WireDateTime.parseOrNull(original.preparationStart)),
+            requireNotNull(WireDateTime.parseOrNull(original.examDate)), earliest, remainingMinutes = contribution.remainingMinutes)
+        _remainingStudy.value = search.copy(phase = if (suggestions.isEmpty()) FreeTimePhase.NoTime else FreeTimePhase.Results,
+            suggestions = suggestions, selected = null, changed = final)
     }
 
     /** The same entry rule is used by rendered controls and direct calls. */
@@ -1303,6 +1385,217 @@ class PlanFormViewModel(
         if (_remainingStudy.value is RemainingStudyState.Loading ||
             (_remainingStudy.value as? RemainingStudyState.Success)?.save == MoveSave.Saving) return false
         _remainingStudy.value = null
+        refreshNoticesWhenIdle()
+        return true
+    }
+
+    /**
+     * The remaining-study entry rule, then the plan's own retained context and at least one
+     * unreported study row from now on. The same rule guards rendered controls and direct calls.
+     */
+    fun reassessmentBlockReason(ordinal: Int): String? {
+        remainingStudyBlockReason(ordinal)?.let { return it }
+        val source = plan(ordinal) ?: return "계획을 찾을 수 없어요."
+        val original = source.original
+        val start = WireDateTime.parseOrNull(original.preparationStart)
+        val exam = WireDateTime.parseOrNull(original.examDate)
+        if (start == null || exam == null || AvailabilityWire.context(original)?.hasWindows() != true) {
+            return "최신 계획을 확인하거나 새 계획을 만들어 주세요."
+        }
+        val now = currentMinute()
+        if (!exam.isAfter(now) || !Reassessment.hasRevisable(source, now)) return REASSESSMENT_NOTHING_LEFT
+        return null
+    }
+
+    /** Opens the quiz for [ordinal]'s plan and loads its questions; nothing is read before this. */
+    fun startReassessment(ordinal: Int): Boolean {
+        if (reassessmentBlockReason(ordinal) != null) return false
+        val source = plan(ordinal) ?: return false
+        loadReassessmentQuestions(source)
+        return true
+    }
+
+    fun retryReassessmentQuestions(): Boolean {
+        val failed = _reassessment.value as? ReassessmentState.LoadFailure ?: return false
+        loadReassessmentQuestions(failed.source)
+        return true
+    }
+
+    private fun loadReassessmentQuestions(source: SessionPlan) {
+        val loading = ReassessmentState.Loading(source, ++reassessmentAttempt)
+        _reassessment.value = loading
+        viewModelScope.launch {
+            val outcome = reassessmentRepository.questions(source.original.certificationId)
+            if (_reassessment.value != loading) return@launch
+            _reassessment.value = when (outcome) {
+                is ReassessmentQuestionsOutcome.Loaded ->
+                    if (outcome.questions.isEmpty()) ReassessmentState.LoadFailure(source, ApiError.InvalidResponse("no questions"))
+                    else ReassessmentState.Quiz(source, outcome.questions)
+                ReassessmentQuestionsOutcome.ServerNeedsUpdate -> ReassessmentState.ServerNeedsUpdate(source)
+                is ReassessmentQuestionsOutcome.Failure -> ReassessmentState.LoadFailure(source, outcome.error)
+            }
+        }
+    }
+
+    fun answerReassessment(questionId: Int, choiceKey: String) {
+        val quiz = _reassessment.value as? ReassessmentState.Quiz ?: return
+        val question = quiz.questions.firstOrNull { it.question.id == questionId }?.question ?: return
+        if (choiceKey != UNKNOWN_KEY && choiceKey !in question.answerChoices) return
+        _reassessment.value = quiz.copy(answers = quiz.answers + (questionId to choiceKey))
+    }
+
+    fun showReassessmentQuestion(index: Int) {
+        val quiz = _reassessment.value as? ReassessmentState.Quiz ?: return
+        if (index in quiz.questions.indices) _reassessment.value = quiz.copy(index = index)
+    }
+
+    /** Shows results only when every question is answered; otherwise shows the first unanswered one. */
+    fun finishReassessmentQuiz(): Boolean {
+        val quiz = _reassessment.value as? ReassessmentState.Quiz ?: return false
+        quiz.firstUnanswered?.let {
+            _reassessment.value = quiz.copy(index = it)
+            return false
+        }
+        _reassessment.value = ReassessmentState.Results(quiz.source, quiz.questions, quiz.answers)
+        return true
+    }
+
+    /**
+     * Asks how the shown results would change future study, or asks again with the same answers
+     * after an out-of-date preview or a retryable failure. A preview can revise study from the
+     * current minute and only saves recovery status if the server reports a stale or missing plan.
+     * Returns whether a request started.
+     */
+    fun previewReassessment(): Boolean {
+        val (source, questions, answers) = when (val state = _reassessment.value) {
+            is ReassessmentState.Results -> Triple(state.source, state.questions, state.answers)
+            is ReassessmentState.Stopped -> if (state.canPreviewAgain) {
+                Triple(state.source, state.input.questions, state.input.answers)
+            } else return false
+            else -> return false
+        }
+        val start = WireDateTime.parseOrNull(source.original.preparationStart)
+        if (start == null || plan(source.ordinal) != source || !regenerationSaveReady()) {
+            _reassessment.value = ReassessmentState.Invalid(source, REASSESSMENT_PLAN_CHANGED)
+            return false
+        }
+        val input = ReassessmentInput(source, questions, answers, maxOf(currentMinute().withSecond(0).withNano(0), start))
+        val previewing = ReassessmentState.Previewing(input, ++reassessmentAttempt)
+        _reassessment.value = previewing
+        viewModelScope.launch {
+            val outcome = reassessmentRepository.preview(input)
+            if (_reassessment.value != previewing) return@launch
+            _reassessment.value = when (outcome) {
+                is ReassessmentOutcome.Previewed -> ReassessmentState.Preview(input, outcome.preview)
+                is ReassessmentOutcome.Rejected -> ReassessmentState.Stopped(input, stopFor(outcome.failure))
+                ReassessmentOutcome.ServerNeedsUpdate -> ReassessmentState.ServerNeedsUpdate(source)
+                is ReassessmentOutcome.Failure -> {
+                    val recovery = when (outcome.error) {
+                        ApiError.PlanConflict -> PlanRecovery.ReloadRequired
+                        ApiError.PlanNotFound -> PlanRecovery.Missing
+                        else -> null
+                    }
+                    if (recovery != null) {
+                        updatePlan(source.ordinal) { it.copy(recovery = recovery, recoveryScheduleId = null) }
+                        _reassessment.value = ReassessmentState.Stopped(input, ReassessmentStop.PlanUnavailable, outcome.error)
+                        commit(_plans.value)
+                        return@launch
+                    }
+                    ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, outcome.error)
+                }
+                is ReassessmentOutcome.Committed ->
+                    ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, ApiError.InvalidResponse("unexpected update"))
+            }
+        }
+        return true
+    }
+
+    private fun stopFor(failure: ReassessmentFailure): ReassessmentStop = when (failure) {
+        ReassessmentFailure.NothingToRevise -> ReassessmentStop.NothingLeft
+        ReassessmentFailure.MissingPlanContext -> ReassessmentStop.MissingPlanContext
+        ReassessmentFailure.NotEnoughTime -> ReassessmentStop.NotEnoughTime
+        ReassessmentFailure.PreviewExpired -> ReassessmentStop.Expired
+    }
+
+    /**
+     * Sends the shown preview's one update. Like remaining study, a live plan first saves its
+     * recovery gate, then only a result equal to the preview is applied and saved; any other
+     * result may have changed the server, so the plan then needs an explicit reload. A definite
+     * rejection clears the gate and changes nothing. Returns whether the update was sent.
+     */
+    fun confirmReassessment(): Boolean {
+        val shown = _reassessment.value as? ReassessmentState.Preview ?: return false
+        if (!shown.preview.hasChanges) return false
+        val input = shown.input
+        val ordinal = input.source.ordinal
+        if (!regenerationSaveReady() || plan(ordinal) != input.source || deleting ||
+            adjusting || reloading || exporting || readingCalendar || generating || noticeReading ||
+            _calendarConflict.value != null || _manualReview.value != null || _noticePermission.value != null ||
+            _freeTimeSearch.value != null || _remainingStudy.value.holdsSource ||
+            _adjustment.value.manual != null || _checkIn.value?.save == CheckInSave.Editing) {
+            _reassessment.value = ReassessmentState.Invalid(input.source, REASSESSMENT_PLAN_CHANGED)
+            return false
+        }
+        _reassessment.value = ReassessmentState.Committing(input, shown.preview)
+        viewModelScope.launch {
+            val live = !input.source.isDemo
+            if (live && !commit(unresolved(ordinal, null), inFlightAdjustment = ordinal)) {
+                pendingWrite = PendingLocalWrite(committedSnapshot)
+                _reassessment.value = ReassessmentState.Invalid(input.source,
+                    "이 기기에 저장하지 못해 요청을 보내지 않았어요. 다시 저장한 뒤 다시 진단해 주세요.")
+                return@launch
+            }
+            val received = reassessmentRepository.commit(input, shown.preview.rows)
+            val outcome = if (received is ReassessmentOutcome.Committed) {
+                (reassessmentResponseProblem(input, received.response) ?: "result differs from the preview".takeIf {
+                    received.response.schedules.associateBy { it.scheduleId } != shown.preview.rows.associateBy { it.scheduleId }
+                })?.let { ReassessmentOutcome.Failure(ApiError.InvalidResponse(it)) } ?: received
+            } else received
+            when (outcome) {
+                is ReassessmentOutcome.Committed -> {
+                    updatePlan(ordinal) { it.copy(current = outcome.response, recovery = PlanRecovery.Ready, recoveryScheduleId = null) }
+                    if (_adjustment.value.planOrdinal == ordinal) _adjustment.value = AdjustmentSelection(planOrdinal = ordinal)
+                    pendingAdjustment = null
+                    acceptedManualReview = null
+                    val done = ReassessmentState.Done(input, shown.preview)
+                    _reassessment.value = done
+                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value,
+                        nextOrdinal = nextOrdinal), reassessment = done))
+                }
+                is ReassessmentOutcome.Failure -> {
+                    val recovery = when {
+                        !live -> PlanRecovery.Ready
+                        outcome.error == ApiError.PlanNotFound -> PlanRecovery.Missing
+                        outcome.error.requiresReload() || outcome.error is ApiError.ServerFailure ||
+                            outcome.error is ApiError.ServerUnavailable -> PlanRecovery.ReloadRequired
+                        else -> PlanRecovery.Ready
+                    }
+                    updatePlan(ordinal) { it.copy(recovery = recovery, recoveryScheduleId = null) }
+                    _reassessment.value = ReassessmentState.Stopped(input, ReassessmentStop.CommitFailed, outcome.error)
+                    if (live) commit(_plans.value)
+                }
+                else -> {
+                    updatePlan(ordinal) { it.copy(recovery = PlanRecovery.Ready, recoveryScheduleId = null) }
+                    _reassessment.value = when (outcome) {
+                        is ReassessmentOutcome.Rejected -> ReassessmentState.Stopped(input, stopFor(outcome.failure))
+                        is ReassessmentOutcome.Previewed ->
+                            ReassessmentState.Stopped(input, ReassessmentStop.PreviewFailed, ApiError.InvalidResponse("unexpected preview"))
+                        else -> ReassessmentState.ServerNeedsUpdate(input.source)
+                    }
+                    if (live) commit(_plans.value)
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Leaving discards answers, results and any preview. While the update or its save is in
+     * progress the flow cannot be left, as with remaining study.
+     */
+    fun closeReassessment(): Boolean {
+        if (_reassessment.value == null || _reassessment.value.holdsCommit) return false
+        _reassessment.value = null
         refreshNoticesWhenIdle()
         return true
     }
@@ -1342,7 +1635,8 @@ class PlanFormViewModel(
                     acceptedManualReview = null
                     val result = RemainingStudyState.Success(input, outcome.response.schedules)
                     _remainingStudy.value = result
-                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value), remaining = result))
+                    write(PendingLocalWrite(PlanSnapshot(_plans.value, creationDraft = _committedDraft.value,
+                        nextOrdinal = nextOrdinal), remaining = result))
                 }
                 AdjustmentOutcome.DemoNoSlot -> _remainingStudy.value = RemainingStudyState.Failure(input, noFit = true)
                 is AdjustmentOutcome.Failure -> {
@@ -1666,6 +1960,27 @@ class PlanFormViewModel(
      */
     fun closeCheckIn() = _checkIn.update { if (it?.save == CheckInSave.Saving) it else null }
 
+    private fun checkInFollowUp(source: SessionPlan, editor: CheckInEditor): RemainingContribution? {
+        if (!source.canAdjust || AvailabilityWire.context(source.original)?.let(FreeTime::band) == null ||
+            WireDateTime.parseOrNull(source.original.preparationStart) == null ||
+            WireDateTime.parseOrNull(source.original.examDate) == null) return null
+        return runCatching { RemainingStudy.calculate(source, editor.scheduleId) }.getOrNull()
+            ?.contributions?.singleOrNull()?.takeIf { it.report != null && it.remainingMinutes > 0 }
+    }
+
+    fun startCheckInFollowUp(): Boolean {
+        val editor = _checkIn.value?.takeIf { it.save == CheckInSave.Saved } ?: return false
+        val contribution = editor.followUp ?: return false
+        if (remainingStudyBlockReason(editor.planOrdinal) != null) return false
+        val source = plan(editor.planOrdinal) ?: return false
+        if (checkInFollowUp(source, editor) != contribution) return false
+        val input = RemainingStudyInput(source, RemainingWork(listOf(contribution), contribution.remainingMinutes.toLong()),
+            currentMinute().withSecond(0).withNano(0).plusMinutes(1), followUpScheduleId = editor.scheduleId)
+        _remainingStudy.value = RemainingStudyState.CalendarSearch(nextConflictId++, input)
+        _checkIn.value = null
+        return true
+    }
+
     /**
      * Opens a calendar export of plan [ordinal]'s current study rows, captured now. Refused unless the
      * plan has study rows, is saved, needs no reload and nothing else runs. Writes nothing; while the
@@ -1673,7 +1988,7 @@ class PlanFormViewModel(
      */
     fun startCalendarExport(ordinal: Int): Boolean {
         val plan = plan(ordinal) ?: return false
-        if (currentExportBlock(plan) != null) return false
+        if (deleting || currentExportBlock(plan) != null) return false
         val events = CalendarExport.events(plan.current.schedules, plan.ordinal, plan.isDemo)
         val phase = if (events == null) CalendarExportPhase.InvalidRows else CalendarExportPhase.RequestingPermission
         _calendarExport.value = CalendarExportState(nextExportId++, ExportSource(plan.ordinal, plan.isDemo, events.orEmpty(), plan), phase)
@@ -1795,6 +2110,70 @@ class PlanFormViewModel(
 
     private fun plan(ordinal: Int): SessionPlan? = _plans.value.firstOrNull { it.ordinal == ordinal }
 
+    fun planDeletionBlockReason(ordinal: Int): String? = when {
+        !storageReady && !(_storage.value == PlanStorage.SaveFailure && pendingWrite?.deletionOrdinal == ordinal) ->
+            when (_storage.value) {
+                PlanStorage.Loading -> "저장된 계획을 불러오는 중이에요."
+                PlanStorage.LoadFailure -> "저장된 계획을 불러오지 못했어요."
+                PlanStorage.Saving -> "기기에 저장하는 중이에요."
+                else -> "먼저 이 기기에 저장해 주세요. 저장하지 못한 변경이 있어요."
+            }
+        busy || generating || noticeReading || _noticePermission.value != null ||
+            _adjustment.value.manual != null || _checkIn.value != null || _draftDecision.value != null ->
+            "이 계획에서 진행 중인 작업이 끝나면 삭제할 수 있어요."
+        else -> null
+    }
+
+    fun deletePlan(ordinal: Int): Boolean {
+        val source = plan(ordinal) ?: return false
+        if (planDeletionBlockReason(ordinal) != null) return false
+        _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Deleting)
+        viewModelScope.launch {
+            val identity = source.scheduleCsvFile?.takeUnless { source.isDemo }
+            when (val outcome = identity?.let { adjustmentRepository.delete(it) } ?: DeleteOutcome.Gone) {
+                DeleteOutcome.Gone -> {
+                    val candidate = committedSnapshot.copy(plans = committedSnapshot.plans.filterNot { it.ordinal == ordinal })
+                    write(PendingLocalWrite(candidate, deletionOrdinal = ordinal))
+                }
+                is DeleteOutcome.Rejected -> _planDeletion.value = PlanDeletion(ordinal,
+                    PlanDeletionStatus.Failed("계획을 삭제하지 못했어요.", outcome.error.userMessage()))
+                DeleteOutcome.Uncertain -> _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Failed(
+                    "서버에서 삭제됐는지 확인하지 못했어요.", "계획은 그대로예요. 다시 시도해 주세요."))
+            }
+            refreshNoticesWhenIdle()
+        }
+        return true
+    }
+
+    fun dismissDeletionNotice() {
+        if (_planDeletion.value?.status == PlanDeletionStatus.Deleted) _planDeletion.value = null
+    }
+
+    private fun settleDeletion(ordinal: Int, saved: Boolean) {
+        if (!saved) {
+            val serverGone = plan(ordinal)?.let { !it.isDemo && it.scheduleCsvFile != null } == true
+            _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Failed(
+                if (serverGone) "서버에서는 삭제했지만 이 기기에서 지우지 못했어요." else "이 기기에서 계획을 지우지 못했어요.",
+                "다시 시도해 주세요."))
+            return
+        }
+        _plans.value = committedSnapshot.plans
+        _notices.update { it - ordinal }
+        if (_generatedPlan.value == ordinal) _generatedPlan.value = null
+        if (_adjustment.value.planOrdinal == ordinal) {
+            _adjustment.value = AdjustmentSelection()
+            pendingAdjustment = null
+        }
+        if (_keepFeedback.value?.ordinal == ordinal) _keepFeedback.value = null
+        val remainingOrdinal = when (val remaining = _remainingStudy.value) {
+            is RemainingStudyState.Success -> remaining.input.source.ordinal
+            is RemainingStudyState.Failure -> remaining.input.source.ordinal
+            else -> null
+        }
+        if (remainingOrdinal == ordinal) _remainingStudy.value = null
+        _planDeletion.value = PlanDeletion(ordinal, PlanDeletionStatus.Deleted)
+    }
+
     /** Changes only the entry [ordinal]; every other plan stays as it is. */
     private fun updatePlan(ordinal: Int, transform: (SessionPlan) -> SessionPlan) =
         _plans.update { plans -> plans.map { if (it.ordinal == ordinal) transform(it) else it } }
@@ -1888,6 +2267,10 @@ class PlanFormViewModel(
     fun retrySave() {
         if (_storage.value != PlanStorage.SaveFailure) return
         val pending = pendingWrite ?: return
+        pending.deletionOrdinal?.let {
+            deletePlan(it)
+            return
+        }
         _storage.value = PlanStorage.Saving
         settleParticipants(pending, saved = null)
         pending.replacementId?.let { id ->
@@ -1916,7 +2299,7 @@ class PlanFormViewModel(
             _draftDecision.value = decision.copy(phase = DraftPhase.Done)
             return true
         }
-        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = draft), decision)
+        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = draft, nextOrdinal = nextOrdinal), decision)
         return true
     }
 
@@ -1933,7 +2316,7 @@ class PlanFormViewModel(
             _draftDecision.value = decision.copy(phase = DraftPhase.Done)
             return true
         }
-        writeDraft(PlanSnapshot(_savedPlans.value, creationDraft = null), decision)
+        writeDraft(PlanSnapshot(_savedPlans.value, nextOrdinal = nextOrdinal), decision)
         return true
     }
 
@@ -2047,7 +2430,8 @@ class PlanFormViewModel(
         checkIn: CheckInEditor? = null,
         move: AdjustmentSelection? = null,
         keep: KeepFeedback? = null,
-    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value), checkIn, move, keep = keep))
+    ): Boolean = write(PendingLocalWrite(PlanSnapshot(plans, inFlightAdjustment, _committedDraft.value, nextOrdinal),
+        checkIn, move, keep = keep))
 
     private suspend fun completeCreation(snapshot: PlanSnapshot): Boolean = write(PendingLocalWrite(snapshot))
 
@@ -2057,6 +2441,13 @@ class PlanFormViewModel(
     }
 
     private fun settleParticipants(pending: PendingLocalWrite, saved: Boolean?) {
+        pending.reassessment?.let { captured ->
+            _reassessment.update { current ->
+                if (current is ReassessmentState.Done && current.copy(save = captured.save) == captured) {
+                    current.copy(save = when (saved) { null -> MoveSave.Saving; true -> MoveSave.Saved; false -> MoveSave.Unsaved })
+                } else current
+            }
+        }
         pending.remaining?.let { captured ->
             _remainingStudy.update { current ->
                 if (current is RemainingStudyState.Success && current.copy(save = captured.save) == captured) {
@@ -2076,11 +2467,13 @@ class PlanFormViewModel(
         pending.checkIn?.let { captured ->
             _checkIn.update { current ->
                 if (current?.copy(save = captured.save) == captured) {
+                    val followUp = if (saved == true) pending.snapshot.plans.firstOrNull { it.ordinal == captured.planOrdinal }
+                        ?.let { checkInFollowUp(it, captured) } else null
                     current.copy(save = when (saved) {
                         null -> CheckInSave.Saving
                         true -> CheckInSave.Saved
                         false -> CheckInSave.Unsaved
-                    })
+                    }, followUp = followUp)
                 } else current
             }
         }
@@ -2132,6 +2525,7 @@ class PlanFormViewModel(
         pending.replacementId?.let { finishReplacement(it, saved) }
         if (saved && pendingWrite === pending) pendingWrite = null
         _storage.value = if (saved) PlanStorage.Ready else PlanStorage.SaveFailure
+        pending.deletionOrdinal?.let { settleDeletion(it, saved) }
         return saved
     }
 
@@ -2186,17 +2580,20 @@ class PlanFormViewModel(
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val application = checkNotNull(this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
+                // Opened on the first live request's worker thread; demo never reads it.
+                val tokens = DeviceTokenSource { DeviceTokenStore.open(application).token() }
                 PlanFormViewModel(
-                    FlavorRepositories.questionRepository(),
-                    FlavorRepositories.planningRepository(),
-                    FlavorRepositories.adjustmentRepository(),
+                    FlavorRepositories.questionRepository(tokens),
+                    FlavorRepositories.planningRepository(tokens),
+                    FlavorRepositories.adjustmentRepository(tokens),
                     planStore = AtomicFilePlanStore.open(
                         application,
                         PlanStorageScope.of(BuildConfig.DEMO_MODE, BuildConfig.API_BASE_URL),
                     ),
                     calendarExportRepository = AndroidCalendarExportRepository.create(application),
                     calendarReadRepository = AndroidCalendarReadRepository.create(application),
-                    remainingStudyRepository = FlavorRepositories.remainingStudyRepository(),
+                    remainingStudyRepository = FlavorRepositories.remainingStudyRepository(tokens),
+                    reassessmentRepository = FlavorRepositories.reassessmentRepository(tokens),
                 )
             }
         }

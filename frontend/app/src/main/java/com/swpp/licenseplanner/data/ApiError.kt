@@ -12,8 +12,16 @@ sealed interface ApiError {
     data object Configuration : ApiError
     /** HTTP 404 `PLAN_NOT_FOUND` from adjustment: the selected server plan no longer exists. */
     data object PlanNotFound : ApiError
+    /** HTTP 422 `REASSESSMENT_PREVIEW_EXPIRED`: a session the shown preview would revise has started. */
+    data object ReassessmentPreviewExpired : ApiError
     /** HTTP 409 `PLAN_CONFLICT` from adjustment: the stored plan no longer matches the sent rows. */
     data object PlanConflict : ApiError
+    /** HTTP 401 `INVALID_DEVICE_TOKEN`: the server refused this installation's device credential. */
+    data object DeviceTokenRejected : ApiError
+    /** HTTP 429 `RATE_LIMITED`: the server refused the request before processing it. */
+    data object RateLimited : ApiError
+    /** This installation's device credential could not be read or saved, so nothing was sent. */
+    data object DeviceTokenUnavailable : ApiError
     /** HTTP 503: server not ready (for example key setup). */
     data class ServerUnavailable(val message: String?, val rawDiagnostic: String? = null) : ApiError
     /** HTTP 500, 502 and any other unexpected status. */

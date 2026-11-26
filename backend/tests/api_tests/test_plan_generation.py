@@ -20,6 +20,7 @@ import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
 from assessment_service import _onboarding_selection
 from license_planner.agent import PlanningAgent
+from test_support.device_tokens import bearer, owner_store
 from test_support.question_banks import custom_question_variant
 
 # Captured classifier traces, replayed with explicitly custom questions so they stay unresolved.
@@ -62,7 +63,8 @@ class PlanGenerationHttpTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = Path(self.temp.name)
+        self.plan_root = Path(self.temp.name)
+        self.store = owner_store(self.plan_root).directory
         self.existing = self.store / "existing-plan.csv"
         self.existing.write_text("schedule_id,start_date,end_date,topic\n", encoding="utf-8")
         self.model_requests = 0
@@ -80,7 +82,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
         def no_profile_access(*args, **kwargs):
             raise AssertionError("the saved availability profile must not be read")
 
-        patches =[patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.store),
+        patches =[patch.object(api_service, "STUDY_PLAN_OUTPUT_DIR", self.plan_root),
                    patch.object(api_service, "load_personal_availability", no_profile_access),
                    patch.object(PlanningAgent, "_ask_model", ask_model)]
         for patcher in patches:
@@ -94,7 +96,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
 
     def post(self, payload):
         request = Request(f"{self.base}/study-plans", data=json.dumps(payload).encode(),
-                          headers={"Content-Type": "application/json"}, method="POST")
+                          headers={"Content-Type": "application/json", **bearer()}, method="POST")
         try:
             with urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
@@ -103,7 +105,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 return error.code, json.loads(error.read())
 
     def get(self, path):
-        with urlopen(f"{self.base}{path}", timeout=10) as response:
+        with urlopen(Request(f"{self.base}{path}", headers=bearer()), timeout=10) as response:
             return response.status, json.loads(response.read())
 
     def saved_files(self):
@@ -145,15 +147,18 @@ class PlanGenerationHttpTests(unittest.TestCase):
         self.assertEqual(self.model_requests, 0)
         self.assertEqual(self.saved_files(), [])
 
-    def test_more_mapped_topics_than_minutes_stops_at_analysis(self):
-        recorded = RECORDED["one_minute_with_three_assessed_topics"]
-        self.script(recorded)
+    def test_free_time_only_in_short_segments_stops_before_model_call(self):
+        payload = copy.deepcopy(RECORDED["one_minute_with_three_assessed_topics"]["request"])
+        payload["exam_date"] = "2026/10/19/18/20"
 
-        status, body = self.post(recorded["request"])
+        status, body = self.post(payload)
 
-        self.assert_infeasible(status, body, "학습 주제 3개에")
-        self.assertIn("시간이 1분이라", body["error"]["message"])
-        self.assertEqual(self.model_requests, 2)
+        self.assert_infeasible(status, body, "학습 주제 1개에도")
+        message = body["error"]["message"]
+        self.assertIn("시간이 0분이라", message)
+        self.assertIn("연속 30분 이상", message)
+        self.assertIn("20분", message)
+        self.assertEqual(self.model_requests, 0)
 
     def test_recorded_traces_end_at_the_first_build_and_are_saved(self):
         for key in ("topic_errors_then_build_on_last_request", "capacity_errors_then_build_on_last_request"):
@@ -180,6 +185,7 @@ class PlanGenerationHttpTests(unittest.TestCase):
                 self.assertEqual({key: metadata[key] for key in ("version", "exam_date", "preparation_start")},
                                  {"version": 2, "exam_date": recorded["request"]["exam_date"],
                                   "preparation_start": recorded["request"]["preparation_start"]})
+                self.assertEqual(metadata["certification_id"], "computer_specialist_level_2")
                 stored_context = metadata["availability_snapshot"]
                 returned_context = body["availability_snapshot"]
                 for week in (stored_context["weekly_availability"],

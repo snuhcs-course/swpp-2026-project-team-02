@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
+from test_support.device_tokens import bearer
 from api_service import build_plan_request
 from assessment_service import get_public_questions
 from license_planner.agent import PlanningAgent
@@ -130,7 +131,8 @@ class SubmittedResultValidationTests(unittest.TestCase):
                                    "huge score": custom_row(possible_score=10 ** 400)}.items():
                     body = json.dumps(payload(row)).encode()
                     request = Request(f"http://127.0.0.1:{server.server_port}/api/v1/study-plans", data=body,
-                                      headers={"Content-Type": "application/json"}, method="POST")
+                                      headers={"Content-Type": "application/json", **bearer()},
+                                      method="POST")
                     with self.subTest(label), self.assertRaises(HTTPError) as raised:
                         urlopen(request, timeout=10)
                     with raised.exception as error:

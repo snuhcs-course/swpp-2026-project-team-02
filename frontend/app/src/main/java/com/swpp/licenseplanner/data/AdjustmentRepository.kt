@@ -47,10 +47,19 @@ sealed interface ReloadOutcome {
     data class Failure(val error: ApiError) : ReloadOutcome
 }
 
+sealed interface DeleteOutcome {
+    data object Gone : DeleteOutcome
+    data class Rejected(val error: ApiError) : DeleteOutcome
+    data object Uncertain : DeleteOutcome
+}
+
 /** Failed-study adjustment; live and demo implementations are chosen by flavor. */
 interface AdjustmentRepository {
     suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome
 
     /** Reads the latest saved rows of the plan stored as [scheduleCsvFile]; never changes the server. */
     suspend fun reload(scheduleCsvFile: String?): ReloadOutcome
+
+    /** Deletes a live plan by its stored server identity. Demo plans are deleted locally. */
+    suspend fun delete(scheduleCsvFile: String): DeleteOutcome = DeleteOutcome.Uncertain
 }

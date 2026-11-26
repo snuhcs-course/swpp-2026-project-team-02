@@ -129,7 +129,7 @@
       "check_ins": {
         "study-1": {
           "status": "Partly",
-          "actual_minutes": 40
+          "actual_minutes": 30
         },
         "study-2": {
           "status": "Done",
@@ -139,7 +139,7 @@
       "remaining_sessions": [
         {
           "schedule_id": "study-1",
-          "remaining_minutes": 20,
+          "remaining_minutes": 30,
           "replacement_schedule_id": "study-5"
         },
         {
@@ -164,7 +164,7 @@
         {
           "schedule_id": "study-5",
           "start_date": "2026/11/17/18/30",
-          "end_date": "2026/11/17/18/50",
+          "end_date": "2026/11/17/19/00",
           "topic": "함수, \"복습\"\n다음"
         },
         {

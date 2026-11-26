@@ -38,11 +38,12 @@ fun RemainingStudyScreen(
     onShowPlan: () -> Unit,
     canSearchFreeTime: Boolean = false,
     onSearchFreeTime: () -> Unit = {},
+    onFreeTimeSelect: (Int) -> Unit = {},
     onFreeTimeConfirm: () -> Unit = {},
     onFreeTimeRetry: () -> Unit = {},
 ) {
     if (state is RemainingStudyState.CalendarSearch) {
-        RemainingCalendarFreeTimeScreen(state, onFreeTimeConfirm, onFreeTimeRetry, onClose)
+        RemainingCalendarFreeTimeScreen(state, onFreeTimeSelect, onFreeTimeConfirm, onFreeTimeRetry, onClose)
         return
     }
     val input = when (state) {

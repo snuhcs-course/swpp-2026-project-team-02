@@ -67,14 +67,16 @@ import com.swpp.licenseplanner.ui.screens.LevelScreen
 import com.swpp.licenseplanner.ui.screens.PlanAdjustmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanListScreen
 import com.swpp.licenseplanner.ui.screens.RemainingStudyScreen
+import com.swpp.licenseplanner.ui.screens.ReassessmentScreen
 import com.swpp.licenseplanner.ui.screens.PlanScreen
 import com.swpp.licenseplanner.ui.screens.QuestionsScreen
 import com.swpp.licenseplanner.ui.screens.ResultsScreen
 import com.swpp.licenseplanner.ui.screens.ShortfallScreen
 import com.swpp.licenseplanner.ui.screens.StudyCheckInScreen
-import kotlinx.coroutines.flow.first
 
 /** One route per step, plus home, plan list, one plan view per plan ordinal, and adjustment. */
+import kotlinx.coroutines.flow.first
+
 private object Routes {
     const val HOME = "home"
     const val PLAN_LIST = "plan_list"
@@ -93,6 +95,7 @@ private object Routes {
     const val EDIT_EXAM_DATE = "edit-exam-date"
     const val CHECK_IN = "check-in"
     const val REMAINING_STUDY = "remaining-study"
+    const val REASSESSMENT = "reassessment"
 }
 
 private fun NavHostController.go(route: String) = navigate(route) { launchSingleTop = true }
@@ -184,9 +187,14 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
     val form by viewModel.form.collectAsStateWithLifecycle()
     val questionLoad by viewModel.questionLoad.collectAsStateWithLifecycle()
     val remainingStudy by viewModel.remainingStudy.collectAsStateWithLifecycle()
+    val reassessment by viewModel.reassessment.collectAsStateWithLifecycle()
     val freeTimeSearch by viewModel.freeTimeSearch.collectAsStateWithLifecycle()
     var remainingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val storage by viewModel.storage.collectAsStateWithLifecycle()
+    val deletion by viewModel.planDeletion.collectAsStateWithLifecycle()
+    LaunchedEffect(deletion) {
+        if (deletion?.status == PlanDeletionStatus.Deleted) nav.fromHome(Routes.PLAN_LIST)
+    }
     val calendarExport by viewModel.calendarExport.collectAsStateWithLifecycle()
     val calendarRead by viewModel.calendarRead.collectAsStateWithLifecycle()
     val calendarConflict by viewModel.calendarConflict.collectAsStateWithLifecycle()
@@ -460,16 +468,26 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         screen(nav, Routes.PLAN_LIST) { entry ->
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
+            fun back() {
+                if (!nav.canGoBack(entry)) return
+                viewModel.dismissDeletionNotice()
+                nav.goBack(entry)
+            }
+            BackHandler(onBack = ::back)
             PlanListScreen(
                 plans = plans,
                 savedPlans = savedPlans,
                 storage = planStorage,
-                onOpen = { ordinal -> nav.go(Routes.plan(ordinal)) },
-                onCreate = ::createPlan,
-                onBack = { nav.goBack(entry) },
+                onOpen = { ordinal ->
+                    viewModel.dismissDeletionNotice()
+                    nav.go(Routes.plan(ordinal))
+                },
+                onCreate = { viewModel.dismissDeletionNotice(); createPlan() },
+                onBack = ::back,
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
                 conflictNotices = noticeCounts,
+                deletionNotice = deletion?.status == PlanDeletionStatus.Deleted,
             )
         }
         screen(nav, Routes.ADJUST) { entry ->
@@ -617,7 +635,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             val ordinal = entry.arguments?.getInt(Routes.PLAN_ORDINAL)
             val plan = plans.firstOrNull { it.ordinal == ordinal }
             if (plan == null) {
-                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
+                LaunchedEffect(entry) {
+                    if (viewModel.planDeletion.value?.status != PlanDeletionStatus.Deleted) nav.goBackAfterResume(entry)
+                }
             } else {
                 PlanScreen(
                     plan = plan,
@@ -632,14 +652,20 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onCreate = ::createPlan,
                     onHome = { nav.goBack(entry, Routes.HOME) },
                     onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },
-                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans,
+                        if (deletion?.status == PlanDeletionStatus.Deleting) PlanStorage.Saving else storage),
                     storage = storage,
                     onRetrySave = viewModel::retrySave,
                     conflictNotices = { selectedNotices(plan.ordinal) },
                     onRemainingStudy = { if (viewModel.startRemainingStudy(plan.ordinal)) nav.go(Routes.REMAINING_STUDY) },
                     remainingStudyReason = viewModel.remainingStudyBlockReason(plan.ordinal),
+                    onReassess = { if (viewModel.startReassessment(plan.ordinal)) nav.go(Routes.REASSESSMENT) },
+                    reassessmentReason = viewModel.reassessmentBlockReason(plan.ordinal),
                     initialScheduleId = remainingFocus,
                     onFocusApplied = { remainingFocus = null },
+                    deletion = deletion?.takeIf { it.ordinal == plan.ordinal }?.status,
+                    deletionBlockReason = viewModel.planDeletionBlockReason(plan.ordinal),
+                    onDelete = { viewModel.deletePlan(plan.ordinal) },
                 )
             }
         }
@@ -657,6 +683,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onConfirm = { viewModel.confirmRemainingStudy() }, onClose = ::close,
                     canSearchFreeTime = viewModel.canSearchRemainingFreeTime(),
                     onSearchFreeTime = { viewModel.startRemainingFreeTimeSearch() },
+                    onFreeTimeSelect = viewModel::selectFollowUpTime,
                     onFreeTimeConfirm = { viewModel.confirmRemainingFreeTime() },
                     onFreeTimeRetry = viewModel::retryRemainingFreeTimeSearch,
                     onRetrySave = viewModel::retrySave,
@@ -672,16 +699,45 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     })
             }
         }
-        // The report editor sits above the plan or saved-plan screen it was opened from, so closing
-        // it returns to the same week with the adjustment selection untouched. A confirmed save
-        // closes it; popping is idempotent, so a repeated empty frame cannot leave that screen.
+        // Reassessment also sits above the plan view it was started from; every step shares this
+        // one entry, so each exit pops straight back and leaving discards the answers. A finished
+        // update shows the week of its first changed session there.
+        screen(nav, Routes.REASSESSMENT) { entry ->
+            val current = reassessment
+            fun close() {
+                if (nav.canGoBack(entry) && viewModel.closeReassessment()) nav.goBack(entry)
+            }
+            if (current == null) {
+                LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
+            } else {
+                ReassessmentScreen(current,
+                    onRetryLoad = { viewModel.retryReassessmentQuestions() },
+                    onAnswer = viewModel::answerReassessment,
+                    onShowQuestion = viewModel::showReassessmentQuestion,
+                    onFinishQuiz = { viewModel.finishReassessmentQuiz() },
+                    onApply = { viewModel.previewReassessment() },
+                    onClose = ::close,
+                    storage = storage,
+                    onConfirm = { viewModel.confirmReassessment() },
+                    onRetrySave = viewModel::retrySave,
+                    onShowPlan = {
+                        val focus = (current as? ReassessmentState.Done)?.let { firstChangedScheduleId(it.preview) }
+                        if (nav.canGoBack(entry) && viewModel.closeReassessment()) {
+                            remainingFocus = focus
+                            nav.goBack(entry)
+                        }
+                    })
+            }
+        }
+        // A saved report either closes the editor or offers a follow-up. The follow-up
+        // flow sits immediately above the plan view, even when the report began in adjustment.
         screen(nav, Routes.CHECK_IN) { entry ->
             val editor by viewModel.checkIn.collectAsStateWithLifecycle()
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val current = editor
             val plan = current?.let { open -> plans.firstOrNull { it.ordinal == open.planOrdinal } }
-            LaunchedEffect(current?.save) {
-                if (current?.save == CheckInSave.Saved) viewModel.closeCheckIn()
+            LaunchedEffect(current?.save, current?.followUp) {
+                if (current?.save == CheckInSave.Saved && current.followUp == null) viewModel.closeCheckIn()
             }
             if (current == null || plan == null) {
                 LaunchedEffect(Unit) {
@@ -689,6 +745,16 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     nav.goBackAfterResume(entry)
                 }
             } else {
+                fun returnToPlan() {
+                    val route = Routes.plan(plan.ordinal)
+                    val fromAdjustment = nav.previousBackStackEntry?.destination?.route == Routes.ADJUST
+                    if (!nav.popBackStack(route, inclusive = false)) {
+                        nav.navigate(route) {
+                            popUpTo(if (fromAdjustment) Routes.ADJUST else Routes.CHECK_IN) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
                 StudyCheckInScreen(
                     plan = plan,
                     editor = current,
@@ -696,7 +762,18 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onMinutes = viewModel::setCheckInMinutes,
                     onSave = { viewModel.saveCheckIn() },
                     onRetrySave = viewModel::retrySave,
-                    onClose = { if (nav.canGoBack(entry)) viewModel.closeCheckIn() },
+                    onClose = {
+                        if (nav.canGoBack(entry)) {
+                            viewModel.closeCheckIn()
+                            if (current.followUp != null) returnToPlan()
+                        }
+                    },
+                    onFollowUp = {
+                        if (nav.canGoBack(entry) && viewModel.startCheckInFollowUp()) {
+                            returnToPlan()
+                            nav.go(Routes.REMAINING_STUDY)
+                        }
+                    },
                 )
             }
         }

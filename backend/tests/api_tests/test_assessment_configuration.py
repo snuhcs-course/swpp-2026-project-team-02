@@ -13,6 +13,8 @@ from urllib.request import Request, urlopen
 import api_service
 from api_server import ASSESSMENT_CONFIGURATION_MESSAGE, DEFAULT_API_CONFIG, make_handler
 from license_planner.agent import PlanningAgent
+from test_support.admission import roomy_admission
+from test_support.device_tokens import bearer
 from test_support.question_banks import (
     CERT_ID, PRACTICE_CERT_ID, level_2_bank, practice_bank, temporary_assessment_configuration,
 )
@@ -46,7 +48,7 @@ class AssessmentConfigurationHttpTests(unittest.TestCase):
                         patch.object(PlanningAgent, "_ask_model", no_model)):
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DEFAULT_API_CONFIG))
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DEFAULT_API_CONFIG, roomy_admission()))
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -55,7 +57,7 @@ class AssessmentConfigurationHttpTests(unittest.TestCase):
     def call(self, path, payload=None):
         data = json.dumps(payload).encode() if payload is not None else None
         request = Request(f"{self.base}{path}", data=data, method="POST" if data else "GET",
-                          headers={"Content-Type": "application/json"} if data else {})
+                          headers={"Content-Type": "application/json", **bearer()} if data else {})
         try:
             with urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())

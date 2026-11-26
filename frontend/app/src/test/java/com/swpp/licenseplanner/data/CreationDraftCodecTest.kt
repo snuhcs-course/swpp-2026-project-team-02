@@ -108,7 +108,7 @@ class CreationDraftCodecTest {
         store.load()
         assertTrue(store.save(snapshot))
         val saved = Json.parseToJsonElement(bytes.committed!!.decodeToString()).jsonObject
-        assertEquals(JsonPrimitive(5), saved["version"])
+        assertEquals(JsonPrimitive(6), saved["version"])
         assertTrue("creation_draft" in saved)
 
         val restored = (BytesPlanStore(bytes, live, StandardTestDispatcher(testScheduler)).load() as PlanStoreLoad.Loaded).snapshot
@@ -162,7 +162,7 @@ class CreationDraftCodecTest {
     @Test fun versionFourPreservesTheCompleteDraftAndReports() {
         val snapshot = PlanSnapshot(plans, creationDraft = draft)
         val root = Json.parseToJsonElement(encoded(snapshot)).jsonObject
-        val legacy = root.with("version", JsonPrimitive(4)).with("entries",
+        val legacy = JsonObject(root - "next_plan_ordinal").with("version", JsonPrimitive(4)).with("entries",
             JsonArray(root.getValue("entries").jsonArray.map { JsonObject(it.jsonObject - "kept_conflicts") })).toString()
         assertEquals(PlanStoreLoad.Loaded(snapshot), decode(legacy))
         val kept = snapshot.copy(plans = plans.map { it.copy(keptConflicts = mapOf("study-1" to setOf("a".repeat(64)))) })

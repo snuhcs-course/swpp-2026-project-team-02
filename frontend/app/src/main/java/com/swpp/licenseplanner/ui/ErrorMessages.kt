@@ -12,6 +12,10 @@ private fun ApiError.userMessage(advice: InputAdvice): String = when (this) {
     ApiError.Configuration -> "API 주소 또는 서버 경로를 확인해 주세요."
     ApiError.PlanNotFound -> PLAN_NOT_FOUND_MESSAGE
     ApiError.PlanConflict -> PLAN_CONFLICT_MESSAGE
+    ApiError.ReassessmentPreviewExpired -> "미리 본 내용이 그사이 바뀌었어요. 다시 미리 보기를 해 주세요."
+    ApiError.DeviceTokenRejected -> DEVICE_TOKEN_REJECTED_MESSAGE
+    ApiError.RateLimited -> RATE_LIMITED_MESSAGE
+    ApiError.DeviceTokenUnavailable -> DEVICE_TOKEN_UNAVAILABLE_MESSAGE
     is ApiError.ServerUnavailable -> "서버가 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요."
     is ApiError.ServerFailure -> "서버에서 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요."
     ApiError.Connection -> "네트워크에 연결되지 않았거나 서버가 응답하지 않아요. 연결 상태를 확인한 뒤 다시 시도해 주세요."
@@ -29,6 +33,10 @@ fun ApiError.developerMessage(): String = when (this) {
     ApiError.Configuration -> "HTTP 404: API endpoint or route was not found."
     ApiError.PlanNotFound -> "HTTP 404: PLAN_NOT_FOUND"
     ApiError.PlanConflict -> "HTTP 409: PLAN_CONFLICT"
+    ApiError.ReassessmentPreviewExpired -> "HTTP 422: REASSESSMENT_PREVIEW_EXPIRED"
+    ApiError.DeviceTokenRejected -> "HTTP 401: INVALID_DEVICE_TOKEN"
+    ApiError.RateLimited -> "HTTP 429: RATE_LIMITED"
+    ApiError.DeviceTokenUnavailable -> "The device credential could not be read or saved; no request was sent."
     is ApiError.ServerUnavailable -> "HTTP 503\n${rawDiagnostic ?: message.orEmpty().ifBlank { "No error message in response" }}"
     is ApiError.ServerFailure -> "HTTP $status\n${rawDiagnostic ?: "No error message in response"}"
     ApiError.Connection -> "Connection error (no transport detail was retained)."
@@ -68,6 +76,13 @@ fun ApiError.adjustmentMessage(): String = when {
     requiresReload() -> "조정 결과를 확인할 수 없어요. 서버에 반영되었을 수 있으니 최신 계획을 불러와 확인해 주세요."
     else -> userMessage(InputAdvice.NewPlan)
 }
+
+/**
+ * Adjustment wording for a failed preview. A preview cannot change the server, so a lost or
+ * unreadable answer is described without asking to reload a result.
+ */
+fun ApiError.previewMessage(): String =
+    if (this != ApiError.PlanConflict && requiresReload()) userMessage(InputAdvice.NewPlan) else adjustmentMessage()
 
 /** Latest-plan reload failure; the shown plan is still the earlier local copy. */
 fun ApiError.reloadMessage(): String = "화면에는 이전 계획이 남아 있어요. " + when (this) {
@@ -165,6 +180,10 @@ private const val UNKNOWN_CAUSE_MESSAGE = "원인을 알 수 없는 오류가 �
 private const val PLAN_NOT_FOUND_MESSAGE =
     "서버에서 이 계획을 찾을 수 없어요. 화면에는 이전 계획이 남아 있어요. 목록에서 다른 계획을 고르거나 새 계획을 만들어 주세요."
 private const val PLAN_CONFLICT_MESSAGE = "서버의 계획이 변경되었어요. 최신 계획을 불러온 뒤 일정을 다시 선택해 주세요."
+private const val DEVICE_TOKEN_REJECTED_MESSAGE = "이 기기의 서버 요청을 확인할 수 없어요. 앱이 최신 버전인지 확인해 주세요."
+private const val RATE_LIMITED_MESSAGE = "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."
+private const val DEVICE_TOKEN_UNAVAILABLE_MESSAGE =
+    "이 기기의 서버 요청 정보를 준비하지 못했어요. 저장된 계획은 그대로 볼 수 있어요. 앱을 다시 실행한 뒤 시도해 주세요."
 private const val ROUTE_NOT_FOUND_MESSAGE = "API 경로를 찾을 수 없어요. API 주소와 서버 버전을 확인해 주세요. (HTTP 404)"
 
 private val WEEKDAY_NAMES = mapOf(

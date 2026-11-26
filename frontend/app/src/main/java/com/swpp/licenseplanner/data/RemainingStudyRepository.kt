@@ -11,7 +11,8 @@ import java.time.LocalDateTime
 
 /** Full selected-plan capture; reports and acknowledgments never enter the HTTP model. */
 data class RemainingStudyInput(val source: SessionPlan, val work: RemainingWork, val replanFrom: LocalDateTime,
-                              val destinations: Map<String, LocalDateTime>? = null, val confirmOutside: Boolean = false)
+                              val destinations: Map<String, LocalDateTime>? = null, val confirmOutside: Boolean = false,
+                              val followUpScheduleId: String? = null)
 
 interface RemainingStudyRepository {
     suspend fun replan(input: RemainingStudyInput): AdjustmentOutcome
@@ -20,7 +21,7 @@ interface RemainingStudyRepository {
 /** Validates the complete partition; overlaps between protected rows may already exist. */
 internal fun remainingResponseProblem(input: RemainingStudyInput, response: StudyPlanResponse): String? {
     val source = input.source
-    if (runCatching { RemainingStudy.calculate(source) }.getOrNull() != input.work) return "remaining work changed"
+    if (runCatching { RemainingStudy.calculate(source, input.followUpScheduleId) }.getOrNull() != input.work) return "remaining work changed"
     scheduleRowProblem(response.schedules)?.let { return it }
     if (response.scheduleCsvFile != source.scheduleCsvFile) return "plan identity changed"
     val context = AvailabilityWire.context(source.original) ?: return "invalid original windows"
@@ -62,7 +63,7 @@ internal fun remainingCsv(rows: List<ScheduleRow>): String = buildString {
 }
 
 /** Reads quoted CSV fields, including embedded newlines, without rewriting topic text. */
-private fun parseRemainingCsv(csv: String): List<ScheduleRow>? {
+internal fun parseRemainingCsv(csv: String): List<ScheduleRow>? {
     val records = mutableListOf<List<String>>()
     var record = mutableListOf<String>()
     val field = StringBuilder()

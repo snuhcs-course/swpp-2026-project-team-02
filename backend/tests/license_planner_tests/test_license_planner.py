@@ -366,17 +366,17 @@ class PlannerAgentLoopTests(unittest.TestCase):
         self.assertEqual(sum((block.end_datetime - block.start_datetime for block in tools.schedule), timedelta()),
                          timedelta(minutes=available_minutes(request)))
 
-    def test_too_little_time_for_assessed_topics_stops_without_retrying(self):
+    def test_free_time_only_in_short_segments_stops_before_the_model(self):
         payload = make_api_payload()
-        payload["exam_date"] = "2026/10/05/18/01"  # one available minute, two assessed topics
+        payload["exam_date"] = "2026/10/05/18/20"  # one 20-minute free segment before the exam
         request = build_plan_request(payload, require_assessment=True)
         reply = model_tool_call("analyze_exam_results", {"problem_topics": self.CHART_AND_BASICS})
 
         with (patch.object(PlanningAgent, "_ask_model", return_value=reply) as ask_model,
-              self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: .*시간이 1분이라 .*학습 주제 2개에")):
+              self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME: .*시간이 0분이라 .*연속 30분 이상.*빈 시간 20분")):
             PlanningAgent(api_key="test-key").run(request)
 
-        self.assertEqual(ask_model.call_count, 1)
+        self.assertEqual(ask_model.call_count, 0)
 
     def test_available_minutes_exclude_busy_periods_and_clip_to_exam(self):
         request = replace(make_plan_request(busy_periods=[BusyPeriod(

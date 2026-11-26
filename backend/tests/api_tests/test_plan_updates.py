@@ -21,6 +21,8 @@ from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv
 from schedule_adjuster.settings import AGENT_MAX_STEPS
 from schedule_adjuster.tools import ScheduleAdjustmentTools
 from study_plan_store import StudyPlanStore
+from test_support.device_tokens import bearer, owner_store
+from test_support.filesystem import symlink_or_skip
 
 
 ROWS = [
@@ -86,8 +88,9 @@ class PlanUpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.store = StudyPlanStore(self.root)
+        self.plan_root = Path(self.temp.name)
+        self.store = owner_store(self.plan_root)
+        self.root = self.store.directory
         self.original = render_schedule_csv(parse_schedule_rows(ROWS))
         self.identifier = self.store.create(self.original, EXAM)
         self.filename = self.identifier.rsplit("/", 1)[1]
@@ -96,7 +99,7 @@ class PlanUpdateTests(unittest.TestCase):
         self.payload = {"schedule_csv_file": self.identifier, "schedule_id": "study-1",
                         "schedules": copy.deepcopy(ROWS), "weekly_availability": WINDOWS,
                         "exam_date": EXAM_DATE}
-        for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root),
+        for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.plan_root),
                             ("AdjustmentAgent", ToolAgent)]:
             p = patch.object(api_service, name, value)
             p.start()
@@ -123,7 +126,7 @@ class PlanUpdateTests(unittest.TestCase):
     def call(self, path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
         request = Request(f"http://127.0.0.1:{self.server.server_port}/api/v1{path}",
-                          data=data, headers={"Content-Type": "application/json"})
+                          data=data, headers={"Content-Type": "application/json", **bearer()})
         try:
             response = urlopen(request, timeout=5)
         except HTTPError as error:
@@ -248,9 +251,9 @@ class PlanUpdateTests(unittest.TestCase):
             return unchanged
 
         def restore():
-            if not self.metadata.is_symlink():
+            if self.metadata.exists() and not self.metadata.is_symlink():
                 self.metadata.chmod(0o644)
-            self.metadata.unlink()
+            self.metadata.unlink(missing_ok=True)
             self.metadata.write_bytes(valid_metadata)
 
         damages = {"invalid timestamp": malformed(b'{"exam_date": "soon"}'),
@@ -546,10 +549,7 @@ class PlanUpdateTests(unittest.TestCase):
 
     def symlink(self, link, target):
         """Create a real symlink, skipping only where the platform refuses to."""
-        try:
-            link.symlink_to(target)
-        except (OSError, NotImplementedError) as error:
-            self.skipTest(f"cannot create a file symlink here: {error}")
+        symlink_or_skip(self, link, target)
         self.addCleanup(link.unlink, missing_ok=True)
 
     def test_selected_plan_symlinks_are_rejected_without_reading_targets(self):
@@ -744,8 +744,9 @@ class RetainedContextAndManualMoveTests(unittest.TestCase):
         from study_availability import parse_availability_context
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name) / "plans"
-        self.store = StudyPlanStore(self.root)
+        self.plan_root = Path(self.temp.name) / "plans"
+        self.store = owner_store(self.plan_root)
+        self.root = self.store.directory
         self.profile = Path(self.temp.name) / "profile.json"
         self.profile.write_text(json.dumps({"thursday": [{"start": "09:00", "end": "11:00"}]}), encoding="utf-8")
         self.profile_bytes = self.profile.read_bytes()
@@ -758,7 +759,7 @@ class RetainedContextAndManualMoveTests(unittest.TestCase):
                                            {"start": "07:00", "duration_minutes": 30}]}))
         self.before = self.files()
         NoAgent.constructed = 0
-        for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.root), ("AdjustmentAgent", NoAgent),
+        for name, value in [("STUDY_PLAN_OUTPUT_DIR", self.plan_root), ("AdjustmentAgent", NoAgent),
                             ("current_korea_minute", lambda: FROZEN_NOW),
                             ("load_adjuster_availability", lambda: load_adjuster_availability(self.profile))]:
             patcher = patch.object(api_service, name, value)
@@ -882,6 +883,21 @@ class RetainedContextAndManualMoveTests(unittest.TestCase):
         self.assertNotIn("availability_snapshot", selected)
         self.assertIn("availability_snapshot",
                       next(p for p in listing["plans"] if p["schedule_csv_file"] == self.other))
+
+    def test_context_with_certification_id_is_read_and_left_unchanged(self):
+        metadata = self.metadata(self.identifier)
+        record = json.loads(metadata.read_text(encoding="utf-8"))
+        metadata.write_text(json.dumps({**record, "certification_id": "computer_specialist_level_2"}), encoding="utf-8")
+        self.before = self.files()
+        status, result = self.call("/schedules/adjust", self.manual("2026/11/17/18/00"))
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.target(result)["start_date"], "2026/11/17/18/00")
+        self.assertEqual(metadata.read_bytes(), self.before[metadata.name])
+        for value in ("", " ", 2, None):
+            with self.subTest(certification_id=value):
+                metadata.write_text(json.dumps({**record, "certification_id": value}), encoding="utf-8")
+                self.before = self.files()
+                self.assert_rejected(self.manual("2026/11/17/18/00"), 500, "STORAGE_ERROR")
 
     # Manual mode
 

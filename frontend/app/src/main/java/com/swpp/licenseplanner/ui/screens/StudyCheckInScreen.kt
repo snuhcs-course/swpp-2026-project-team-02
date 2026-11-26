@@ -153,6 +153,7 @@ fun StudyCheckInScreen(
     onSave: () -> Unit,
     onRetrySave: () -> Unit,
     onClose: () -> Unit,
+    onFollowUp: () -> Unit,
 ) {
     val session = PlanGrouping.sessions(plan.current.schedules).firstOrNull { it.scheduleId == editor.scheduleId }
     val saving = editor.save == CheckInSave.Saving
@@ -160,6 +161,24 @@ fun StudyCheckInScreen(
     val keyboardVisible = WindowInsets.isImeVisible
     // Back cancels like the top-bar arrow; while saving it is held so the write is not abandoned.
     BackHandler { if (!saving) onClose() }
+
+    val followUp = editor.followUp
+    if (followUp != null && session != null) {
+        AppScreen("공부 기록", onNav = onClose, footer = {
+            PrimaryButton("빈 시간에 이어서 공부하기", onFollowUp)
+            SecondaryButton("나중에", onClose)
+        }) {
+            Heading("기록을 저장했어요.")
+            OutlinedCard {
+                InfoRow("공부 일정", session.topic)
+                InfoRow("시간", freeTimeLabel(session.start, session.end))
+                InfoRow("계획한 공부 시간", PlanGrouping.formatDuration(session.durationMinutes))
+            }
+            Note(checkInSummary(followUp.report))
+            Note("${session.topic} · 남은 공부 ${followUp.remainingMinutes}분")
+        }
+        return
+    }
 
     val actions: @Composable ColumnScope.() -> Unit = {
         when (editor.save) {

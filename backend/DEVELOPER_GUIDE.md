@@ -27,7 +27,7 @@ live 빌드에 `-PlicensePlanner.apiBaseUrl=<API 주소>/api/v1`을 전달합니
 | Android live API 주소 | Gradle `licensePlanner.apiBaseUrl` 속성 | live 앱이 요청할 공개 API 주소 |
 | 바인딩 주소·포트 | `config/api_server.json`의 `host`, `port` | API 서버가 수신할 주소와 포트 |
 | 배포 환경 덮어쓰기 | `APP_API_HOST`, `APP_API_PORT` | 실행 환경에서 서버 주소·포트 변경 |
-| 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 생성·조정된 계획 CSV와 시험일 메타데이터(`.meta.json`) 디렉터리 변경. 테스트용 임시 디렉터리 지정에 사용 |
+| 계획 CSV 저장 위치 | `APP_STUDY_PLAN_DIR` (기본값 `license_planner/output/`) | 토큰별 계획 서브디렉터리를 저장할 루트. 테스트용 임시 루트 지정에 사용 |
 | CORS 허용 주소 | `config/api_server.json`의 `allowed_origins` | 브라우저 기반 클라이언트 origin 허용 목록 |
 | API 비밀 키 | OS 환경 변수 또는 `backend/.env`의 `OPENROUTER_API_KEY` | 서버 전용 OpenRouter 인증 정보. 환경 변수가 우선하며 프론트엔드에 넣지 않음 |
 
@@ -48,7 +48,10 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 | `POST /api/v1/study-plans` | 학습 계획 생성 | 자기평가, 로컬 채점 `assessment_results`, 준비/시험 시각, 외부 일정, 자격증 ID |
 | `GET /api/v1/study-plans` | 저장된 계획의 파일 식별자와 일정 목록 | 선택적 쿼리 `schedule_csv_file`: 해당 계획 파일만 읽어 0~1개 항목 반환 |
 | `GET /api/v1/study-plans/{filename}` | 생성된 CSV 다운로드 | 서버가 반환한 파일명 |
+| `DELETE /api/v1/study-plans/{filename}` | 토큰 소유자의 계획과 메타데이터 삭제 | 서버가 반환한 파일명. 요청 본문 없음 |
 | `POST /api/v1/schedules/adjust` | 공부 일정 이동 또는 취소 외부 일정 제거 | 대상 `schedule_id`, 전체 `schedules`; 선택적 `schedule_csv_file`, `weekly_availability`, `availability_overrides`, `exam_date` (저장 계획은 저장된 시험일 사용, 비저장 공부 이동에는 `exam_date` 필수). `mode: "manual"`이면 모델 없이 `new_start_date`로 이동하고 `confirm_outside_availability`, `confirm_external_overlap`, `preparation_start`를 받습니다. 두 boolean은 기본 false이며 각각 시간 밖·외부 일정 겹침만 허용합니다. 외부 겹침 확인은 manual 전용이며 공부 겹침·기간·저장 검사는 항상 적용합니다. `mode: "remaining"`이면 모델 없이 `remaining_sessions`의 남은 분을 한 번에 재배치합니다(필수 필드와 규칙은 [FRONTEND_INTEGRATION_GUIDE.md](FRONTEND_INTEGRATION_GUIDE.md#remaining-work-re-planning)) |
+
+계획 생성·목록·다운로드·삭제와 일정 조정에는 `Authorization: Bearer <token>` 헤더가 필요합니다. 토큰은 64자리 소문자 16진수이며, 서버는 SHA-256 해시를 소유자 디렉터리명으로 사용합니다. 토큰이 없거나 잘못되면 HTTP 401을 반환합니다. 공개 모드(`APP_SHARED_AVAILABILITY_ENABLED=0`)에서는 공용 가능 시간 프로필 경로가 HTTP 404를 반환합니다.
 
 일정 날짜·시간은 `YYYY/MM/DD/HH/MM`, 반복 시간은 `HH:MM`입니다. 학습 계획
 요청 예시:
@@ -76,7 +79,7 @@ OpenRouter API 키(`OPENROUTER_API_KEY`)만 둡니다. `GEMINI_API_KEY`는 더 �
 ```
 
 일정 생성 응답에는 화면 표시에 쓸 `schedules` 배열, `schedule_csv` 문자열,
-저장 CSV 다운로드 경로 `schedule_csv_url`, 이 계획이 받아들인 기본 시간과 주별 교체 시간 `availability_snapshot`(각 구간에 응답용 `end` 포함)이 포함됩니다. 새 계획을 저장할 때 삭제 가능한 자동 생성 CSV 중 최근 100개를 유지하고 더 오래된 파일을 정리합니다. 진단 질문 API는
+저장 CSV 다운로드 경로 `schedule_csv_url`, 이 계획이 받아들인 기본 시간과 주별 교체 시간 `availability_snapshot`(각 구간에 응답용 `end` 포함)이 포함됩니다. 새 계획을 저장할 때 소유자별로 자동 생성 CSV 중 최근 100개를 유지하고 더 오래된 파일을 정리합니다. 진단 질문 API는
 더미 문항의 정답도 제공하며, FE가 기본 비교 로직으로 `is_correct`를 계산합니다.
 Planning API는 재채점하지 않지만 `is_correct`가 `user_answer`와 `correct_answer` 비교 결과(`UNKNOWN`은 항상 오답)와 다르면 모델 호출·저장 전에 HTTP 422로 거절합니다. 제출 문항은 하나씩 따로 대조합니다. ID·지문·일반 선택지·정답·배점이 완전한 `reviewed` 문항 레코드와 같으면(순서·부분 집합 무관, `UNKNOWN` 선택지 허용, 진단 선택에 들어 있지 않아도 됨) 그 레코드의 `topic`을 가중치 1로 쓰고, 나머지 미분류 문항만 Agent가 자격증의 고정 Topic 하나 이상에 가중치로 매핑합니다.
 정상 요청은 HTTP 200, 잘못된
@@ -242,7 +245,7 @@ study-102,2026/10/05/18/00,2026/10/05/19/00,Charts
 external-101,2026/10/12/18/00,2026/10/12/20/00,
 ```
 
-CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 `backend/license_planner/output/`에 요청별 고유 이름으로 저장되고, 같은 이름의 `.meta.json` 파일(version 2)에 검증된 `exam_date`, `preparation_start`, 받아들인 `availability_snapshot`(duration 형식)이 함께 저장됩니다. 이전 `{"exam_date":...}` 파일은 그대로 읽고 다시 쓰지 않습니다. 기존 응답 필드와 CSV 형식은 바뀌지 않고 `availability_snapshot`만 추가됩니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
+CLI 성공 응답은 CSV를 stdout에, Agent 요약과 도구 호출명을 stderr에 기록합니다. HTTP `POST /api/v1/study-plans`는 `schedules` 배열, CSV 문자열 `schedule_csv`, 저장 경로 `schedule_csv_file`, 다운로드 API 경로 `schedule_csv_url`, `agent_summary`, `tool_calls`를 반환합니다. CSV 파일은 계획 루트의 토큰 해시 하위 디렉터리에 요청별 고유 이름으로 저장되고, 같은 이름의 `.meta.json` 파일(version 2)에 검증된 `exam_date`, `preparation_start`, 받아들인 `availability_snapshot`(duration 형식)이 함께 저장됩니다. 소유자 디렉터리에 있는 이전 `{"exam_date":...}` 파일은 읽을 수 있습니다. 루트에 직접 저장된 이전 계획은 API에서 접근할 수 없습니다. 기존 응답 필드와 CSV 형식은 바뀌지 않고 `availability_snapshot`만 추가됩니다. 이 API 응답에는 별도 진단 점수 보고 객체는 포함하지 않습니다. 조정 API 응답에는 추가로 `action`과 `target_schedule_id`가 있습니다.
 
 ### 오류 데이터
 
@@ -272,17 +275,17 @@ HTTP API 오류는 `error.code`와 `error.message`를 반환합니다. 현재 �
 
 ## 점수와 일정 계산
 
-현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. 총 학습량은 입력한 가용 시간 전체이며 자기평가는 총량을 바꾸지 않습니다. Topic별 점수 통계가 그 시간의 배분을 정합니다.
+현재는 점수 경계나 자기평가 키워드로 준비 수준을 3단계 분류하지 않습니다. 진단 요청의 총 학습량은 연속 30분 이상 비어 있는 구간의 전체 시간이며 자기평가는 총량을 바꾸지 않습니다. Topic별 점수 통계가 그 시간의 배분을 정합니다.
 
 검토된 레코드와 같은 ID·지문·일반 선택지·정답·배점으로 제출된 문항(원래 5문항, 일부 문항, 진단 선택 밖의 `reviewed` 문항 포함)은 그 레코드의 `topic` 하나에 가중치 1로 반영합니다. 모든 문항이 이렇게 정해지면 Agent에 `problem_topics` 없이 분석하라고 안내합니다. ID는 같지만 내용이 다른 문항, 예전 지문, 사용자 정의 문항 등 미분류 문항만 Agent가 문항 내용을 읽고 선택 자격증의 `config/certifications.json`에 정의된 Topic 하나 이상과 기여 비중을 판단합니다. 모델 입력에는 서로 다른 제출 문항 수(`submitted_question_count`), 검토 Topic이 정해진 수(`reviewed_question_count`), 미분류 수(`unresolved_question_count`)와 미분류 문항만 들어갑니다. 매핑에 검토된 문항 ID를 넣거나 미분류 문항을 빠뜨리면 `INVALID_TOOL_CALL`로 거절되어 남은 요청 한도 안에서 고칠 수 있고, 성공한 분석을 다시 실행해도 점수가 누적되지 않습니다. 각 문항 점수는 이 비중으로 Topic별 통계에 반영됩니다. `problem_results` 경로는 입력 Topic 이름을 그대로 사용합니다. 진단 요청의 날짜별·주제별 학습 시간은 BE가 정합니다.
 
-진단 요청에서는 날짜별 공부 시간(분)이 그 날짜의 가용 시간과 같습니다. `tools.py`의 `usable_date_minutes`가 날짜별 합계를 정해 P10 v2 예산·배치(`rebalance_topic_minutes`)에 넘기고, v2의 순서 선택과 경계 교환은 날짜별 합계를 바꾸지 않으므로 입력한 공부 시간이 모두 계획에 쓰입니다. 빈 시간이 남지 않으므로 자동 조정과 남은 공부 다시 배치는 대개 옮길 곳을 찾지 못하며, 앱은 '시간 직접 옮기기'로 안내합니다. 하루 블록 수나 블록 길이를 1시간으로 제한하지 않습니다. 진단 통계가 없는 레거시 내부 요청에서는 Agent가 날짜별·주제별 공부 시간을 제안하고, Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 요청은 거부합니다. 배치할 수 없으면 `NOT_ENOUGH_TIME` 오류입니다. 가용 시간 계산과 배치는 같은 빈 구간을 사용합니다. 준비 시작일과 시험일은 각 시각으로 잘라 내고, 바쁜 일정은 시작 포함·종료 제외 구간으로 빼며 겹치는 바쁜 일정은 한 번만 뺍니다. 각 빈 구간의 1분 미만 나머지는 버리고 정수 분만 합산합니다. 예를 들어 월요일 18:00–20:00 가능, 준비 시작 18:30, 시험 19:30, 바쁜 일정 18:45–19:05와 19:00–19:15이면 가용 시간은 30분입니다.
+진단 요청에서는 날짜별 공부 시간(분)이 그 날짜의 가용 시간과 같습니다. `tools.py`의 `usable_date_minutes`가 날짜별 합계를 정해 P10 v2 예산·배치(`rebalance_topic_minutes`)에 넘기고, v2의 순서 선택과 경계 교환은 날짜별 합계를 바꾸지 않으므로 사용 가능한 구간의 정수 분이 모두 계획에 쓰입니다. 짧은 빈 구간만 남으므로 자동 조정과 남은 공부 다시 배치는 대개 옮길 곳을 찾지 못하며, 앱은 '시간 직접 옮기기'로 안내합니다. 하루 블록 수에 제한은 없습니다. 이어지는 주제 블록을 하나의 공부 세션으로 계산하므로 각 주제 블록은 30분보다 짧을 수 있습니다. 진단 통계가 없는 레거시 내부 요청에서는 Agent가 날짜별·주제별 공부 시간을 제안하고, Python 배치기는 제안된 시간을 사용자의 요일별 가능 시간 안에 놓고, 기존 일정과 겹치거나 시험 시각을 넘는 경우 및 하루 가용 시간을 초과하는 제안은 거부합니다. 배치 후 30분 미만 세션이 남는 제안도 거부하고 모델이 수정할 수 있게 합니다. 이 제안 오류만으로 사용자 입력에 `NOT_ENOUGH_TIME`을 반환하지는 않습니다. 가용 시간 계산과 배치는 같은 빈 구간을 사용합니다. 준비 시작일과 시험일은 각 시각으로 잘라 내고, 바쁜 일정은 시작 포함·종료 제외 구간으로 빼며 겹치는 바쁜 일정은 한 번만 뺍니다. 맞닿은 빈 구간은 자정을 넘어도 이어진 구간으로 보고 30분 미만이면 제외합니다. 남은 구간은 날짜별로 나눠 정수 분을 합산합니다. 예를 들어 월요일 18:00–21:00 가능, 준비 시작 18:30, 시험 20:30, 바쁜 일정 18:45–19:05와 19:00–19:15이면 18:30–18:45는 제외하고 19:15–20:30의 75분을 가용 시간으로 사용합니다.
 
 ### 결정적 배치기와 캘린더 일정
 
 일정 배치는 외부 스케줄러 패키지 없이 `license_planner/scheduler.py`의 결정적 Python 코드가 담당합니다. 날짜별·주제별 분량은 진단 요청에서는 BE가, 레거시 내부 요청에서는 모델이 정하고, 충돌 검사와 실제 시각 배치는 이 코드가 합니다. `_free_segments`가 가용 시간 계산(`usable_minutes_by_date`, `available_minutes`)과 블록 배치에 함께 쓰이는 유일한 바쁜 일정 차감 구현이므로, 충돌 규칙을 모델 지시문이나 Android 클라이언트에 따로 복제하지 않습니다. 구간은 시작 포함·종료 제외라 바쁜 일정이 시작하는 시각에 끝나는 공부 블록은 허용되고, 양의 길이로 겹치는 블록은 거부됩니다. 서로 겹치거나 포함된 바쁜 일정은 한 번만 차감됩니다.
 
-Android 앱이 기기 캘린더에서 읽은 일정도 이 경로로 들어옵니다. 앱은 각 발생분을 `busy_schedules` 행으로 보내고(`frontend/.../data/CalendarReadRepository.kt`, `RequestMapper.kt`), `api_service.py`가 이를 `PlanRequest.busy_periods`로 바꿉니다. 바쁜 일정 ID는 양의 정수 문자열이어야 하고 요청 안에서 중복될 수 없으므로(`license_planner/csv_io.py`의 `parse_busy_csv`), `calendar:` 같은 접두어는 쓸 수 없습니다. 반복 일정의 각 발생분은 앱이 서로 다른 숫자 ID를 붙여 보냅니다. HTTP 계약은 [`FRONTEND_INTEGRATION_GUIDE.md`](FRONTEND_INTEGRATION_GUIDE.md#busy-schedules)에 있습니다. 바쁜 일정이 가능 시간을 모두 덮으면 모델 호출 전에 `NOT_ENOUGH_TIME` 입력 오류(HTTP 422)가 반환되고 계획 파일은 저장되지 않습니다.
+Android 앱이 기기 캘린더에서 읽은 일정도 이 경로로 들어옵니다. 앱은 각 발생분을 `busy_schedules` 행으로 보내고(`frontend/.../data/CalendarReadRepository.kt`, `RequestMapper.kt`), `api_service.py`가 이를 `PlanRequest.busy_periods`로 바꿉니다. 바쁜 일정 ID는 양의 정수 문자열이어야 하고 요청 안에서 중복될 수 없으므로(`license_planner/csv_io.py`의 `parse_busy_csv`), `calendar:` 같은 접두어는 쓸 수 없습니다. 반복 일정의 각 발생분은 앱이 서로 다른 숫자 ID를 붙여 보냅니다. HTTP 계약은 [`FRONTEND_INTEGRATION_GUIDE.md`](FRONTEND_INTEGRATION_GUIDE.md#busy-schedules)에 있습니다. 남은 빈 구간이 모두 30분보다 짧거나 없으면 모델 호출 전에 `NOT_ENOUGH_TIME` 입력 오류(HTTP 422)가 반환되고 계획 파일은 저장되지 않습니다.
 
 저장 계획의 공부 일정을 옮길 때는 같은 빈 구간 탐색이 계획에 저장된 시험 시각에서 잘립니다. 시험 전에 들어갈 구간이 없으면 조정 Agent를 실행하거나 계획을 바꾸기 전에 `NOT_ENOUGH_TIME`을 반환합니다(아래 Schedule Adjuster 절 참고). 관련 회귀 테스트는 `tests/license_planner_tests/test_planning_capacity.py`, `tests/api_tests/test_plan_generation.py`, `tests/api_tests/test_plan_updates.py`에 있습니다.
 
@@ -298,6 +301,8 @@ external-101,2026/10/12/18/00,2026/10/12/20/00,
 
 외부 입력 CSV의 ID는 숫자로 유지합니다. 새 공부 일정 번호는 기존 숫자 ID 최댓값 다음부터 배정하고, 출력에서 `study-`를 붙입니다. 외부 행은 `external-`를 붙입니다. 결과는 시작 시각 기준으로 정렬됩니다. 공부 일정의 `topic` 열은 진단 선택 문항의 검토된 Topic 또는 assessment 문제를 JSON 자격증 카탈로그에 맞춰 Agent가 분류한 Topic입니다.
 
+삭제는 저장소 잠금 안에서 CSV를 먼저 지우고 메타데이터를 정리합니다. 삭제된 계획은 이후 조정으로 다시 생성할 수 없습니다. 메타데이터 정리에 실패하면 같은 삭제 요청으로 정리를 다시 시도할 수 있습니다.
+
 ## 설정과 실행
 
 `.env`에는 `OPENROUTER_API_KEY`를 설정합니다(OS 환경 변수가 우선). 모델 기본값(`openai/gpt-6-luna`), endpoint, 요청 시간 제한은 [openrouter_client.py](openrouter_client.py)에 있습니다. 서버 환경 또는 `.env`의 `OPENROUTER_MODEL`로 모델을 바꿀 수 있습니다(OS 환경 변수 우선, `.env.example`에서는 주석 처리되어 기본값 유지). Agent는 첫 모델 요청 직전에 모델을 한 번 읽어 그 Agent의 이후 요청에 그대로 쓰므로, 설정 변경은 새로 만든 Agent부터 적용됩니다. 또한 Agent 반복 횟수, 추론 강도, 출력 토큰 한도 및 토픽별 학습 시간 산정 지시는 [agent.py](license_planner/agent.py)에 있습니다. 자격증별 표시 이름과 Topic 목록은 [config/certifications.json](config/certifications.json)에 있습니다. 자격증을 추가할 때 이 JSON에 고유 ID, 표시 이름, Topic 배열을 추가하면 프로필과 Agent 분류 스키마가 그 자격증의 Topic 목록을 사용합니다. 개인용 주간 가능 시간은 `config/user_availability.json` (실행 중 생성되는 로컬 파일)에 저장됩니다. 주간 가능 시간이 없는 상태에서 공통 시간대로 계획을 생성하지 않습니다.
@@ -312,9 +317,9 @@ python -m license_planner.cli `
   2> scenarios/results/license_planner/manual_agent_log.txt
 ```
 
-`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`duration_minutes` 구간(구형 `start`/`end`도 허용)과 선택적 `availability_overrides`로 지정합니다. Android는 로컬 채점된 `assessment_results`와 가능 시간 문맥을 생성 요청에 보내고, 조정에는 선택한 계획의 원래 문맥을 보냅니다. Android는 학습자가 명시적으로 요청할 때만 `GET`/`PUT /api/v1/availability`로 공용 프로필을 불러오거나 저장합니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
+`manual_request.json`은 위 API 예시와 같은 JSON 객체입니다. 주간 가능 시간은 `weekly_availability` 객체의 요일별 `start`/`duration_minutes` 구간(구형 `start`/`end`도 허용)과 선택적 `availability_overrides`로 지정합니다. Android는 로컬 채점된 `assessment_results`와 가능 시간 문맥을 생성 요청에 보내고, 조정에는 선택한 계획의 원래 문맥을 보냅니다. Android는 공용 프로필 경로를 사용하지 않습니다. CLI는 `--assessment-results-json` 옵션으로 진단 결과 JSON 파일을 받을 수 있습니다.
 
-계획 CSV 결과는 표준 출력으로도 제공되며, API 서비스는 생성 결과를 `license_planner/output/`에 저장합니다. HTTP 응답의 `schedule_csv_url`은 그 파일을 내려받는 GET 경로입니다. CLI에서 stdout 결과를 파일로 저장하려면 PowerShell 리디렉션(`python -m license_planner.cli ... > plan.csv`)을 사용할 수 있습니다. Agent 요약과 도구 호출명은 표준 오류로 나옵니다.
+계획 CSV 결과는 표준 출력으로도 제공되며, API 서비스의 기본 계획 루트는 `license_planner/output/`입니다. HTTP 응답의 `schedule_csv_url`에서 소유자 토큰으로 GET하면 해당 파일을 내려받고 DELETE하면 지웁니다. CLI에서 stdout 결과를 파일로 저장하려면 PowerShell 리디렉션(`python -m license_planner.cli ... > plan.csv`)을 사용할 수 있습니다. Agent 요약과 도구 호출명은 표준 오류로 나옵니다.
 
 ## 테스트와 도구 호출 기록
 
@@ -428,6 +433,7 @@ Schedule Adjuster는 기존 일정 CSV와 변경 대상 `schedule_id`를 받아 
 - 변경 대상이 아닌 일정 행은 원래 시작 시각과 종료 시각을 유지합니다. 결과 CSV는 시작 시각과 ID 기준으로 정렬됩니다.
 - 일정 구간은 시작 포함·종료 제외로 처리합니다. 개인 시간표는 `config/user_availability.json`에서 자동으로 읽으며 `--availability-file`로 다른 파일을 지정할 수 있습니다. 시간표 파일이 없으면 기존 충돌 회피 규칙만 적용하고, 공휴일과 시험일은 현재 반영하지 않습니다. 주별 교체 시간과 자정을 넘는 구간도 License Planner와 같은 `study_availability.py` 해석기로 읽으며, 이동한 세션은 한 구간 안에 통째로 들어가야 합니다.
 - 대상 ID가 입력 CSV에 없거나 ID 접두어/번호 형식이 잘못되면 오류를 반환합니다. 일정 ID는 중복될 수 없습니다.
+- 자동 이동과 목적지를 지정하지 않은 남은 공부 배치는 이동한 블록이 연속 30분 이상의 공부 세션에 들어가고, 영향을 받는 이후 세션도 최소 길이를 유지할 때만 허용합니다. 학습자가 직접 선택한 이동 시간이나 확인한 남은 공부 배치 시간은 이 제한을 적용하지 않습니다.
 - API `mode: "remaining"`은 Agent 없이 `remaining_study.py`로 여러 공부 일정의 남은 분을 한 번에 재배치하고, 전체가 들어갈 때만 저장합니다. 규칙은 `schedule_adjuster/README.md`에 있습니다.
 - 현재 Agent는 `inspect_schedule`을 먼저 호출합니다. 주제가 있는 공부 일정이면 `inspect_topic_schedule`로 같은 주제의 세션을 확인한 뒤, 일정 유형에 맞는 변경 도구를 호출합니다.
 

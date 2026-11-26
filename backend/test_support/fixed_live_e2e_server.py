@@ -12,9 +12,12 @@ selection; the recorded five-question traces remain selectable by case ID.
 request's own dates, availability and required topics, so plans can be made for
 any period.  The availability profile and plans live in a private storage
 directory (temporary unless ``--storage-dir`` is given), never in
-``backend/config`` or the real plan output directory.  ``--now`` freezes the
+``backend/config`` or the real plan output directory.  Plan routes need the
+same device token as the production server, and each token's plans are stored
+under ``plans/<owner digest>/``; the request limits are the production ones and
+reset when the fixture restarts.  ``--now`` freezes the
 clock used for manual-move validation, ``--request-log`` appends one JSON line
-per request, and ``--test-control`` names an optional JSON file of failure
+per request (recording only whether a valid device token was sent), and ``--test-control`` names an optional JSON file of failure
 switches that exist only in this fixture.
 Any attempt to read an API key or send a provider request fails.
 It must never be deployed or configured with a production API key.
@@ -46,10 +49,12 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import api_service
+import api_server
 import license_planner.agent
 import license_planner.user_availability
 import schedule_adjuster.agent
 import schedule_adjuster.settings
+from api_admission import AdmissionLimiter
 from api_server import API_PREFIX, DEFAULT_API_CONFIG, make_handler
 from license_planner.agent import PlanningAgent
 from schedule_adjuster.agent import AdjustmentAgent
@@ -241,6 +246,13 @@ class _TestControl:
             return value
 
 
+def credential_label(headers) -> str:
+    """Whether a request carried a usable device token, without the token itself."""
+    if not headers.get_all("Authorization"):
+        return "missing"
+    return "valid" if api_server.device_token(headers) is not None else "invalid"
+
+
 def _recording_handler(base: type, log_path: Path | None, control: _TestControl,
                        lock: threading.Lock) -> type:
     """Wrap the production handler with a JSON-lines request log and the test switches."""
@@ -270,12 +282,12 @@ def _recording_handler(base: type, log_path: Path | None, control: _TestControl,
                     self._log_events.append({"test_control": "inject_busy_schedules", "rows": rows})
             return payload
 
-        def _send_json(self, status, payload):
+        def _send_json(self, status, payload, extra_headers=None):
             self._log_status, self._log_response = status, payload
             if self._drop_response:
                 self.close_connection = True
                 return
-            super()._send_json(status, payload)
+            super()._send_json(status, payload, extra_headers)
 
         def _send_csv(self, filename, content):
             self._log_status, self._log_response = 200, {"csv_file": filename}
@@ -295,8 +307,8 @@ def _recording_handler(base: type, log_path: Path | None, control: _TestControl,
             try:
                 getattr(base, f"do_{method}")(self)
             finally:
-                entry = {"method": method, "path": self.path, "status": self._log_status,
-                         "body": self._log_body, "response": self._log_response}
+                entry = {"method": method, "path": self.path, "device_token": credential_label(self.headers),
+                         "status": self._log_status, "body": self._log_body, "response": self._log_response}
                 if self._log_events:
                     entry["test_control"] = self._log_events
                 if self._drop_response:
@@ -339,14 +351,16 @@ def running_server(host: str = "127.0.0.1", port: int = 0,
                    case_id: str = DEFAULT_CASE_ID, *, planning: str = "recorded",
                    storage_dir: Path | None = None, profile_seed: Path | None = None,
                    now: datetime | None = None, request_log: Path | None = None,
-                   test_control: Path | None = None) -> Iterator[FixedLiveE2EServer]:
+                   test_control: Path | None = None,
+                   admission: AdmissionLimiter | None = None) -> Iterator[FixedLiveE2EServer]:
     """Start the real HTTP handler with fixed model replies and isolated storage.
 
     ``storage_dir`` keeps plans (``plans/``) and the availability profile
     (``user_availability.json``) across restarts; without it both live in a
     temporary directory removed on exit.  ``profile_seed`` is copied to the
     profile only when the profile does not exist yet.  ``now`` replaces the
-    clock that manual moves compare against.
+    clock that manual moves compare against.  ``admission`` replaces the
+    production request limits for tests that exhaust a quota on purpose.
     """
     if planning not in PLANNING_MODES:
         raise ValueError(f"unknown planning mode {planning!r}; choose from {list(PLANNING_MODES)}")
@@ -386,7 +400,7 @@ def running_server(host: str = "127.0.0.1", port: int = 0,
             if now is not None:
                 frozen = now.replace(second=0, microsecond=0, tzinfo=None)
                 patches.enter_context(patch.object(api_service, "current_korea_minute", lambda: frozen))
-            handler = _recording_handler(make_handler(config), log_path, control, lock)
+            handler = _recording_handler(make_handler(config, admission), log_path, control, lock)
             server = ThreadingHTTPServer((host, port), handler)
             worker = threading.Thread(target=server.serve_forever, daemon=True)
             worker.start()
@@ -425,7 +439,8 @@ def main() -> int:
     parser.add_argument("--now", type=parse_wire_minute,
                         help="frozen YYYY/MM/DD/HH/MM clock for manual-move validation (default: real time)")
     parser.add_argument("--request-log", type=Path,
-                        help="append one JSON line per request (method, path, status, body, response)")
+                        help="append one JSON line per request (method, path, device token presence, "
+                             "status, body, response)")
     parser.add_argument("--test-control", type=Path,
                         help="JSON file of test-only failure switches: adjust_delay_seconds, "
                              "drop_next_adjust_response, inject_busy_schedules (default: none)")
@@ -440,7 +455,7 @@ def main() -> int:
             print(f"Fixed live E2E API listening at {fixture.api_base_url}", flush=True)
             print(f"Planning: {args.planning}" + (f" ({args.case_id})" if args.planning == "recorded" else ""),
                   flush=True)
-            print(f"Plans are stored only in {fixture.output_dir}", flush=True)
+            print(f"Plans are stored only in {fixture.output_dir}, one directory per device token", flush=True)
             print(f"Availability profile: {fixture.profile_path}", flush=True)
             if args.now is not None:
                 print(f"Manual-move clock frozen at {args.now:%Y/%m/%d/%H/%M}", flush=True)

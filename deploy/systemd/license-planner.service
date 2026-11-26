@@ -10,6 +10,9 @@ WorkingDirectory=/home/swpp26-45/apps/swpp-2026-project-team-02/backend
 EnvironmentFile=/home/swpp26-45/apps/swpp-2026-project-team-02/backend/.env
 Environment=APP_API_HOST=127.0.0.1
 Environment=APP_API_PORT=8000
+# Public mode: trust X-Real-IP only from the loopback Nginx, and serve no shared availability profile.
+Environment=APP_TRUST_LOCAL_PROXY=1
+Environment=APP_SHARED_AVAILABILITY_ENABLED=0
 ExecStart=/usr/bin/python3 /home/swpp26-45/apps/swpp-2026-project-team-02/backend/api_server.py
 Restart=on-failure
 RestartSec=5

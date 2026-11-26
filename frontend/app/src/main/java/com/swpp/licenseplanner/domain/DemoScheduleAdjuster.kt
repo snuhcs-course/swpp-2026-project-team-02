@@ -43,7 +43,9 @@ sealed interface DemoAdjustment {
  * interval inside one of the plan's original effective windows (base week or week replacement,
  * including a window that continues past midnight) that starts at or after both its own
  * end and the latest end of every other study session with exactly the same topic, and that
- * ends no later than the original exam timestamp. Intervals are half-open.
+ * ends no later than the original exam timestamp. Intervals are half-open. The moved session must
+ * sit in a study session of at least [StudySessions.MIN_MINUTES], and a later session may not be
+ * cut below that minimum; when a free start fails this, the search continues from the next row end.
  */
 object DemoScheduleAdjuster {
     private const val CSV_HEADER = "schedule_id,start_date,end_date,topic"
@@ -60,12 +62,19 @@ object DemoScheduleAdjuster {
             .maxOfOrNull { it.end }
             ?.let { maxOf(it, target.end) } ?: target.end
 
+        // The failed target's own session is past, so only sessions after it are protected.
+        val protectedFrom = maxOf(lowerBound, StudySessions.runContaining(sessions, target)?.end ?: target.end)
+        val keepsSessions = { start: LocalDateTime ->
+            val moved = target.copy(start = start, end = start.plus(duration))
+            StudySessions.keepsSessions(others + moved, setOf(targetId), sessions, protectedFrom)
+        }
+
         val context = AvailabilityWire.context(original) ?: return DemoAdjustment.NoSlot
         var date: LocalDate = lowerBound.toLocalDate()
         while (date.atStartOfDay().isBefore(exam)) {
             // Full intervals, so a session can use a window that continues past midnight.
             for (window in context.windowsFor(date)) {
-                val slot = firstFit(maxOf(window.start, lowerBound), minOf(window.end, exam), duration, others)
+                val slot = firstFit(maxOf(window.start, lowerBound), minOf(window.end, exam), duration, others, keepsSessions)
                 if (slot != null) return moved(rows, targetId, slot)
             }
             date = date.plusDays(1)
@@ -110,14 +119,24 @@ object DemoScheduleAdjuster {
         return DemoManualAdjustment.Moved(moved.schedules, moved.csv)
     }
 
-    /** Earliest start in [from, until) whose whole [duration] avoids every other row. */
-    private fun firstFit(from: LocalDateTime, until: LocalDateTime, duration: Duration, others: List<PlanSession>): LocalDateTime? {
+    /** Earliest start in [from, until) whose whole [duration] avoids every other row and that [accept] allows. */
+    private fun firstFit(
+        from: LocalDateTime,
+        until: LocalDateTime,
+        duration: Duration,
+        others: List<PlanSession>,
+        accept: (LocalDateTime) -> Boolean,
+    ): LocalDateTime? {
         var start = from
         while (!start.plus(duration).isAfter(until)) {
             val end = start.plus(duration)
             val blocking = others.filter { it.start.isBefore(end) && start.isBefore(it.end) }
-            if (blocking.isEmpty()) return start
-            start = blocking.maxOf { it.end }
+            if (blocking.isNotEmpty()) {
+                start = blocking.maxOf { it.end }
+                continue
+            }
+            if (accept(start)) return start
+            start = StudySessions.nextEnd(start, others) ?: return null
         }
         return null
     }

@@ -27,6 +27,14 @@ class ScoringTest {
     }
 
     @Test
+    fun perQuestionResultsUseTheLoadedChoiceLabels() {
+        val question = q1.copy(choices = mapOf("A" to "One", "B" to "Two", "C" to "Three"), correctAnswer = "C")
+        assertEquals(QuestionResult.Correct, Scoring.questionResult(question, "C"))
+        assertEquals(QuestionResult.Wrong("B. Two", "C. Three"), Scoring.questionResult(question, "B"))
+        assertEquals(QuestionResult.Unknown("C. Three"), Scoring.questionResult(question, UNKNOWN_KEY))
+    }
+
+    @Test
     fun unknownChoiceIsAppendedWithReservedLabel() {
         val choices = q1.choicesWithUnknown()
         assertEquals(listOf("A", "B", "C", "D", UNKNOWN_KEY), choices.keys.toList())
