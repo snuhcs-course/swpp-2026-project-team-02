@@ -1379,7 +1379,7 @@ test('compact sidebar plans show progress graphics, exam controls and detail lin
     assert.doesNotMatch(row,/sidebar-progress-heading|plan-progress-lag|plan-progress-lead|plan-progress-on-track|plan-expected-progress|<strong>|학습 일정 \d+개/);
     assert.match(row,/data-edit-exam=/);
     assert.match(row,/data-open-plan=/);
-    assert.match(row,/시험일 \d{4}\.\d{2}\.\d{2}/);
+    assert.match(row,/시험일 <time datetime="\d{4}-\d{2}-\d{2}">\d{4}\.\d{2}\.\d{2}<\/time> <span class="plan-exam-countdown">D(?:-Day|[+-]\d+)<\/span>/);
     assert.equal((row.match(/<progress /g)||[]).length,1);
   }
   assert.match(rows[1],/role="switch" aria-checked="false"/);
