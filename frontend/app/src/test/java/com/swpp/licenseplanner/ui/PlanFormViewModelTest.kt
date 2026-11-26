@@ -21,12 +21,16 @@ import com.swpp.licenseplanner.domain.CERTIFICATION_ID
 import com.swpp.licenseplanner.domain.CurrentLevel
 import com.swpp.licenseplanner.domain.CreationDraft
 import com.swpp.licenseplanner.domain.CreationStep
+import com.swpp.licenseplanner.domain.PlanFormState
 import com.swpp.licenseplanner.domain.StudyAvailability
 import com.swpp.licenseplanner.domain.WeekSource
 import com.swpp.licenseplanner.domain.UNKNOWN_KEY
 import com.swpp.licenseplanner.domain.Weekday
 import com.swpp.licenseplanner.domain.WindowSpec
 import com.swpp.licenseplanner.domain.toEditorDays
+import com.swpp.licenseplanner.ui.screens.weekTotals
+import com.swpp.licenseplanner.domain.toWeekWindows
+import com.swpp.licenseplanner.domain.PlanGrouping
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -625,6 +629,83 @@ class PlanFormViewModelTest {
         assertEquals(null, vm.form.value.availabilityError)
     }
 
+    @Test fun oneWindowIsAddedToSeveralWeekdaysAtOnce() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        vm.setDayEnabled(Weekday.MONDAY, false)
+        val days = setOf(Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY)
+        assertEquals(emptyList<Weekday>(), vm.applyWindowToDays(vm.captureWindow(Weekday.MONDAY, null)!!, LocalTime.of(19, 0), 90, days))
+        val availability = vm.form.value.availability
+        for (day in Weekday.entries) {
+            val expected = if (day in days) listOf(WindowSpec(LocalTime.of(19, 0), 90)) else emptyList()
+            assertEquals(day.name, expected, availability.getValue(day).windows())
+        }
+        val totals = weekTotals(availability.toWeekWindows())
+        assertEquals(3, totals.days)
+        assertEquals("4시간 30분", PlanGrouping.formatDuration(totals.minutes.toLong()))
+    }
+
+    @Test fun anOverlapOnAnySelectedWeekdayAddsNothingAndNamesThatDay() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        vm.setDayEnabled(Weekday.MONDAY, false)
+        assertTrue(vm.applyWindow(vm.captureWindow(Weekday.WEDNESDAY, null)!!, LocalTime.of(19, 0), 60))
+        val before = vm.form.value
+        val conflicts = vm.applyWindowToDays(vm.captureWindow(Weekday.MONDAY, null)!!, LocalTime.of(19, 0), 90,
+            setOf(Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY))
+        assertEquals(listOf(Weekday.WEDNESDAY), conflicts)
+        assertEquals(listOf("수요일"), conflicts!!.map { it.fullLabel })
+        assertEquals(before, vm.form.value)
+    }
+
+    @Test fun aSundayCopySpillingIntoMondayAddsNothingAndNamesSunday() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        vm.setDayStart(Weekday.MONDAY, LocalTime.of(0, 30))
+        assertTrue(vm.setDuration(Weekday.MONDAY, 60))
+        val before = vm.form.value
+        val conflicts = vm.applyWindowToDays(vm.captureWindow(Weekday.SUNDAY, null)!!, LocalTime.of(23, 0), 120,
+            setOf(Weekday.SUNDAY, Weekday.MONDAY))
+        assertEquals(listOf("일요일"), conflicts!!.map { it.fullLabel })
+        assertEquals(before, vm.form.value)
+    }
+
+    @Test fun severalWeekdaysOfAReplacementWeekChangeOnlyThatWeek() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        assertTrue(vm.replaceWeek(oct19))
+        assertTrue(vm.replaceWeek(oct12))
+        val before = vm.form.value
+        val target = vm.captureWindow(Weekday.SATURDAY, null, oct12)!!
+        assertEquals(emptyList<Weekday>(),
+            vm.applyWindowToDays(target, LocalTime.of(10, 0), 120, setOf(Weekday.SATURDAY, Weekday.SUNDAY)))
+        val after = vm.form.value
+        assertEquals(before.availability, after.availability)
+        assertEquals(before.availabilityOverrides - oct12, after.availabilityOverrides - oct12)
+        val week = after.availabilityOverrides.getValue(oct12)
+        val added = WindowSpec(LocalTime.of(10, 0), 120)
+        assertEquals(listOf(added), week.getValue(Weekday.SATURDAY).windows())
+        assertEquals(listOf(added), week.getValue(Weekday.SUNDAY).windows())
+        assertEquals(before.availabilityOverrides.getValue(oct12) - Weekday.SATURDAY - Weekday.SUNDAY,
+            week - Weekday.SATURDAY - Weekday.SUNDAY)
+    }
+
+    @Test fun addingForOnlyTheOpenedDayBehavesLikeTheSingleWindowApply() = runTest(dispatcher) {
+        val vm = loadedViewModel(FakePlanning())
+        val target = vm.captureWindow(Weekday.MONDAY, null)!!
+        val before = vm.form.value
+        assertEquals(null, vm.applyWindowToDays(target, LocalTime.of(20, 0), 0, setOf(Weekday.MONDAY)))
+        assertEquals(before, vm.form.value)
+        // An overlap stays correctable in the form, exactly as a single-window apply leaves it.
+        assertEquals(emptyList<Weekday>(), vm.applyWindowToDays(target, LocalTime.of(19, 0), 60, setOf(Weekday.MONDAY)))
+        val viaDays = vm.form.value
+        val reference = loadedViewModel(FakePlanning())
+        assertTrue(reference.applyWindow(reference.captureWindow(Weekday.MONDAY, null)!!, LocalTime.of(19, 0), 60))
+        assertEquals(reference.form.value, viaDays)
+        assertTrue(viaDays.availabilityError != null)
+        // A used target is stale, and an existing window cannot be copied to other days.
+        assertEquals(null, vm.applyWindowToDays(target, LocalTime.of(8, 0), 60, setOf(Weekday.MONDAY)))
+        assertEquals(null, vm.applyWindowToDays(vm.captureWindow(Weekday.MONDAY, 0)!!, LocalTime.of(8, 0), 60,
+            setOf(Weekday.MONDAY, Weekday.TUESDAY)))
+        assertEquals(viaDays, vm.form.value)
+    }
+
     @Test fun splitWindowsSurviveDraftResumeAndRequestWithExplicitEmptyWeek() = runTest(dispatcher) {
         val windows = StudyAvailability(
             base = mapOf(
@@ -644,6 +725,64 @@ class PlanFormViewModelTest {
         assertEquals(2, sent.studyDaysPerWeek)
         assertEquals(windows, AvailabilityWire.context(sent))
         assertEquals(windows, AvailabilityWire.context(vm.plans.value.single().original))
+    }
+
+    /** A generated plan 1 whose inputs are still held, as its view shows them. */
+    private suspend fun TestScope.generatedFirstPlan(planning: PlanningRepository): PlanFormViewModel =
+        loadedViewModel(planning).apply {
+            assertTrue(generateAfterCalendarCheck())
+            advanceUntilIdle()
+            assertEquals(1, generatedPlan.value)
+        }
+
+    @Test fun reopenedInputsNameTheirPlanThroughEditsAndEarlierSteps() = runTest(dispatcher) {
+        val vm = generatedFirstPlan(FakePlanning(PlanOutcome.Success(plan, false)))
+        assertEquals(null, vm.inputEditSource.value)
+        assertFalse(vm.startInputEdit(2))
+        assertEquals(null, vm.inputEditSource.value)
+
+        assertTrue(vm.startInputEdit(1))
+        assertEquals(1, vm.inputEditSource.value)
+        vm.stepDuration(Weekday.MONDAY, 1)
+        assertEquals(null, vm.generatedPlan.value)
+        assertEquals(1, vm.inputEditSource.value)
+        // Back to the results step and forward again is navigation only.
+        vm.reachCreationStep(CreationStep.RESULTS)
+        vm.reachCreationStep(CreationStep.AVAILABILITY)
+        assertEquals(1, vm.inputEditSource.value)
+    }
+
+    @Test fun registeringTheNewPlanEndsTheInputEdit() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(plan, false), PlanOutcome.Success(plan, false))
+        val vm = generatedFirstPlan(planning)
+        assertTrue(vm.startInputEdit(1))
+        vm.stepDuration(Weekday.MONDAY, 1)
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(listOf(1, 2), vm.plans.value.map { it.ordinal })
+        assertEquals(2, vm.generatedPlan.value)
+        assertEquals(null, vm.inputEditSource.value)
+    }
+
+    @Test fun newCreationFromHomeIsOrdinary() = runTest(dispatcher) {
+        val vm = generatedFirstPlan(FakePlanning(PlanOutcome.Success(plan, false)))
+        assertTrue(vm.startInputEdit(1))
+        assertTrue(vm.discardDraft(DraftContinuation.NewCreation))
+        advanceUntilIdle()
+        assertEquals(null, vm.inputEditSource.value)
+        assertEquals(PlanFormState(preparationStart = LocalDate.of(2026, 10, 5)), vm.form.value)
+    }
+
+    @Test fun resumingASavedDraftIsOrdinaryCreation() = runTest(dispatcher) {
+        val vm = generatedFirstPlan(FakePlanning(PlanOutcome.Success(plan, false)))
+        assertTrue(vm.startInputEdit(1))
+        vm.stepDuration(Weekday.MONDAY, 1)
+        assertTrue(vm.saveDraftAndExit())
+        advanceUntilIdle()
+        vm.draftDecisionHandled()
+        assertEquals(1, vm.inputEditSource.value)
+        assertEquals(CreationStep.AVAILABILITY, vm.resumeDraft())
+        assertEquals(null, vm.inputEditSource.value)
     }
 
 }

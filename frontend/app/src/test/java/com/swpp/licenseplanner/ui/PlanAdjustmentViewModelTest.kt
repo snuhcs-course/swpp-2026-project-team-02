@@ -13,7 +13,9 @@ import com.swpp.licenseplanner.data.LiveAdjustmentRepository
 import com.swpp.licenseplanner.data.ManualMove
 import com.swpp.licenseplanner.data.MemoryPlanBytes
 import com.swpp.licenseplanner.data.PlanOutcome
+import com.swpp.licenseplanner.data.PlanSnapshot
 import com.swpp.licenseplanner.data.PlanStorageScope
+import com.swpp.licenseplanner.data.PlanStoreLoad
 import com.swpp.licenseplanner.data.PlanningRepository
 import com.swpp.licenseplanner.data.QuestionOutcome
 import com.swpp.licenseplanner.data.QuestionRepository
@@ -34,6 +36,7 @@ import com.swpp.licenseplanner.ui.screens.movedScheduleId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -84,7 +87,7 @@ class PlanAdjustmentViewModelTest {
 
     /**
      * Records every input and reload identity; each call waits for [gate] or [reloadGate]
-     * when set (the delayed fake).
+     * when set (the delayed fake). [beforeReply] runs once a reply is ready, before it is returned.
      */
     private class FakeAdjustment(vararg replies: AdjustmentOutcome) : AdjustmentRepository {
         val queue = ArrayDeque(replies.toList())
@@ -93,9 +96,11 @@ class PlanAdjustmentViewModelTest {
         val reloads = ArrayDeque<ReloadOutcome>()
         val reloadIdentities = mutableListOf<String?>()
         var reloadGate: CompletableDeferred<Unit>? = null
+        var beforeReply: (() -> Unit)? = null
         override suspend fun adjust(input: AdjustmentInput): AdjustmentOutcome {
             inputs += input
             gate?.await()
+            beforeReply?.invoke()
             return queue.removeFirst()
         }
         override suspend fun reload(scheduleCsvFile: String?): ReloadOutcome {
@@ -130,12 +135,18 @@ class PlanAdjustmentViewModelTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     /** A loaded, complete form with Monday 18:00–20:00 (plan A's windows) and a restored empty collection. */
-    private fun TestScope.viewModel(planning: PlanningRepository, adjustment: AdjustmentRepository) = PlanFormViewModel(
+    private val storageScope = PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1")
+
+    private fun TestScope.viewModel(
+        planning: PlanningRepository,
+        adjustment: AdjustmentRepository,
+        bytes: MemoryPlanBytes = MemoryPlanBytes(),
+    ) = PlanFormViewModel(
         FakeQuestions(QuestionOutcome.Loaded(TestFixtures.publicQuestions())),
         planning,
         adjustment,
         LocalDate.of(2026, 10, 5),
-        BytesPlanStore(MemoryPlanBytes(), PlanStorageScope.of(demo = false, apiBaseUrl = "http://test/api/v1"), dispatcher),
+        BytesPlanStore(bytes, storageScope, dispatcher),
 
         calendarReadRepository = ClearCalendarForTest,
     ).apply {
@@ -296,6 +307,73 @@ class PlanAdjustmentViewModelTest {
         assertTrue(vm.selectPlan(1)) // and a ready plan's earlier choice is not restored
         assertEquals(AdjustmentSelection(1), vm.adjustment.value)
         assertFalse(vm.selectPlan(99))
+    }
+
+    @Test fun clearingAnUnsentChoiceLeavesNoSelectionAndSendsNothing() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerFailure(502)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+        val plansBefore = vm.plans.value
+
+        vm.select(1, "study-1")
+        vm.selectFailedSession("study-2")
+        assertEquals(AdjustmentSelection(1, "study-2"), vm.adjustment.value)
+        assertTrue(vm.clearFailedSession())
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertFalse(vm.clearFailedSession()) // nothing left to clear
+        assertFalse(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(0, adjustment.inputs.size)
+        assertEquals(plansBefore, vm.plans.value)
+
+        // A sent choice with a retry offered keeps its selection and its retry.
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val failed = AdjustmentSelection(1, "study-1", AdjustmentState.Failure(ApiError.ServerFailure(502)))
+        assertEquals(failed, vm.adjustment.value)
+        assertFalse(vm.clearFailedSession())
+        assertEquals(failed, vm.adjustment.value)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun leavingTheFlowDropsOnlyAnIdleChoice() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Failure(ApiError.ServerFailure(502)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+        generateAB(vm)
+
+        vm.select(1, "study-1")
+        report(vm, 1, "study-2", StudyCheckInStatus.Done, "30") // a report from the flow keeps the choice
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        vm.leaveAdjustment()
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1), vm.adjustment.value)
+
+        vm.selectFailedSession("study-1")
+        assertTrue(vm.submitAdjustment())
+        advanceUntilIdle()
+        val failed = vm.adjustment.value
+        vm.leaveAdjustment() // an outcome with retry keeps its existing handling
+        assertEquals(failed, vm.adjustment.value)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun leavingOrClearingKeepsTheReloadRecoveryTarget() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment()
+        val vm = failA(ApiError.Connection, adjustment)
+        assertTrue(vm.selectPlan(1))
+        assertFalse(vm.clearFailedSession())
+        vm.leaveAdjustment()
+        assertTrue(vm.selectPlan(2))
+        assertTrue(vm.selectPlan(1))
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertFalse(vm.clearFailedSession())
+        vm.leaveAdjustment()
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertEquals(PlanRecovery.ReloadRequired, vm.plan(1).recovery)
+        assertEquals("study-1", vm.plan(1).recoveryScheduleId)
+        assertEquals(1, adjustment.inputs.size)
     }
 
     @Test fun readyPlansRestoreNoOutcomeOrRetryOnReturn() = runTest(dispatcher) {
@@ -1094,8 +1172,8 @@ class PlanAdjustmentViewModelTest {
     /** A's study-1 at [chosen] with its one-hour duration and topic; every other row unchanged. */
     private val manualA = rowsA.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/13/14/00", endDate = "2026/10/13/15/00") else it }
 
-    private fun TestScope.manualDraftOnA(adjustment: AdjustmentRepository): PlanFormViewModel {
-        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment)
+    private fun TestScope.manualDraftOnA(adjustment: AdjustmentRepository, bytes: MemoryPlanBytes = MemoryPlanBytes()): PlanFormViewModel {
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false)), adjustment, bytes)
         generateAB(vm)
         vm.select(1, "study-1")
         assertTrue(vm.startManualMove())
@@ -1252,6 +1330,135 @@ class PlanAdjustmentViewModelTest {
         assertEquals(adjustment.inputs[0], adjustment.inputs[1])
         assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
         assertEquals(manualA, vm.plan(1).current.schedules)
+    }
+
+    private fun TestScope.stored(bytes: MemoryPlanBytes): PlanSnapshot {
+        var result: PlanStoreLoad? = null
+        launch { result = BytesPlanStore(bytes, storageScope, dispatcher).load() }
+        advanceUntilIdle()
+        return (result as PlanStoreLoad.Loaded).snapshot
+    }
+
+    @Test fun stoppingTheWaitForASentManualMoveRequiresReloadOfThatPlanWithoutResending() = runTest(dispatcher) {
+        val bytes = MemoryPlanBytes()
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
+        val vm = manualDraftOnA(adjustment, bytes)
+        val otherPlan = vm.plan(2)
+        adjustment.gate = CompletableDeferred()
+        assertFalse(vm.manualMoveSending.value)
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent()
+        assertTrue(vm.manualMoveSending.value)
+
+        vm.stopWaitingForManualMove()
+        advanceUntilIdle()
+
+        assertFalse(vm.manualMoveSending.value)
+        assertEquals(1, adjustment.inputs.size)
+        assertEquals(PlanRecovery.ReloadRequired to "study-1", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+        assertEquals(rowsA, vm.plan(1).current.schedules)
+        assertEquals(otherPlan, vm.plan(2))
+        // The editor closes with the target kept for the reload-required view.
+        assertEquals(AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(vm.plans.value, vm.savedPlans.value)
+        val saved = stored(bytes)
+        assertNull(saved.inFlightAdjustmentOrdinal)
+        assertEquals(PlanRecovery.ReloadRequired to "study-1",
+            saved.plans.single { it.ordinal == 1 }.let { it.recovery to it.recoveryScheduleId })
+        assertEquals(PlanRecovery.Ready, saved.plans.single { it.ordinal == 2 }.recovery)
+
+        // Nothing can resend the move before a reload.
+        vm.retryAdjustment()
+        assertFalse(vm.submitAdjustment())
+        assertFalse(vm.startManualMove())
+        advanceUntilIdle()
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun aResponseArrivingAfterStoppingTheWaitChangesNothing() = runTest(dispatcher) {
+        val outcomes = listOf(
+            AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)),
+            AdjustmentOutcome.Failure(ApiError.ManualMoveRejected(ManualMoveRejection.OutsideStudyWindows)),
+            AdjustmentOutcome.Failure(ApiError.Connection),
+        )
+        for (outcome in outcomes) for (readyBeforeCancellation in listOf(false, true)) {
+            val bytes = MemoryPlanBytes()
+            val adjustment = FakeAdjustment(outcome)
+            val vm = manualDraftOnA(adjustment, bytes)
+            adjustment.gate = CompletableDeferred()
+            assertTrue(vm.submitManualAfterCalendarCheck())
+            runCurrent()
+            val writesBefore = bytes.writes
+            if (readyBeforeCancellation) {
+                // The reply is ready when the learner leaves, before cancellation can reach the wait.
+                adjustment.beforeReply = { vm.stopWaitingForManualMove() }
+            } else {
+                vm.stopWaitingForManualMove()
+                advanceUntilIdle()
+            }
+            adjustment.gate!!.complete(Unit)
+            advanceUntilIdle()
+
+            val label = "$outcome ready=$readyBeforeCancellation"
+            assertEquals(label, rowsA, vm.plan(1).current.schedules)
+            assertEquals(label, PlanRecovery.ReloadRequired to "study-1", vm.plan(1).recovery to vm.plan(1).recoveryScheduleId)
+            assertEquals(label, AdjustmentSelection(1, "study-1"), vm.adjustment.value)
+            // Only the save made on leaving; nothing is saved from the response.
+            assertEquals(label, writesBefore + 1, bytes.writes)
+            assertEquals(label, vm.plans.value, vm.savedPlans.value)
+            assertEquals(label, vm.plans.value, stored(bytes).plans)
+            assertFalse(label, vm.manualMoveSending.value)
+            assertEquals(label, 1, adjustment.inputs.size)
+        }
+    }
+
+    @Test fun keepingWaitingHandlesTheSentManualMoveAsBefore() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
+        val vm = manualDraftOnA(adjustment)
+        adjustment.gate = CompletableDeferred()
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent()
+        assertTrue(vm.manualMoveSending.value)
+        assertEquals(AdjustmentState.Loading, vm.adjustment.value.state)
+
+        adjustment.gate!!.complete(Unit)
+        advanceUntilIdle()
+
+        assertFalse(vm.manualMoveSending.value)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+        // With nothing awaited, stopping changes nothing.
+        vm.stopWaitingForManualMove()
+        advanceUntilIdle()
+        assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+        assertEquals(AdjustmentSelection(1, null, savedMove(rowsA, manualA)), vm.adjustment.value)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun aDemoManualMoveNeverAwaitsAResponseThatCanBeLeft() = runTest(dispatcher) {
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(manualA, "csv", null, null)))
+        val vm = viewModel(FakePlanning(PlanOutcome.Success(planA, true), PlanOutcome.Success(planB, true)), adjustment)
+        generateAB(vm)
+        vm.select(1, "study-1")
+        assertTrue(vm.startManualMove())
+        vm.setManualStart(chosen)
+        adjustment.gate = CompletableDeferred()
+        assertTrue(vm.submitManualAfterCalendarCheck())
+        runCurrent()
+        assertEquals(AdjustmentState.Loading, vm.adjustment.value.state)
+        assertFalse(vm.manualMoveSending.value)
+
+        vm.stopWaitingForManualMove()
+        assertEquals(AdjustmentState.Loading, vm.adjustment.value.state)
+        adjustment.gate!!.complete(Unit)
+        advanceUntilIdle()
+
+        assertFalse(vm.manualMoveSending.value)
+        assertEquals(manualA, vm.plan(1).current.schedules)
+        assertEquals(PlanRecovery.Ready, vm.plan(1).recovery)
+        assertTrue(vm.adjustment.value.state is AdjustmentState.Success)
     }
 
     @Test fun changingTargetOrPlanClearsTheManualDraftAndConfirmation() = runTest(dispatcher) {

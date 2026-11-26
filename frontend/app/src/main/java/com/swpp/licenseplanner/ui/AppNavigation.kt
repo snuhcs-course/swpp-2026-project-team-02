@@ -494,20 +494,32 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             val plans by viewModel.plans.collectAsStateWithLifecycle()
             val savedPlans by viewModel.savedPlans.collectAsStateWithLifecycle()
             val selection by viewModel.adjustment.collectAsStateWithLifecycle()
+            val manualSending by viewModel.manualMoveSending.collectAsStateWithLifecycle()
             val plan = plans.firstOrNull { it.ordinal == selection.planOrdinal }
             if (plan == null) {
                 LaunchedEffect(entry) { nav.goBackAfterResume(entry) }
             } else {
+                // Going back leaves the flow; a check-in or the chosen-time editor opened from here does not.
+                fun leave() {
+                    if (!nav.canGoBack(entry)) return
+                    viewModel.leaveAdjustment()
+                    nav.goBack(entry)
+                }
+                BackHandler(onBack = ::leave)
                 PlanAdjustmentScreen(
                     plan = plan,
                     selection = selection,
                     storage = planStorage,
                     onSelect = viewModel::selectFailedSession,
+                    onClearSelection = viewModel::clearFailedSession,
                     onSubmit = { viewModel.submitAdjustment() },
                     onRetry = viewModel::retryAdjustment,
                     onReload = { viewModel.reloadPlan() },
-                    onBack = { nav.goBack(entry) },
-                    onList = { nav.fromHome(Routes.PLAN_LIST) },
+                    onBack = ::leave,
+                    onList = {
+                        viewModel.leaveAdjustment()
+                        nav.fromHome(Routes.PLAN_LIST)
+                    },
                     onCreate = ::createPlan,
                     onRetrySave = viewModel::retrySave,
                     freeTimeSearch = freeTimeSearch,
@@ -525,6 +537,9 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onManualRevise = viewModel::reviseManualMove,
                     onManualCancel = viewModel::cancelManualMove,
                     checkIns = checkInRows(viewModel, nav, plan, plans, savedPlans, storage),
+                    manualSending = manualSending,
+                    // Leaving closes only the editor; the adjustment view then asks for a reload.
+                    onManualStopWaiting = { if (nav.canGoBack(entry)) viewModel.stopWaitingForManualMove() },
                     conflictNotices = { selectedNotices(plan.ordinal) },
                 )
             }
@@ -540,6 +555,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         screen(nav, Routes.DATES) { entry ->
             DatesScreen(
                 form = form,
+                today = viewModel.currentLocalDate(),
                 onStartChange = viewModel::setPreparationStart,
                 onExamChange = viewModel::setExamDate,
                 onBack = { nav.goBack(entry) },
@@ -574,6 +590,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         screen(nav, Routes.AVAILABILITY) { entry ->
             val generation by viewModel.generation.collectAsStateWithLifecycle()
             val availabilityWeek by viewModel.availabilityWeek.collectAsStateWithLifecycle()
+            val inputEditSource by viewModel.inputEditSource.collectAsStateWithLifecycle()
             AvailabilityScreen(
                 form = form,
                 selectedWeek = availabilityWeek,
@@ -582,7 +599,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 calendarRead = calendarRead,
                 actions = AvailabilityActions(
                     onCapture = viewModel::captureWindow,
-                    onApply = viewModel::applyWindow,
+                    onApply = viewModel::applyWindowToDays,
                     onRemove = viewModel::removeWindow,
                     onShowWeek = { viewModel.showAvailabilityWeek(it) },
                     onReplaceWeek = { viewModel.replaceWeek(it) },
@@ -593,6 +610,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onGenerate = { if (viewModel.generate()) nav.go(Routes.GENERATE) },
                 onReadCalendar = { viewModel.startCalendarRead() },
                 onOpenCalendarSettings = { openAppSettings(context) },
+                inputEditSource = inputEditSource,
             )
         }
         // Each result destination collects the flow itself, so its first frame sees the
@@ -648,7 +666,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                     onRegenerate = { viewModel.startRegeneration(plan.ordinal) },
                     regenerationReason = viewModel.regenerationBlockReason(plan.ordinal),
                     onBack = { nav.goBack(entry) },
-                    onEditInputs = { nav.resumeCreation(CreationStep.AVAILABILITY) },
+                    onEditInputs = { if (viewModel.startInputEdit(plan.ordinal)) nav.resumeCreation(CreationStep.AVAILABILITY) },
                     onCreate = ::createPlan,
                     onHome = { nav.goBack(entry, Routes.HOME) },
                     onAdjust = { if (viewModel.selectPlan(plan.ordinal)) nav.go(Routes.ADJUST) },

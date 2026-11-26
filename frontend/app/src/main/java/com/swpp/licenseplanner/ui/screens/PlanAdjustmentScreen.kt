@@ -20,6 +20,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.data.ApiError
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
@@ -127,7 +130,8 @@ private fun adjustmentWeeks(plan: SessionPlan, removedSessions: List<RemovedStud
  * The selected session can instead be moved to a chosen time ([onManual]); while that draft is
  * open its editor replaces this screen, and the shown week is kept for the return.
  * Each study session also has a separate report action ([checkIns]) that leaves the selection
- * alone; it waits while a request runs.
+ * alone; it waits while a request runs. Tapping the chosen row again drops a choice that was
+ * never sent ([onClearSelection]) and says that nothing was sent.
  */
 @Composable
 fun PlanAdjustmentScreen(
@@ -135,6 +139,7 @@ fun PlanAdjustmentScreen(
     selection: AdjustmentSelection,
     storage: PlanStorage,
     onSelect: (String) -> Unit,
+    onClearSelection: () -> Boolean,
     onSubmit: () -> Unit,
     onRetry: () -> Unit,
     onReload: () -> Unit,
@@ -149,6 +154,8 @@ fun PlanAdjustmentScreen(
     onManualRevise: () -> Unit,
     onManualCancel: () -> Unit,
     checkIns: CheckInRows,
+    manualSending: Boolean = false,
+    onManualStopWaiting: () -> Unit = {},
     conflictNotices: @Composable () -> Unit = {},
     freeTimeSearch: com.swpp.licenseplanner.ui.FreeTimeSearch? = null,
     canSearchFreeTime: Boolean = false,
@@ -207,6 +214,8 @@ fun PlanAdjustmentScreen(
             onRetry = onRetry,
             onCancel = onManualCancel,
             onRetrySave = onRetrySave,
+            sending = manualSending,
+            onStopWaiting = onManualStopWaiting,
         )
         return
     }
@@ -236,6 +245,16 @@ fun PlanAdjustmentScreen(
     }
     val week = weeks.getOrNull(shownIndex)
     val summary = shownSummary(plan, state)
+    // Set only by a tap that dropped the choice; a new choice or leaving the flow forgets it.
+    var clearedByTap by rememberSaveable(plan.ordinal) { mutableStateOf(false) }
+    val chosen = selection.failedScheduleId?.let { id -> PlanGrouping.sessions(plan.current.schedules).firstOrNull { it.scheduleId == id && !it.isExternal } }
+    val choose: (String) -> Unit = { id ->
+        if (id == selection.failedScheduleId) clearedByTap = onClearSelection()
+        else {
+            clearedByTap = false
+            onSelect(id)
+        }
+    }
     // A separate action on the same selected study session; never offered while a request runs.
     val manualAction: @Composable () -> Unit = {
         SecondaryButton("시간 직접 옮기기", onManual, enabled = !loading && selection.failedScheduleId != null && canSend)
@@ -363,7 +382,13 @@ fun PlanAdjustmentScreen(
             }
         }
         // Whenever study rows can be chosen, explain that existing calendar rows cannot be.
-        if (mode == AdjustmentMode.Adjustable && !loading) Note(SELECTION_INSTRUCTION)
+        if (mode == AdjustmentMode.Adjustable && !loading) {
+            Note(SELECTION_INSTRUCTION)
+            when {
+                chosen != null -> SelectionStatus(selectionStatus(chosen))
+                clearedByTap && state == AdjustmentState.Idle -> SelectionStatus(SELECTION_CLEARED)
+            }
+        }
         if (week != null) {
             WeekNavigator(
                 week = week,
@@ -390,7 +415,7 @@ fun PlanAdjustmentScreen(
                 DaySection(
                     day,
                     selection.failedScheduleId,
-                    if (showChoices) onSelect else null,
+                    if (showChoices) choose else null,
                     selectionEnabled = selectable,
                     movedId = movedId,
                     checkIns = reports,
@@ -411,7 +436,25 @@ fun PlanAdjustmentScreen(
     }
 }
 
-internal const val SELECTION_INSTRUCTION = "놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요."
+internal const val SELECTION_INSTRUCTION = "조정할 공부 일정을 하나 골라 주세요. 고른 일정을 다시 누르면 선택이 풀려요. 기존 일정은 고를 수 없어요."
+internal const val SELECTION_CLEARED = "선택을 풀었어요. 아직 아무것도 보내지 않았어요."
+
+/** Names the study session chosen for adjustment by its date, weekday, time and topic. */
+internal fun selectionStatus(session: PlanSession): String {
+    val date = session.start.toLocalDate()
+    return "조정할 일정: ${monthDay(date)}(${dayLabel(date)}) ${sessionTime(session)} ${session.topic}"
+}
+
+/** A line about the current choice, read out when it changes. */
+@Composable
+private fun SelectionStatus(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = Ink,
+        modifier = androidx.compose.ui.Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    )
+}
 
 /** The immutable inputs from plan creation that are reused when the plan is adjusted. */
 @Composable

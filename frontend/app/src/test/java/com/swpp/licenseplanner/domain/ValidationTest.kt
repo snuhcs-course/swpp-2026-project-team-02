@@ -17,6 +17,50 @@ class ValidationTest {
     }
 
     @Test
+    fun periodStartingTodayShowsNoDaysToExamLine() {
+        val start = LocalDate.of(2026, 10, 5)
+        assertEquals(
+            PeriodText("선택한 준비 기간 42일", "10월 5일부터 11월 16일 시험 전까지", null),
+            Validation.periodText(start, LocalDate.of(2026, 11, 16), today = start),
+        )
+    }
+
+    @Test
+    fun periodStartedBeforeTodayAlsoShowsDaysFromToday() {
+        assertEquals(
+            PeriodText("선택한 준비 기간 21일", "11월 16일부터 12월 7일 시험 전까지", "오늘부터 시험까지 14일"),
+            Validation.periodText(LocalDate.of(2026, 11, 16), LocalDate.of(2026, 12, 7), today = LocalDate.of(2026, 11, 23)),
+        )
+    }
+
+    @Test
+    fun periodStartingLaterAlsoShowsDaysFromToday() {
+        assertEquals(
+            PeriodText("선택한 준비 기간 7일", "11월 30일부터 12월 7일 시험 전까지", "오늘부터 시험까지 14일"),
+            Validation.periodText(LocalDate.of(2026, 11, 30), LocalDate.of(2026, 12, 7), today = LocalDate.of(2026, 11, 23)),
+        )
+    }
+
+    @Test
+    fun daysToExamAppearOnlyWhileTheExamIsAfterToday() {
+        val start = LocalDate.of(2026, 11, 1)
+        val exam = LocalDate.of(2026, 11, 16)
+        assertEquals(1L, Validation.daysUntilExam(exam.minusDays(1), exam))
+        assertNull(Validation.daysUntilExam(exam, exam))
+        assertNull(Validation.periodText(start, exam, today = exam)!!.untilExam)
+        assertNull(Validation.periodText(start, exam, today = exam.plusDays(3))!!.untilExam)
+    }
+
+    @Test
+    fun invalidDatesShowNoPeriodText() {
+        val start = LocalDate.of(2026, 10, 5)
+        val today = LocalDate.of(2026, 9, 1)
+        assertNull(Validation.periodText(start, null, today))
+        assertNull(Validation.periodText(start, start, today))
+        assertNull(Validation.periodText(start, start.minusDays(1), today))
+    }
+
+    @Test
     fun sameOrEarlierExamIsRejected() {
         val start = LocalDate.of(2026, 10, 5)
         assertNotNull(Validation.datesError(start, start))

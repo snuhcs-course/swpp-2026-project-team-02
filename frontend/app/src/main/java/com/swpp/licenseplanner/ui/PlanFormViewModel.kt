@@ -343,6 +343,9 @@ class PlanFormViewModel(
     private val _form = MutableStateFlow(PlanFormState(preparationStart = today))
     val form: StateFlow<PlanFormState> = _form.asStateFlow()
 
+    /** The device's current local date, read on every call. */
+    fun currentLocalDate(): LocalDate = currentDate()
+
     private val _questionLoad = MutableStateFlow<QuestionLoadState>(QuestionLoadState.Idle)
     val questionLoad: StateFlow<QuestionLoadState> = _questionLoad.asStateFlow()
 
@@ -360,6 +363,14 @@ class PlanFormViewModel(
     private val _generatedPlan = MutableStateFlow<Int?>(null)
     val generatedPlan: StateFlow<Int?> = _generatedPlan.asStateFlow()
 
+    /**
+     * Ordinal of the plan whose inputs the current creation started from through 「입력 바꿔 새 계획
+     * 만들기」, or null for an ordinary creation. Form edits keep it; a new creation from home, a
+     * resumed or discarded draft and a newly registered plan clear it. Session state only.
+     */
+    private val _inputEditSource = MutableStateFlow<Int?>(null)
+    val inputEditSource: StateFlow<Int?> = _inputEditSource.asStateFlow()
+
     private val _remainingStudy = MutableStateFlow<RemainingStudyState?>(null)
     val remainingStudy: StateFlow<RemainingStudyState?> = _remainingStudy.asStateFlow()
 
@@ -375,6 +386,15 @@ class PlanFormViewModel(
      * the server's copy is uncertain, so a possibly applied or stale mutation is never resent.
      */
     private var pendingAdjustment: Pair<Int, AdjustmentInput>? = null
+
+    /** Advances with every adjustment request; a response is applied only while its id is still current. */
+    private var adjustmentRequest = 0
+    private var adjustmentJob: Job? = null
+
+    private val _manualMoveSending = MutableStateFlow(false)
+
+    /** A live manual move was sent and its response is awaited; only then may [stopWaitingForManualMove] act. */
+    val manualMoveSending: StateFlow<Boolean> = _manualMoveSending.asStateFlow()
 
     private val _storage = MutableStateFlow(PlanStorage.Loading)
     val storage: StateFlow<PlanStorage> = _storage.asStateFlow()
@@ -722,6 +742,24 @@ class PlanFormViewModel(
             if (target.index == null) day.appendWindow(window) else day.replaceWindow(target.index, window) ?: day
         }
         return true
+    }
+
+    /**
+     * Adds the window to the captured day and every other day in [days], in the captured scope, all
+     * or nothing. Returns the weekdays whose new window would overlap another effective window, with
+     * nothing added; an empty list once added; or null when it cannot apply (an invalid window, a
+     * stale target, or other days for an existing window). Without other days it is [applyWindow].
+     */
+    fun applyWindowToDays(target: AvailabilityWindowTarget, start: LocalTime, durationMinutes: Int, days: Set<Weekday>): List<Weekday>? {
+        val others = days - target.day
+        if (others.isEmpty()) return if (applyWindow(target, start, durationMinutes)) emptyList() else null
+        if (target.index != null || !WindowSpec.isValidDuration(durationMinutes) || start.second != 0 || start.nano != 0 ||
+            !windowTargetIsCurrent(target)) return null
+        val window = WindowSpec(start, durationMinutes)
+        val conflicts = _form.value.studyAvailability.additionConflicts(window, others + target.day, target.week)
+        if (conflicts.isNotEmpty()) return conflicts.toList()
+        editDays(others + target.day, target.week) { it.appendWindow(window) }
+        return emptyList()
     }
 
     /** Removing the last window keeps an explicit replacement week present. */
@@ -1115,6 +1153,7 @@ class PlanFormViewModel(
                         val plan = SessionPlan.register(nextOrdinal++, request, outcome.response, outcome.isDemo)
                         _plans.update { it + plan }
                         _generatedPlan.value = plan.ordinal
+                        _inputEditSource.value = null
                         _generation.value = GenerationState.Success(outcome.response, outcome.isDemo)
                         completeCreation(PlanSnapshot(_plans.value, nextOrdinal = nextOrdinal))
                     }
@@ -1169,6 +1208,34 @@ class PlanFormViewModel(
         if (plan.recovery != PlanRecovery.Ready || !plan.isStudy(scheduleId)) return
         _adjustment.value = selection.copy(failedScheduleId = scheduleId, state = AdjustmentState.Idle, manual = null)
         pendingAdjustment = null
+    }
+
+    /**
+     * Drops the chosen study row before anything was sent for it. Returns whether a choice was
+     * dropped; a request in flight, an outcome with retry, an open chosen-time draft and a plan
+     * awaiting reload keep their selection.
+     */
+    fun clearFailedSession(): Boolean {
+        if (busy || !idleSelection()) return false
+        _adjustment.update { it.copy(failedScheduleId = null) }
+        pendingAdjustment = null
+        return true
+    }
+
+    /**
+     * Leaving 「일정 조정」 drops a choice that was never sent, so reopening starts without one.
+     * Every other selection keeps its existing handling, including a reload's recovery target.
+     */
+    fun leaveAdjustment() {
+        if (!idleSelection()) return
+        _adjustment.update { it.copy(failedScheduleId = null) }
+        pendingAdjustment = null
+    }
+
+    private fun idleSelection(): Boolean {
+        val selection = _adjustment.value
+        return selection.failedScheduleId != null && selection.state == AdjustmentState.Idle && selection.manual == null &&
+            selectedPlan()?.recovery == PlanRecovery.Ready
     }
 
     fun canSearchFreeTime(): Boolean {
@@ -1685,6 +1752,26 @@ class PlanFormViewModel(
     }
 
     /**
+     * Stops waiting for the sent live manual move and closes its draft. The server may already have
+     * applied it, so the plan requires a reload with the moved row as its target, and the response
+     * is ignored whenever it arrives. Nothing is sent again. Does nothing unless [manualMoveSending].
+     */
+    fun stopWaitingForManualMove() {
+        if (!_manualMoveSending.value) return
+        val (ordinal, input) = pendingAdjustment ?: return
+        adjustmentRequest++
+        adjustmentJob?.cancel()
+        adjustmentJob = null
+        _manualMoveSending.value = false
+        pendingAdjustment = null
+        acceptedManualReview = null
+        updatePlan(ordinal) { it.copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = input.scheduleId) }
+        _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = null) }
+        val collection = _plans.value
+        viewModelScope.launch { commit(collection) }
+    }
+
+    /**
      * Declines the one-time window exception and returns to editing with the chosen time kept.
      * Nothing is sent; sending the same time again is checked by the server from the start.
      */
@@ -2184,9 +2271,10 @@ class PlanFormViewModel(
      * resend. If that save fails nothing is sent, and the selection waits for a new submission.
      */
     private fun sendAdjustment(ordinal: Int, input: AdjustmentInput) {
+        val request = ++adjustmentRequest
         pendingAdjustment = ordinal to input
         _adjustment.update { it.copy(state = AdjustmentState.Loading) }
-        viewModelScope.launch {
+        adjustmentJob = viewModelScope.launch {
             val live = input.scheduleCsvFile != null
             if (live && !commit(unresolved(ordinal, input.scheduleId), inFlightAdjustment = ordinal)) {
                 pendingWrite = PendingLocalWrite(committedSnapshot)
@@ -2196,7 +2284,12 @@ class PlanFormViewModel(
                 _adjustment.update { it.copy(state = AdjustmentState.Idle, manual = it.manual?.copy(confirmOutsideAvailability = false)) }
                 return@launch
             }
-            when (val outcome = adjustmentRepository.adjust(input)) {
+            _manualMoveSending.value = live && input.manualMove != null
+            val outcome = adjustmentRepository.adjust(input)
+            // The learner stopped waiting; the plan already requires a reload, so nothing here applies.
+            if (request != adjustmentRequest) return@launch
+            _manualMoveSending.value = false
+            when (outcome) {
                 is AdjustmentOutcome.Success -> {
                     // Replace only the captured plan; keep its ordinal, identity and creation request.
                     updatePlan(ordinal) { it.copy(current = outcome.response.copy(scheduleCsvFile = it.current.scheduleCsvFile)) }
@@ -2284,6 +2377,16 @@ class PlanFormViewModel(
      * a fresh creation's defaults does. Untouched defaults leave directly.
      */
     fun creationExitNeedsDecision(): Boolean = _form.value.hasInputBeyondDefaults(today)
+
+    /**
+     * Records that the held inputs, which produced the shown plan [ordinal], are reopened to make a
+     * new plan. Returns false, recording nothing, unless [ordinal] is that generated plan.
+     */
+    fun startInputEdit(ordinal: Int): Boolean {
+        if (_generatedPlan.value != ordinal) return false
+        _inputEditSource.value = ordinal
+        return true
+    }
 
     /**
      * Saves the current inputs and resume position as this device's only creation draft, then
@@ -2391,10 +2494,11 @@ class PlanFormViewModel(
         _calendarRead.value = CalendarReadState.Idle
     }
 
-    /** Drops results and notices that describe earlier inputs; never a stored plan. */
+    /** Drops results, notices and the input-edit source that describe earlier inputs; never a stored plan. */
     private fun clearCreationResults() {
         _generation.value = GenerationState.Idle
         _generatedPlan.value = null
+        _inputEditSource.value = null
         calendarReadId += 1
     }
 
@@ -2564,14 +2668,17 @@ class PlanFormViewModel(
         _calendarRead.value = CalendarReadState.Idle
     }
 
-    private fun editDay(day: Weekday, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) = edit(CreationStep.AVAILABILITY) { state ->
+    private fun editDay(day: Weekday, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) =
+        editDays(setOf(day), week, transform)
+
+    /** Changes each of [days] in one form update. */
+    private fun editDays(days: Set<Weekday>, week: LocalDate?, transform: (DayAvailability) -> DayAvailability) = edit(CreationStep.AVAILABILITY) { state ->
         if (week == null) {
-            val current = state.availability[day] ?: DayAvailability()
-            state.copy(availability = state.availability + (day to transform(current)))
+            state.copy(availability = state.availability + days.associateWith { transform(state.availability[it] ?: DayAvailability()) })
         } else {
-            val days = state.availabilityOverrides[week]?.takeIf { week in state.studyWeeks } ?: return@edit state
-            val current = days[day] ?: DayAvailability()
-            state.copy(availabilityOverrides = state.availabilityOverrides + (week to days + (day to transform(current))))
+            val current = state.availabilityOverrides[week]?.takeIf { week in state.studyWeeks } ?: return@edit state
+            state.copy(availabilityOverrides = state.availabilityOverrides +
+                (week to current + days.associateWith { transform(current[it] ?: DayAvailability()) }))
         }
     }
 

@@ -545,6 +545,133 @@ class PlanPersistenceViewModelTest {
         assertTrue(again.requests.isEmpty())
     }
 
+    // --- One saved entry per creation ---
+
+    private val fileC = "license_planner/output/study_plan_c.csv"
+
+    @Test fun repeatedConfirmationOfAWaitingCreationSendsOnceAndALocalRetryAddsOnePlan() = runTest(dispatcher) {
+        val planC = StudyPlanResponse(rowsB, "csv-c", "요약 C", fileC)
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false),
+            PlanOutcome.Success(planC, false), PlanOutcome.Success(planC, false))
+        val (vm, store) = open(planning)
+        generateAB(vm)
+        val before = restoredNow()
+        assertEquals(listOf(1, 2), before.map { it.ordinal })
+
+        planning.gate = CompletableDeferred()
+        vm.stepDuration(Weekday.WEDNESDAY, 1)
+        assertTrue(vm.generateAfterCalendarCheck())
+        assertFalse(vm.generateAfterCalendarCheck()) // repeated during the calendar check
+        advanceUntilIdle()
+        assertEquals(GenerationState.Loading, vm.generation.value)
+        assertFalse(vm.generateAfterCalendarCheck()) // repeated while the response is awaited
+        vm.retryAfterCalendarCheck()
+        advanceUntilIdle()
+        assertEquals(3, planning.requests.size)
+        assertEquals(before, restoredNow())
+
+        disk.failWrites = true
+        val savesBeforeDelivery = store.saves
+        planning.gate!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(savesBeforeDelivery + 1, store.saves)
+        assertEquals(listOf(1, 2, 3), vm.plans.value.map { it.ordinal })
+        assertEquals(3, vm.generatedPlan.value)
+        assertEquals(before, restoredNow())
+        assertFalse(vm.generateAfterCalendarCheck())
+        vm.retryAfterCalendarCheck()
+        vm.retrySave() // fails again
+        advanceUntilIdle()
+        assertEquals(PlanStorage.SaveFailure, vm.storage.value)
+        assertEquals(listOf(1, 2, 3), vm.plans.value.map { it.ordinal })
+
+        disk.failWrites = false
+        vm.retrySave()
+        vm.retrySave()
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(3, planning.requests.size)
+        val after = restoredNow()
+        assertEquals(vm.plans.value, after)
+        assertEquals(listOf(1, 2, 3), after.map { it.ordinal })
+        assertEquals(listOf(fileA, fileB, fileC), after.map { it.scheduleCsvFile })
+        assertEquals(before, after.take(2))
+        assertEquals(GenerationState.Success(planC, false), vm.generation.value)
+        assertEquals(3, vm.generatedPlan.value)
+
+        val relaunchedPlanning = FakePlanning()
+        val (relaunched, _) = open(relaunchedPlanning)
+        assertEquals(after, relaunched.plans.value)
+        assertNull(relaunched.generatedPlan.value)
+        assertEquals(GenerationState.Idle, relaunched.generation.value)
+        assertTrue(relaunchedPlanning.requests.isEmpty())
+    }
+
+    @Test fun adjustingOnePlanThenRelaunchingKeepsEachPlanOnceWithItsOwnRows() = runTest(dispatcher) {
+        val movedB = rowsB.map { if (it.scheduleId == "study-1") it.copy(startDate = "2026/10/21/18/00", endDate = "2026/10/21/19/00") else it }
+        val adjustment = FakeAdjustment(AdjustmentOutcome.Success(StudyPlanResponse(movedB, "csv-b2", null, null)))
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(planB, false))
+        val (vm, _) = open(planning, adjustment)
+        generateAB(vm)
+        val savedA = vm.plan(1)
+        val savedB = vm.plan(2)
+        assertEquals(rowsA.filter { it.scheduleId.startsWith("study-") }.map { it.scheduleId }, rowsB.map { it.scheduleId })
+
+        vm.select(2, "study-1")
+        assertTrue(vm.submitAdjustment())
+        assertFalse(vm.submitAdjustment())
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(listOf(fileB to rowsB), adjustment.inputs.map { it.scheduleCsvFile to it.schedules })
+        vm.leaveAdjustment()
+
+        val listed = vm.plans.value
+        assertEquals(listOf(1, 2), listed.map { it.ordinal })
+        assertEquals(listOf(fileA, fileB), listed.map { it.scheduleCsvFile })
+        assertEquals(savedA, listed[0])
+        assertEquals(movedB, listed[1].current.schedules)
+        assertEquals(savedB.original, listed[1].original)
+        assertEquals(listed, restoredNow())
+
+        val relaunchedPlanning = FakePlanning()
+        val relaunchedAdjustment = FakeAdjustment()
+        val (relaunched, _) = open(relaunchedPlanning, relaunchedAdjustment)
+        assertEquals(listed, relaunched.plans.value)
+        assertNull(relaunched.generatedPlan.value)
+        assertEquals(AdjustmentSelection(), relaunched.adjustment.value)
+        assertTrue(relaunched.selectPlan(1))
+        assertEquals(rowsA, relaunched.plan(1).current.schedules)
+        assertTrue(relaunched.selectPlan(2))
+        assertEquals(movedB, relaunched.plan(2).current.schedules)
+        assertEquals(fileB, relaunched.plan(2).scheduleCsvFile)
+        assertEquals(listed, relaunched.plans.value)
+        assertTrue(relaunchedPlanning.requests.isEmpty() && relaunchedAdjustment.inputs.isEmpty() && relaunchedAdjustment.reloadCalls == 0)
+        assertEquals(2, planning.requests.size)
+        assertEquals(1, adjustment.inputs.size)
+    }
+
+    @Test fun intentionalCreationsWithIdenticalInputsStayDistinct() = runTest(dispatcher) {
+        val sameRows = planA.copy(scheduleCsv = "csv-a-again", scheduleCsvFile = fileB)
+        val planning = FakePlanning(PlanOutcome.Success(planA, false), PlanOutcome.Success(sameRows, false))
+        val (vm, _) = open(planning)
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        assertEquals(PlanStorage.Ready, vm.storage.value)
+        assertEquals(2, planning.requests.size)
+        assertEquals(planning.requests[0], planning.requests[1])
+
+        val saved = restoredNow()
+        assertEquals(listOf(1, 2), saved.map { it.ordinal })
+        assertEquals(listOf(fileA, fileB), saved.map { it.scheduleCsvFile })
+        assertEquals(saved[0].original, saved[1].original)
+        assertEquals(saved[0].current.schedules, saved[1].current.schedules)
+        val (relaunched, _) = open()
+        assertEquals(saved, relaunched.plans.value)
+    }
+
     // --- Live adjustment ordering ---
 
     @Test fun liveAdjustmentIsSentOnlyAfterItsUnresolvedSnapshotIsSaved() = runTest(dispatcher) {

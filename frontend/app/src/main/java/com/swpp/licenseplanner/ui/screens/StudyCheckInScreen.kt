@@ -2,10 +2,12 @@ package com.swpp.licenseplanner.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -23,10 +26,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
@@ -136,6 +144,17 @@ private fun inputErrorText(error: CheckInInputError) = when (error) {
     CheckInInputError.InvalidMinutes -> "실제로 공부한 시간을 1분 이상의 정수(분)로 적어 주세요."
 }
 
+/** The correction for [error], shown beside the input it concerns and announced when it appears. */
+@Composable
+private fun InputErrorText(error: CheckInInputError) {
+    Text(
+        inputErrorText(error),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    )
+}
+
 /**
  * Report editor for one study session of one plan, adapted from the study-record frames: the
  * session card with its scheduled time and duration, a status choice, actual minutes apart from
@@ -216,6 +235,12 @@ fun StudyCheckInScreen(
             }
         }
         Text("공부는 어땠나요?", style = MaterialTheme.typography.titleMedium, color = Ink)
+        if (editor.error == CheckInInputError.StatusRequired) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Image(painterResource(R.drawable.ic_alert), contentDescription = null, modifier = Modifier.padding(top = 1.dp).size(16.dp))
+                InputErrorText(CheckInInputError.StatusRequired)
+            }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             for (status in StudyCheckInStatus.entries) {
                 val label = checkInStatusLabel(status)
@@ -229,6 +254,7 @@ fun StudyCheckInScreen(
                 }
             }
         }
+        val minutesInvalid = editor.error == CheckInInputError.InvalidMinutes
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             FieldLabel("실제로 공부한 시간 (분)")
             OutlinedTextField(
@@ -236,11 +262,15 @@ fun StudyCheckInScreen(
                 onValueChange = onMinutes,
                 enabled = editor.minutesEnabled,
                 singleLine = true,
-                isError = editor.error == CheckInInputError.InvalidMinutes,
+                isError = minutesInvalid,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth().testTag(ACTUAL_MINUTES_FIELD),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(ACTUAL_MINUTES_FIELD)
+                    .semantics { if (minutesInvalid) error(inputErrorText(CheckInInputError.InvalidMinutes)) },
             )
-            Note(
+            if (minutesInvalid) InputErrorText(CheckInInputError.InvalidMinutes)
+            else Note(
                 when (editor.status) {
                     null -> "공부 결과를 먼저 골라 주세요."
                     StudyCheckInStatus.Missed -> "못 했어요는 0분으로 기록돼요."
@@ -248,7 +278,6 @@ fun StudyCheckInScreen(
                 },
             )
         }
-        editor.error?.let { Text(inputErrorText(it), style = MaterialTheme.typography.bodyMedium, color = Ink) }
         when (editor.save) {
             CheckInSave.Saving -> LoadingBlock("기록을 저장하는 중이에요", "이 기기에만 저장해요. 서버에 요청을 보내지 않아요.")
             CheckInSave.Unsaved -> AlertCard(

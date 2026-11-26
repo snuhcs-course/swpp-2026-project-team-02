@@ -81,6 +81,25 @@ data class StudyAvailability(val base: WeekWindows, val overrides: Map<LocalDate
         return if (origins.isEmpty()) null else overlapAmong(origins)
     }
 
+    /**
+     * Weekdays whose copy of [window] would overlap another effective window if it were added to
+     * each of [days] in the recurring base ([week] null) or in the week starting on Monday [week].
+     * Existing windows, the other copies and spill past midnight, including Sunday into Monday,
+     * are compared; a conflict names the weekday its copy starts on. Empty when every copy fits.
+     */
+    fun additionConflicts(window: WindowSpec, days: Set<Weekday>, week: LocalDate? = null): Set<Weekday> {
+        val monday = week ?: REFERENCE_MONDAY
+        val scope = (if (week == null) base else weekFor(week)).let { current -> current + days.associateWith { current[it].orEmpty() + window } }
+        val candidate = if (week == null) StudyAvailability(scope) else copy(overrides = overrides + (week to scope))
+        val spans = (-1L..7L).map { monday.plusDays(it) }
+            .flatMap { origin -> candidate.windowsStarting(origin).map { it.intervalOn(origin) } }
+        return days.filterTo(sortedSetOf()) { day ->
+            val added = window.intervalOn(monday.plusDays(day.ordinal.toLong()))
+            // The copy itself is one of the spans; any other overlapping span is a conflict.
+            spans.count { it.overlaps(added.start, added.end) } > 1
+        }
+    }
+
     private fun overlapAmong(origins: Collection<LocalDate>): Pair<StudyInterval, StudyInterval>? {
         val spans = origins.toSet()
             .flatMap { origin -> windowsStarting(origin).map { it.intervalOn(origin) } }

@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -86,6 +88,32 @@ internal fun manualIntervalText(start: LocalDateTime, end: LocalDateTime): Strin
     return "${dayText(start.toLocalDate())} ${WireDateTime.formatTime(start.toLocalTime())}–$endText${WireDateTime.formatTime(end.toLocalTime())}"
 }
 
+/** What Back does on the editor. */
+internal enum class ManualBack {
+    /** Discard the draft; nothing was sent. */
+    Cancel,
+
+    /** A sent move awaits its answer: ask whether to stop waiting. */
+    AskToLeave,
+
+    /** A request is starting or finishing locally: hold Back. */
+    Held,
+}
+
+internal fun manualBack(loading: Boolean, sending: Boolean): ManualBack = when {
+    !loading -> ManualBack.Cancel
+    sending -> ManualBack.AskToLeave
+    else -> ManualBack.Held
+}
+
+/** Copy of the question asked when Back is pressed while a sent move awaits its answer. */
+internal object LeaveSendingMoveText {
+    const val TITLE = "기다리지 않고 나갈까요?"
+    const val BODY = "이미 서버에 반영됐을 수 있어요. 나가면 최신 계획을 불러온 뒤에 다시 조정할 수 있어요."
+    const val LEAVE = "기다리지 않고 나가기"
+    const val STAY = "계속 기다리기"
+}
+
 private fun dayText(date: LocalDate) = "${monthDay(date)}(${weekdayLabel(date)})"
 
 private fun weekdayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.KOREAN)
@@ -95,7 +123,8 @@ private fun weekdayLabel(date: LocalDate) = date.dayOfWeek.getDisplayName(TextSt
  * The date and start time open the native pickers; the duration stays as it is. The old and new
  * intervals are shown before anything is sent, and a time outside the study windows is sent only
  * after the learner confirms that exact time once. Back or cancel discards the draft and sends
- * nothing; while a request runs, back and every action are held.
+ * nothing; while a request runs, every action is held. Once a live move has been sent, Back asks
+ * whether to stop waiting; leaving closes the editor into the plan's reload-required state.
  */
 @Composable
 internal fun ManualMoveScreen(
@@ -110,11 +139,40 @@ internal fun ManualMoveScreen(
     onRetry: () -> Unit,
     onCancel: () -> Unit,
     onRetrySave: () -> Unit,
+    sending: Boolean,
+    onStopWaiting: () -> Unit,
 ) {
     val state = selection.state
     val loading = state == AdjustmentState.Loading
     val canSend = storage == PlanStorage.Ready
-    BackHandler(enabled = !loading, onBack = onCancel)
+    val back = manualBack(loading, sending)
+    var askingToLeave by rememberSaveable { mutableStateOf(false) }
+    val onBack: () -> Unit = {
+        when (back) {
+            ManualBack.Cancel -> onCancel()
+            ManualBack.AskToLeave -> askingToLeave = true
+            ManualBack.Held -> {}
+        }
+    }
+    BackHandler(enabled = back != ManualBack.Held, onBack = onBack)
+    // The answer arrived or the wait ended: a later move must not reopen this question.
+    LaunchedEffect(sending) { if (!sending) askingToLeave = false }
+    if (askingToLeave && sending) {
+        AlertDialog(
+            onDismissRequest = { askingToLeave = false },
+            title = { Text(LeaveSendingMoveText.TITLE) },
+            text = { Text(LeaveSendingMoveText.BODY) },
+            confirmButton = {
+                TextButton(onClick = {
+                    askingToLeave = false
+                    onStopWaiting()
+                }) { Text(LeaveSendingMoveText.LEAVE) }
+            },
+            dismissButton = {
+                TextButton(onClick = { askingToLeave = false }) { Text(LeaveSendingMoveText.STAY) }
+            },
+        )
+    }
 
     val duration = session.durationMinutes
     val destination = manualDestination(selection, session)
@@ -128,8 +186,8 @@ internal fun ManualMoveScreen(
 
     AppScreen(
         title = "일정 조정",
-        navIcon = if (loading) null else NavIcon.Back,
-        onNav = onCancel,
+        navIcon = if (back == ManualBack.Held) null else NavIcon.Back,
+        onNav = onBack,
         footer = {
             when {
                 confirming -> {

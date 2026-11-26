@@ -58,6 +58,18 @@ class AvailabilityTextTest {
         assertNull(studyWindowMinutes(LocalTime.of(18, 0), LocalTime.of(18, 0)))
     }
 
+    @Test fun typedTimesNeedAnHourAndMinuteInTheTwentyFourHourRange() {
+        assertEquals(LocalTime.of(19, 30), typedTime("19", "30"))
+        assertEquals(LocalTime.of(7, 5), typedTime("7", "05"))
+        assertEquals(LocalTime.MIDNIGHT, typedTime("00", "00"))
+        assertEquals(LocalTime.of(23, 59), typedTime("23", "59"))
+        assertNull(typedTime("", "30"))
+        assertNull(typedTime("19", ""))
+        assertNull(typedTime("24", "00"))
+        assertNull(typedTime("25", "00"))
+        assertNull(typedTime("19", "60"))
+    }
+
     @Test fun summariesCountEveryWindowAndWeekKinds() {
         val base = mapOf(
             Weekday.MONDAY to listOf(window(8, 0, 60), window(23, 0, 90)),
@@ -101,5 +113,17 @@ class AvailabilityTextTest {
         val monday = LocalDate.of(2026, 11, 30)
         val interval = StudyInterval(monday.atStartOfDay(), monday.atTime(0, 30))
         assertEquals("11월 30일(월) 00:00–00:30 공부 시간이 지난주 설정에서 이어져요.", incomingText(interval))
+    }
+
+    @Test fun overlappingWeekdaysAreNamedInOrderWithOneParticle() {
+        assertEquals("수요일과 겹쳐요", weekdayOverlapTitle(listOf(Weekday.WEDNESDAY)))
+        assertEquals("월요일, 금요일과 겹쳐요", weekdayOverlapTitle(listOf(Weekday.MONDAY, Weekday.FRIDAY)))
+    }
+
+    @Test fun inputEditNoteUsesTheParticleForTheOrdinal() {
+        assertEquals("계획 1은 그대로 두고 새 계획을 만들어요.", inputEditNote(1))
+        assertEquals("계획 2는 그대로 두고 새 계획을 만들어요.", inputEditNote(2))
+        assertEquals("계획 10은 그대로 두고 새 계획을 만들어요.", inputEditNote(10))
+        assertEquals("계획 19는 그대로 두고 새 계획을 만들어요.", inputEditNote(19))
     }
 }

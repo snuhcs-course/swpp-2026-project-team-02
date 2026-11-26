@@ -159,6 +159,11 @@ writers. Coverage includes:
   plan completion removing the draft. Fresh injected state exercises restoration.
 - Multiple windows per day, reordering and removal, and cancelling a window edit
   before changing between the recurring schedule and a one-week override.
+- One new window added to several weekdays at once, and an overlap on one chosen
+  day adding nothing while the dialog keeps its times and chips.
+- The selected week's dates and actions shown before the weekday list; replacing
+  one week's hours leaves the base and neighbouring weeks unchanged, and its
+  no-study and reset actions follow.
 - Calendar review before generation, disposal of late reads after cancellation,
   changed observations before dispatch, and fallback to previously imported busy
   rows when a fresh read fails.
@@ -557,6 +562,24 @@ match. Editing the form or a failed generation never removes an entry. The app
 never imports plans from the server; it reads the server's plan list only to
 reload one plan it already has (see below).
 
+**Saved-plan cards.** Each card in 저장된 계획 shows its number, the preparation
+and exam dates, a summary of the inputs that produced it, and its study-session
+count. The summary comes only from the plan's stored creation request, never its
+adjusted rows: base study days and weekly time (주 4일 · 주 6시간 30분), then
+캘린더 일정 N개 반영 when calendar events were applied and 주별 변경 N주 when weeks
+were replaced. A base week without windows reads 기본 시간 없음 instead of 주 0일.
+Older saved collections show the same summary, and listing them rewrites nothing.
+The summary wraps at large text sizes, and the whole card remains one tap target.
+
+**Making a new plan from a plan's inputs.** While a new plan's inputs are still
+held, its plan view offers 입력 바꿔 새 계획 만들기, which reopens those inputs at
+공부 시간. On that route the generate button reads 새 계획 만들기, with the note
+계획 N은 그대로 두고 새 계획을 만들어요 above it; editing inputs or going back
+through earlier steps keeps both. Generating adds a new numbered plan and leaves
+the source plan unchanged. Starting 계획 생성 from home, resuming or discarding a
+draft, or registering the new plan returns the button to 계획 만들기. The route is
+not saved, so after the process ends the step reads 계획 만들기 again.
+
 **Local storage.** The list is saved on the device, so it survives rotation,
 navigation, closing the app and process death. Each entry keeps its number,
 original creation request (dates, assessment, windows), current rows, CSV text
@@ -801,9 +824,24 @@ read-only text (기존 공부 시간 · 60분 (그대로 유지)), and a preview
 at the session's current time; 이 시간으로 옮기기 stays disabled
 (날짜나 시작 시간을 바꿔 주세요) until another time is chosen. Back or the top-bar
 arrow discards the draft without a request and returns to the same plan,
-week and selection. While the request runs, back and every action are held
+week and selection. While the request runs, every action is held
 (옮기는 중…), and rotation keeps the draft and the request without sending it
 again, because the draft lives in the ViewModel.
+
+**Leaving a sending move.** Once a live move has been sent (its
+unresolved-request snapshot is saved), system Back and the top-bar arrow stay
+available and ask 기다리지 않고 나갈까요? (이미 서버에 반영됐을 수 있어요. 나가면 최신
+계획을 불러온 뒤에 다시 조정할 수 있어요.). 계속 기다리기, or dismissing the dialog,
+keeps the editor sending; the response is then handled as below. The dialog
+survives rotation, and nothing is sent again. 기다리지 않고 나가기 stops waiting
+without cancelling anything on the server: the editor closes to 일정 조정 in
+the reload-required state, with the moved session as its target, exactly as
+for a lost response. No success, rollback or new time is shown, the plan is
+saved on the device in that state, and other saved plans are unchanged. A
+response that arrives later, success or failure, is ignored: it changes no
+rows and saves nothing. 최신 계획 불러오기 then shows the server's saved rows, and
+a session and time must be chosen again. Before the snapshot is saved, Back is
+still held. Demo moves finish locally and never show the dialog.
 
 The app first sends the chosen time without the exception. If the time is
 otherwise valid but outside the plan's study windows, the screen asks
@@ -929,8 +967,21 @@ The editor provides start and end time pickers. An earlier end belongs to the
 following day and is labeled 다음 날; equal times disable 확인. 확인 applies
 both times together, while 취소 or Back keeps the entered list. 삭제 removes
 only its identified window, promoting the next one when necessary. Removing
-the final window leaves that weekday empty. Week-specific actions appear side
-by side above the weekday list.
+the final window leaves that weekday empty.
+
+**Several weekdays at once.** When 시간대 추가 opens a new window, the dialog
+also shows a row of weekday chips (같은 시간에 공부할 요일). The opened weekday
+is always on and cannot be turned off; the other days start off. The duration
+note names the chosen days, for example 공부 시간 1시간 30분 · 월·수·금 3일에
+추가. 확인 adds the same window to every chosen weekday in the opened scope:
+the base week, or only the replacement week being edited. If any new window
+would overlap another effective window (including an overnight spill into the
+next day, the Sunday/Monday spill and a replaced week's neighbours), nothing
+is added. The dialog stays open with its times and chosen days, marks the
+overlapping chips and names them (for example 수요일과 겹쳐요). Changing a
+time or a chip clears that message. With only the opened day chosen, it adds
+that one window as before, and the screen's usual overlap message applies.
+Editing an existing window shows no chips and changes only that window.
 
 Every base and replacement-week window participates in totals, validation,
 requests and creation drafts. Dialog targets retain their weekday, week and
@@ -938,7 +989,11 @@ captured list. Changing week cannot apply a pending edit to another window.
 
 **Weeks.** With valid dates, a Monday-based week picker (`N / M주`) covers the
 weeks from the preparation start to the day before the exam; other weeks cannot be
-shown or changed. Each week is one of:
+shown or changed. The picker sits in an outlined group directly under the
+heading, ahead of any carried-in time and the weekday list. The group also holds
+a line saying which hours the selected week uses (이번 주는 기본 시간을 사용해요,
+이번 주는 이 주에만 정한 시간을 사용해요 or 이번 주는 공부하지 않도록 정했어요)
+and that week's two actions, stacked. Each week is one of:
 
 - 기본 시간 (no change for that week): 매주 기본 시간 changes the recurring
   base for every such week.

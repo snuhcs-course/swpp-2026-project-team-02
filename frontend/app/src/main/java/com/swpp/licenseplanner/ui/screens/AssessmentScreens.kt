@@ -10,12 +10,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -79,13 +85,29 @@ fun QuestionsScreen(
     val question = questions.getOrNull(index.coerceAtMost(questions.lastIndex))
     val selected = question?.let { form.answers[it.id] }
     val isLast = index >= questions.lastIndex
+    // Close asks first only when loaded questions have at least one answer; answers stay either way.
+    var confirmClose by rememberSaveable { mutableStateOf(false) }
+    if (confirmClose && loaded && form.answers.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { confirmClose = false },
+            title = { Text("예시 문항을 닫을까요?") },
+            text = { Text("고른 답은 그대로 남아요. 다시 풀면 1번 문항부터 고른 답이 보여요.") },
+            confirmButton = {
+                TextButton(onClick = { confirmClose = false; onExit() }) { Text("닫기") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClose = false }) { Text("계속 풀기") }
+            },
+        )
+    }
 
     AppScreen(
         title = "예시 문항",
         navIcon = NavIcon.Close,
-        onNav = onExit,
+        onNav = { if (loaded && form.answers.isNotEmpty()) confirmClose = true else onExit() },
         footer = if (loaded && question != null) {
             {
+                if (index > 0) SecondaryButton("이전 문항", onClick = { onShowQuestion(index - 1) })
                 PrimaryButton(
                     text = if (isLast) "결과 보기" else "다음",
                     enabled = selected != null,

@@ -58,12 +58,14 @@ fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onBack:
 
 /**
  * Adapted from frame 2004:479 for the written-exam-only scope: the written
- * exam card plus preparation start and written exam date fields. The preparation period is
- * shown once the dates are valid.
+ * exam card plus preparation start and written exam date fields. The chosen period, its dates
+ * and, when preparation does not start [today], the days left to the exam are shown once the
+ * dates are valid.
  */
 @Composable
 fun DatesScreen(
     form: PlanFormState,
+    today: LocalDate,
     onStartChange: (LocalDate) -> Unit,
     onExamChange: (LocalDate) -> Unit,
     onBack: () -> Unit,
@@ -87,8 +89,13 @@ fun DatesScreen(
         DateField("준비 시작일", form.preparationStart) { picking = START }
         DateField("필기 시험일", form.examDate) { picking = EXAM }
         val error = form.datesError
+        val period = Validation.periodText(form.preparationStart, form.examDate, today)
         when {
-            days != null -> Text("준비 기간 ${days}일", style = MaterialTheme.typography.titleSmall, color = Ink)
+            period != null -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(period.period, style = MaterialTheme.typography.titleSmall, color = Ink)
+                Text(period.range, style = MaterialTheme.typography.bodyMedium, color = Ink)
+                period.untilExam?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Ink) }
+            }
             form.examDate != null && error != null -> Text(error, style = MaterialTheme.typography.bodyMedium, color = Ink)
             else -> Note("필기 시험일을 고르면 준비 기간을 알려 드려요.")
         }

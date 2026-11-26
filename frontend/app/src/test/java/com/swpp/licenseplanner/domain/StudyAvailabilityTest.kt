@@ -80,6 +80,36 @@ class StudyAvailabilityTest {
         assertFalse(StudyAvailability(emptyMap(), mapOf(LocalDate.of(2026, 11, 30) to emptyMap())).hasWindows())
     }
 
+    @Test fun copiesForSeveralWeekdaysConflictOnlyWhereTheyOverlapAndNameTheirOwnDay() {
+        val days = setOf(Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY)
+        assertEquals(emptySet<Weekday>(), StudyAvailability(emptyMap()).additionConflicts(w("19:00", 90), days))
+        val wednesday = StudyAvailability(mapOf(Weekday.WEDNESDAY to listOf(w("19:00", 60))))
+        assertEquals(setOf(Weekday.WEDNESDAY), wednesday.additionConflicts(w("19:00", 90), days))
+        assertEquals("수요일", Weekday.WEDNESDAY.fullLabel)
+        // Adjacent windows do not overlap.
+        assertEquals(emptySet<Weekday>(), wednesday.additionConflicts(w("20:00", 60), days))
+
+        // A Sunday copy spilling into the base Monday names Sunday, not Monday.
+        val earlyMonday = StudyAvailability(mapOf(Weekday.MONDAY to listOf(w("00:30", 60))))
+        assertEquals(setOf(Weekday.SUNDAY), earlyMonday.additionConflicts(w("23:00", 120), setOf(Weekday.SUNDAY, Weekday.MONDAY)))
+        assertEquals("일요일", Weekday.SUNDAY.fullLabel)
+    }
+
+    @Test fun replacementWeekCopiesAreComparedWithTheSpillOfNeighbouringWeeks() {
+        val base = mapOf(
+            Weekday.MONDAY to listOf(w("00:30", 60)),
+            Weekday.SUNDAY to listOf(w("23:30", 60)),
+        )
+        val context = StudyAvailability(base, mapOf(monday to emptyMap()))
+        // The base Sunday before the replacement week spills into its Monday.
+        assertEquals(setOf(Weekday.MONDAY), context.additionConflicts(w("00:00", 30), setOf(Weekday.MONDAY, Weekday.TUESDAY), monday))
+        // The replacement Sunday spills into the next week's base Monday.
+        assertEquals(setOf(Weekday.SUNDAY), context.additionConflicts(w("23:45", 60), setOf(Weekday.SATURDAY, Weekday.SUNDAY), monday))
+        assertEquals(emptySet<Weekday>(), context.additionConflicts(w("10:00", 120), setOf(Weekday.SATURDAY, Weekday.SUNDAY), monday))
+        // The recurring base compares its own Sunday with its own Monday.
+        assertEquals(setOf(Weekday.MONDAY), context.additionConflicts(w("00:00", 30), setOf(Weekday.MONDAY, Weekday.TUESDAY)))
+    }
+
     @Test fun removingPrimaryPromotesTheNextWindowAndKeepsOvernightCapacity() {
         val original = DayAvailability.of(listOf(w("08:00", 60), w("19:00", 120), w("23:30", 60)))
         val removed = original.removeWindow(0)!!

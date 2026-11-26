@@ -8,12 +8,34 @@ import java.time.temporal.ChronoUnit
 /** A displayed window; [endsNextDay] marks an end on the following date. */
 data class StudyWindow(val start: LocalTime, val end: LocalTime, val endsNextDay: Boolean = false)
 
+/** The chosen preparation period, its dates, and the optional days from today to the exam. */
+data class PeriodText(val period: String, val range: String, val untilExam: String?)
+
 /** Date and availability rules for the input flow. */
 object Validation {
     private val clock = DateTimeFormatter.ofPattern("HH:mm")
 
     /** Days between preparation start and exam date. */
     fun preparationDays(start: LocalDate, exam: LocalDate): Long = ChronoUnit.DAYS.between(start, exam)
+
+    /** Days from [today] to [exam], or null unless the exam is after today. */
+    fun daysUntilExam(today: LocalDate, exam: LocalDate): Long? = ChronoUnit.DAYS.between(today, exam).takeIf { it > 0 }
+
+    /**
+     * The date step's period text, or null when the dates are invalid. [PeriodText.untilExam]
+     * is shown only when preparation does not start today and the exam is still ahead.
+     */
+    fun periodText(start: LocalDate, exam: LocalDate?, today: LocalDate): PeriodText? {
+        if (exam == null || datesError(start, exam) != null) return null
+        val untilExam = daysUntilExam(today, exam)?.takeIf { start != today }
+        return PeriodText(
+            period = "선택한 준비 기간 ${preparationDays(start, exam)}일",
+            range = "${monthDay(start)}부터 ${monthDay(exam)} 시험 전까지",
+            untilExam = untilExam?.let { "오늘부터 시험까지 ${it}일" },
+        )
+    }
+
+    private fun monthDay(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일"
 
     /** Null when valid; otherwise a user-facing message. */
     fun datesError(start: LocalDate?, exam: LocalDate?): String? = when {

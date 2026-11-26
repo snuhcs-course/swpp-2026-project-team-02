@@ -16,6 +16,9 @@ enum class Weekday(val key: String, val label: String) {
 
     val dayOfWeek: java.time.DayOfWeek get() = java.time.DayOfWeek.of(ordinal + 1)
 
+    /** The full Korean name, such as 수요일. */
+    val fullLabel: String get() = "${label}요일"
+
     companion object {
         fun of(dayOfWeek: java.time.DayOfWeek): Weekday = entries[dayOfWeek.value - 1]
     }

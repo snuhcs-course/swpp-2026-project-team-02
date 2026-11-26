@@ -230,7 +230,9 @@ class MainFlowUiTest {
         show("매주 기본 시간")
         compose.onNode(hasTestTag("study-duration-${Weekday.MONDAY.key}")).assertTextEquals("18:00 – 19:00 · 60분")
         setWeekdayMinutes(Weekday.SATURDAY)
-        click("계획 만들기")
+        show("계획 1은 그대로 두고 새 계획을 만들어요.")
+        compose.onNodeWithText("계획 만들기").assertDoesNotExist()
+        click("새 계획 만들기")
         awaitPlanView()
         host.awaitSaved()
         show("계획 2 · $CERTIFICATION_NAME")
@@ -244,6 +246,12 @@ class MainFlowUiTest {
         waitForText("무엇을 할까요?")
         show("저장된 계획 2개가 있어요.")
         host.recreate()
+        click("내 계획")
+        awaitPlanList()
+        show("주 5일 · 주 5시간")
+        show("주 6일 · 주 6시간")
+        pressBack()
+        waitForText("무엇을 할까요?")
         for (ordinal in listOf(1, 2)) {
             openPlanView(ordinal)
             show("처음으로", lazy = true)
@@ -255,6 +263,114 @@ class MainFlowUiTest {
         }
         assertEquals(saved, host.snapshot())
         assertEquals(2, host.planningCalls.get())
+    }
+
+    @Test
+    fun repeatedCreateTapAndAnAdjustmentKeepEachPlanOnceAcrossRelaunch() = withApp { host ->
+        generatePlan(host)
+        val first = host.snapshot().plans.single()
+        pressBack()
+        waitForText("무엇을 할까요?")
+        show("저장된 계획 1개가 있어요.")
+
+        // A second creation with the same inputs, confirmed twice while its response waits.
+        startQuestions(host, firstPlan = false)
+        answerAll(host)
+        click("공부 시간 정하기")
+        for (day in Weekday.entries.filter { it.dayOfWeek.value <= 5 }) setWeekdayMinutes(day)
+        val gate = CompletableDeferred<Unit>()
+        host.holdPlanning.set(gate)
+        host.failSaves.set(true)
+        compose.onNode(hasText("계획 만들기") and hasClickAction()).assertIsEnabled()
+            .performTouchInput { click(); advanceEventTime(80); click() }
+        waitForText("계획을 만드는 중이에요")
+        compose.runOnIdle { assertFalse(host.viewModel.generate()) }
+        gate.complete(Unit)
+        waitForText("계획을 만들었지만 저장하지 못했어요")
+        assertEquals(2, host.planningCalls.get())
+        assertEquals(listOf(first), host.snapshot().plans)
+        click("다시 저장하기")
+        compose.waitUntil("The repeated save fails too", 10_000) { host.viewModel.storage.value == PlanStorage.SaveFailure }
+        host.failSaves.set(false)
+        host.holdPlanning.set(null)
+        click("다시 저장하기")
+        awaitPlanView()
+        host.awaitSaved()
+        show("계획 2 · $CERTIFICATION_NAME")
+        val created = host.snapshot()
+        assertEquals(listOf(1, 2), created.plans.map { it.ordinal })
+        assertEquals(first, created.plans[0])
+        assertEquals(first.original, created.plans[1].original)
+        assertEquals(2, host.planningCalls.get())
+        pressBack()
+        waitForText("무엇을 할까요?")
+        show("저장된 계획 2개가 있어요.")
+
+        // Adjust plan 2, whose row IDs all match plan 1's, then return to the list.
+        openPlanView(2)
+        adjustShownPlan()
+        val target = PlanGrouping.sessions(created.plans[1].current.schedules).first { !it.isExternal }
+        clickSession(target)
+        click("선택한 일정 조정하기")
+        waitForText("옮길 수 있는 시간이 없어요")
+        click("시간 직접 옮기기")
+        val destination = target.start.withHour(14)
+        compose.runOnIdle { host.viewModel.setManualStart(destination) }
+        click("이 시간으로 옮기기")
+        compose.waitUntil("The outside-window destination needs confirmation", 10_000) {
+            host.viewModel.adjustment.value.canConfirmOutsideAvailability
+        }
+        compose.waitForIdle()
+        click("이번 한 번만 옮기기")
+        waitForText("계획이 조정됐어요")
+        host.awaitSaved()
+        val adjusted = host.snapshot()
+        assertEquals(listOf(1, 2), adjusted.plans.map { it.ordinal })
+        assertEquals(first, adjusted.plans[0])
+        assertOnlyTargetTimesChanged(created.plans[1].current.schedules, adjusted.plans[1].current.schedules, target.scheduleId)
+        assertEquals(WireDateTime.format(destination),
+            adjusted.plans[1].current.schedules.single { it.scheduleId == target.scheduleId }.startDate)
+        val adjustments = host.adjustmentCalls.get()
+        pressBack()
+        awaitPlanView()
+        show("계획 2 · $CERTIFICATION_NAME")
+        pressBack()
+        awaitPlanList()
+        fun assertEachPlanListedOnce() {
+            compose.onAllNodesWithText("계획 1 · $CERTIFICATION_NAME").assertCountEquals(1)
+            compose.onAllNodesWithText("계획 2 · $CERTIFICATION_NAME").assertCountEquals(1)
+            compose.onAllNodesWithText("계획 3 · ", substring = true).assertCountEquals(0)
+        }
+        assertEachPlanListedOnce()
+        pressBack()
+        waitForText("무엇을 할까요?")
+        val bytes = host.snapshotBytes()
+
+        // A new process over the same file starts at home with the same two plans.
+        host.recreate()
+        waitForText("무엇을 할까요?")
+        show("저장된 계획 2개가 있어요.")
+        assertNull(host.viewModel.generatedPlan.value)
+        assertArrayEquals(bytes, host.snapshotBytes())
+        click("내 계획")
+        awaitPlanList()
+        assertEachPlanListedOnce()
+        pressBack()
+        waitForText("무엇을 할까요?")
+        for (ordinal in listOf(1, 2)) {
+            openPlanView(ordinal)
+            show("계획 $ordinal · $CERTIFICATION_NAME")
+            compose.runOnIdle {
+                assertEquals(adjusted.plans[ordinal - 1], host.viewModel.plans.value.single { it.ordinal == ordinal })
+            }
+            pressBack()
+            awaitPlanList()
+            pressBack()
+            waitForText("무엇을 할까요?")
+        }
+        assertEquals(adjusted, host.snapshot())
+        assertEquals(2, host.planningCalls.get())
+        assertEquals(adjustments, host.adjustmentCalls.get())
     }
 
     @Test
@@ -789,14 +905,195 @@ class MainFlowUiTest {
         assertEquals(0, host.planningCalls.get())
     }
 
+    @Test
+    fun typedTimeEntryBlocksIncompleteAndOutOfRangeTimesAndSharesItsTimeWithTheDial() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        clickDescription("월요일 시간대 추가")
+        val confirm = compose.onNodeWithTag("study-clock-confirm")
+        compose.onNodeWithTag("study-window-start").performClick()
+        compose.onNodeWithTag("time-input-hour").assert(hasText("18"))
+        compose.onNodeWithTag("time-input-hour").performTextReplacement("")
+        confirm.assertIsNotEnabled()
+        compose.onNodeWithTag("time-input-hour").performTextReplacement("25")
+        show("시는 00~23, 분은 00~59로 입력해 주세요.")
+        confirm.assertIsNotEnabled()
+        host.capture("time-typed-out-of-range")
+        compose.onNodeWithTag("time-input-hour").performTextReplacement("19")
+        compose.onNodeWithTag("time-input-minute").performTextReplacement("60")
+        confirm.assertIsNotEnabled()
+        typeTime(19, 30)
+        compose.onNodeWithText("시는 00~23, 분은 00~59로 입력해 주세요.").assertDoesNotExist()
+        confirm.assertIsEnabled()
+        // The dial and the typed boxes show the same time in either direction.
+        compose.onNodeWithTag("time-mode-toggle").performClick()
+        compose.onNodeWithTag("time-input-hour").assertDoesNotExist()
+        compose.onNodeWithTag("time-mode-toggle").performClick()
+        compose.onNodeWithTag("time-input-hour").assert(hasText("19"))
+        compose.onNodeWithTag("time-input-minute").assert(hasText("30"))
+        compose.onNodeWithTag("time-mode-toggle").performClick()
+        pickOnDial(8, 15)
+        host.capture("time-dial")
+        compose.onNodeWithTag("time-mode-toggle").performClick()
+        compose.onNodeWithTag("time-input-hour").assert(hasText("08"))
+        compose.onNodeWithTag("time-input-minute").assert(hasText("15"))
+        confirm.performClick()
+        compose.onNodeWithTag("study-window-start").assert(hasText("08:15"))
+        // Cancel leaves the field as it was.
+        compose.onNodeWithTag("study-window-end").performClick()
+        typeTime(22, 0)
+        compose.onNode(hasText("취소") and hasClickAction() and hasAnySibling(hasTestTag("study-clock-confirm"))).performClick()
+        compose.onNodeWithTag("study-window-end").assert(hasText("19:00"))
+        // A window ending at midnight ends on the next day.
+        setWindowTime("study-window-start", 22)
+        setWindowTime("study-window-end", 0)
+        click("확인")
+        show("22:00 – 다음 날 00:00 · 120분")
+        assertEquals(
+            WindowSpec(LocalTime.of(22, 0), 120),
+            host.viewModel.form.value.availability.getValue(Weekday.MONDAY).windows().single(),
+        )
+        assertEquals(0, host.planningCalls.get())
+    }
+
+    @Test
+    fun oneNewWindowCanBeAddedToSeveralWeekdaysAndAnOverlapAddsNothing() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        clickDescription("월요일 시간대 추가")
+        compose.onNodeWithTag("window-day-monday").assertIsOn().assertIsNotEnabled()
+        for (day in Weekday.entries.drop(1)) compose.onNodeWithTag("window-day-${day.key}").assertIsOff()
+        setWindowTime("study-window-start", 19)
+        setWindowTime("study-window-end", 20, 30)
+        compose.onNodeWithTag("window-day-wednesday").performClick()
+        compose.onNodeWithTag("window-day-friday").performClick()
+        show("공부 시간 1시간 30분 · 월·수·금 3일에 추가")
+        host.capture("window-several-weekdays")
+        click("확인")
+        val chosen = setOf(Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY)
+        val window = WindowSpec(LocalTime.of(19, 0), 90)
+        for (day in Weekday.entries) {
+            val expected = if (day in chosen) listOf(window) else emptyList()
+            assertEquals(expected, host.viewModel.form.value.availability[day]?.windows().orEmpty())
+        }
+        for (day in chosen) {
+            compose.onNodeWithTag("study-duration-${day.key}").performScrollTo().assertTextEquals("19:00 – 20:30 · 90분")
+        }
+        show("3일")
+        show("4시간 30분")
+        // Editing an existing window offers no other weekdays.
+        compose.onNodeWithTag("study-duration-monday").performScrollTo().performClick()
+        compose.onNodeWithTag("window-day-monday").assertDoesNotExist()
+        click("취소")
+        // An overlap on one chosen day adds nothing and keeps the dialog as entered.
+        val before = host.viewModel.form.value
+        clickDescription("화요일 시간대 추가")
+        setWindowTime("study-window-start", 20)
+        setWindowTime("study-window-end", 21)
+        compose.onNodeWithTag("window-day-wednesday").performClick()
+        compose.onNodeWithTag("window-day-saturday").performClick()
+        click("확인")
+        show("수요일과 겹쳐요")
+        compose.onNodeWithTag("window-day-wednesday").assertIsOn()
+        compose.onNodeWithTag("window-day-saturday").assertIsOn()
+        compose.onNodeWithTag("study-window-start").assert(hasText("20:00"))
+        compose.onNodeWithTag("study-window-end").assert(hasText("21:00"))
+        assertEquals(before, host.viewModel.form.value)
+        host.capture("window-several-weekdays-overlap")
+        compose.onNodeWithTag("window-day-wednesday").performClick()
+        compose.onNodeWithText("수요일과 겹쳐요").assertDoesNotExist()
+        click("확인")
+        compose.onNodeWithText("공부 시간 입력").assertDoesNotExist()
+        val added = WindowSpec(LocalTime.of(20, 0), 60)
+        assertEquals(listOf(added), host.viewModel.form.value.availability.getValue(Weekday.TUESDAY).windows())
+        assertEquals(listOf(added), host.viewModel.form.value.availability.getValue(Weekday.SATURDAY).windows())
+        assertEquals(listOf(window), host.viewModel.form.value.availability.getValue(Weekday.WEDNESDAY).windows())
+        assertEquals(0, host.planningCalls.get())
+    }
+
+    @Test
+    fun weekActionsSitWithTheSelectedDatesAndChangeOnlyThatWeek() = withApp { host ->
+        startQuestions(host)
+        answerAll(host)
+        click("공부 시간 정하기")
+        compose.runOnIdle {
+            for (day in listOf(Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY)) host.viewModel.setDuration(day, 60)
+        }
+        // The selected dates and the week's change action are in the first view, ahead of the weekday list.
+        compose.onNodeWithText("11월 16일 – 22일").assertIsDisplayed()
+        compose.onNodeWithText("이번 주 시간 바꾸기").assertIsDisplayed()
+        compose.onNodeWithText("이번 주는 기본 시간을 사용해요.").assertIsDisplayed()
+        assertTrue(
+            compose.onNodeWithText("이번 주 시간 바꾸기").fetchSemanticsNode().boundsInRoot.bottom <=
+                compose.onNodeWithText("월요일").fetchSemanticsNode().boundsInRoot.top,
+        )
+        host.capture("week-actions-base")
+        val base = host.viewModel.form.value.availability
+        val weeks = host.viewModel.form.value.studyWeeks
+        val third = LocalDate.of(2026, 11, 30)
+        clickDescription("다음 주")
+        clickDescription("다음 주")
+        showWeek(third, 2, weeks.size)
+        show("이번 주는 기본 시간을 사용해요.")
+        click("이번 주 시간 바꾸기")
+        show("이번 주는 이 주에만 정한 시간을 사용해요. 다른 주는 그대로예요.")
+        compose.onNodeWithTag("study-duration-monday").performScrollTo().performClick()
+        setWindowTime("study-window-start", 7)
+        setWindowTime("study-window-end", 9)
+        click("확인")
+        clickDescription("수요일 시간대 1 삭제")
+        val own = host.viewModel.form.value.availabilityOverrides.getValue(third)
+        assertEquals(listOf(WindowSpec(LocalTime.of(7, 0), 120)), own.getValue(Weekday.MONDAY).windows())
+        assertTrue(own.getValue(Weekday.WEDNESDAY).windows().isEmpty())
+        assertEquals(base.getValue(Weekday.FRIDAY).windows(), own.getValue(Weekday.FRIDAY).windows())
+        assertEquals(base, host.viewModel.form.value.availability)
+        assertEquals(setOf(third), host.viewModel.form.value.availabilityOverrides.keys)
+        host.capture("week-actions-own-hours")
+        // The neighbouring weeks still use the base hours.
+        fun assertBaseWeek(monday: LocalDate) {
+            showWeek(monday, weeks.indexOf(monday), weeks.size)
+            show("이번 주는 기본 시간을 사용해요.")
+            compose.onNodeWithTag("study-duration-monday").performScrollTo().assertTextEquals("18:00 – 19:00 · 60분")
+            compose.onNodeWithTag("study-duration-wednesday").performScrollTo().assertTextEquals("18:00 – 19:00 · 60분")
+        }
+        clickDescription("이전 주")
+        assertBaseWeek(third.minusWeeks(1))
+        clickDescription("다음 주")
+        clickDescription("다음 주")
+        assertBaseWeek(third.plusWeeks(1))
+        clickDescription("이전 주")
+        showWeek(third, 2, weeks.size)
+        // No study for that week, then back to the base hours.
+        click("이번 주 공부 안 함")
+        assertTrue(host.viewModel.form.value.availabilityOverrides.getValue(third).values.all { it.windows().isEmpty() })
+        show("이번 주는 공부하지 않도록 정했어요. 다른 주는 그대로예요.")
+        click("기본 시간으로 되돌리기")
+        assertTrue(third !in host.viewModel.form.value.availabilityOverrides)
+        show("이번 주는 기본 시간을 사용해요.")
+        compose.onNodeWithTag("study-duration-wednesday").performScrollTo().assertTextEquals("18:00 – 19:00 · 60분")
+        assertEquals(base, host.viewModel.form.value.availability)
+        assertEquals(0, host.planningCalls.get())
+    }
+
     private fun setWindowTime(field: String, hour: Int, minute: Int = 0) {
         compose.onNodeWithTag(field).performClick()
+        typeTime(hour, minute)
+        compose.onNodeWithTag("study-clock-confirm").performClick()
+    }
+
+    private fun typeTime(hour: Int, minute: Int) {
+        compose.onNodeWithTag("time-input-hour").performTextReplacement("%02d".format(hour))
+        compose.onNodeWithTag("time-input-minute").performTextReplacement("%02d".format(minute))
+    }
+
+    private fun pickOnDial(hour: Int, minute: Int) {
         val dialLabel = SemanticsMatcher.keyNotDefined(SemanticsProperties.Text)
         compose.onNodeWithContentDescription("Select hour", useUnmergedTree = true).performClick()
         compose.onNode(hasContentDescription("$hour hours") and dialLabel, useUnmergedTree = true).performClick()
         compose.onNodeWithContentDescription("Select minutes", useUnmergedTree = true).performClick()
         compose.onNode(hasContentDescription("$minute minutes") and dialLabel, useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("study-clock-confirm").performClick()
     }
 
     @Test
@@ -945,6 +1242,7 @@ class MainFlowUiTest {
         assertEquals(0, host.planningCalls.get())
         assertEquals(0, host.adjustmentCalls.get())
         clickDescription("닫기")
+        click("닫기")
         val level = CurrentLevel.entries.first { it != expected.level }
         click(level.label)
         clickDescription("뒤로")
@@ -1048,8 +1346,73 @@ class MainFlowUiTest {
         assertEquals(1, host.planningCalls.get())
     }
 
+    @Test
+    fun previousQuestionKeepsAnswersAndAppearsFromTheSecondQuestion() = withApp { host ->
+        host.deviceDate = LocalDate.of(2026, 11, 23)
+        startQuestions(host, daysToExam = "오늘부터 시험까지 49일")
+        val questions = host.viewModel.form.value.questions
+        show("${questions.size}문항 중 1번째")
+        compose.onNodeWithText("이전 문항").assertDoesNotExist()
+        val firstChoice = questions[0].answerChoices.values.first()
+        click(firstChoice)
+        click("다음")
+        show("${questions.size}문항 중 2번째")
+        click(UNKNOWN_LABEL)
+        click("이전 문항")
+        show("${questions.size}문항 중 1번째")
+        show(questions[0].prompt)
+        compose.onNode(hasText(firstChoice) and isSelected()).assertExists()
+        compose.onNodeWithText("이전 문항").assertDoesNotExist()
+        compose.onAllNodesWithText("다음").assertCountEquals(1)
+        click("다음")
+        show("${questions.size}문항 중 2번째")
+        compose.onNodeWithText(UNKNOWN_LABEL).assertIsSelected()
+        assertEquals(1, host.questionCalls.get())
+    }
+
+    @Test
+    fun closingAnsweredQuizAsksAndReopeningKeepsAnswersWithoutReloading() = withApp { host ->
+        startQuestions(host)
+        val questions = host.viewModel.form.value.questions
+        click(UNKNOWN_LABEL)
+        click("다음")
+        click(UNKNOWN_LABEL)
+        click("다음")
+        show("${questions.size}문항 중 3번째")
+        clickDescription("닫기")
+        show("예시 문항을 닫을까요?")
+        show("고른 답은 그대로 남아요. 다시 풀면 1번 문항부터 고른 답이 보여요.")
+        click("계속 풀기")
+        compose.onNodeWithText("예시 문항을 닫을까요?").assertDoesNotExist()
+        show("${questions.size}문항 중 3번째")
+        show(questions[2].prompt)
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        clickDescription("닫기")
+        click("닫기")
+        show("엑셀은 어느 정도 다뤄 봤나요?")
+        val answers = host.viewModel.form.value.answers
+        assertEquals(2, answers.size)
+        click("예시 문항 풀기")
+        show("${questions.size}문항 중 1번째")
+        show(questions[0].prompt)
+        compose.onNodeWithText(UNKNOWN_LABEL).assertIsSelected()
+        assertEquals(answers, host.viewModel.form.value.answers)
+        assertEquals(1, host.questionCalls.get())
+    }
+
+    @Test
+    fun closingUnansweredQuizLeavesWithoutAsking() = withApp { host ->
+        startQuestions(host)
+        show("${host.viewModel.form.value.questions.size}문항 중 1번째")
+        clickDescription("닫기")
+        show("엑셀은 어느 정도 다뤄 봤나요?")
+        compose.onNodeWithText("예시 문항을 닫을까요?").assertDoesNotExist()
+    }
+
     private fun leaveQuizForCertification() {
         clickDescription("닫기")
+        show("예시 문항을 닫을까요?")
+        click("닫기")
         clickDescription("뒤로")
         clickDescription("뒤로")
         show("어떤 시험을 준비하나요?")
@@ -1663,6 +2026,70 @@ class MainFlowUiTest {
     }
 
     @Test
+    fun reportErrorsAppearBesideTheirInputAndKeepTheSavedReportUntilCorrected() = withApp { host ->
+        val statusError = "다 했어요, 일부 했어요, 못 했어요 중 하나를 골라 주세요."
+        val minutesError = "실제로 공부한 시간을 1분 이상의 정수(분)로 적어 주세요."
+        generatePlan(host)
+        val target = PlanGrouping.sessions(host.snapshot().plans.single().current.schedules).first { !it.isExternal }
+        openReport(target, edit = false)
+        click("기록 저장하기")
+        show(statusError)
+        val question = compose.onNodeWithText("공부는 어땠나요?").getUnclippedBoundsInRoot()
+        val statusMessage = compose.onNodeWithText(statusError).getUnclippedBoundsInRoot()
+        val firstChoice = compose.onNode(hasText("다 했어요") and hasClickAction()).getUnclippedBoundsInRoot()
+        assertTrue("The status error sits between the question and the choices",
+            statusMessage.top >= question.bottom && statusMessage.bottom <= firstChoice.top)
+        compose.onNodeWithText(minutesError).assertDoesNotExist()
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+        host.capture("report-status-error")
+
+        click("다 했어요")
+        compose.onNodeWithText(statusError).assertDoesNotExist()
+        minutesField().performTextReplacement("")
+        click("기록 저장하기")
+        assertMinutesErrorBelowField(minutesError)
+        assertTrue(host.snapshot().plans.single().checkIns.isEmpty())
+        host.capture("report-empty-minutes-error")
+        minutesField().performTextReplacement("20")
+        compose.onNodeWithText(minutesError).assertDoesNotExist()
+        minutesField().assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Error))
+        click("기록 저장하기")
+        returnTo("내 계획", host)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+
+        openReport(target, edit = true)
+        click("일부 했어요")
+        minutesField().performTextReplacement("0")
+        click("기록 수정하기")
+        assertMinutesErrorBelowField(minutesError)
+        compose.onNodeWithText(statusError).assertDoesNotExist()
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+        host.capture("report-zero-minutes-error")
+        minutesField().performTextReplacement("")
+        click("기록 수정하기")
+        assertMinutesErrorBelowField(minutesError)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Done, 20), reportOf(host, target))
+
+        click("못 했어요")
+        compose.onNodeWithText(minutesError).assertDoesNotExist()
+        minutesField().assertIsNotEnabled().assertTextEquals("0")
+        click("기록 수정하기")
+        click("나중에")
+        returnTo("내 계획", host)
+        assertEquals(StudyCheckIn(StudyCheckInStatus.Missed, 0), reportOf(host, target))
+        assertEquals(0, host.adjustmentCalls.get())
+    }
+
+    private fun assertMinutesErrorBelowField(message: String) {
+        show(message)
+        minutesField().assert(SemanticsMatcher.expectValue(SemanticsProperties.Error, message))
+        val field = minutesField().getUnclippedBoundsInRoot()
+        val error = compose.onNodeWithText(message).getUnclippedBoundsInRoot()
+        assertTrue("The minutes error sits directly below the field", error.top >= field.bottom)
+        compose.onNodeWithText("계획한 시간과 달라도 괜찮아요. 더 오래 했다면 그대로 적어 주세요.").assertDoesNotExist()
+    }
+
+    @Test
     fun reportsReopenedSavedSessionAsMissedWithoutChangingTheAdjustmentSelection() = withApp { host ->
         generatePlan(host)
         host.recreate()
@@ -1986,6 +2413,92 @@ class MainFlowUiTest {
         assertEquals(1, host.adjustmentCalls.get())
         show(SELECTION_INSTRUCTION)
         host.capture("instruction-after-adjustment")
+    }
+
+    @Test fun adjustmentChoiceIsLabelledClearedByTappingAgainAndDroppedOnLeaving() = withApp { host ->
+        val rows = seededRows()
+        seedSinglePlan(host, rows)
+        val before = host.snapshot().plans.single()
+        val (first, second) = PlanGrouping.sessions(rows).take(2)
+        adjustShownPlan()
+        assertNoAdjustmentChoice()
+
+        clickSession(first)
+        assertChosen(first, "조정할 일정: 11월 12일(목) 18:00–19:00 공부 주제 1")
+        clickSession(second)
+        assertChosen(second, "조정할 일정: 11월 13일(금) 18:00–19:00 공부 주제 2")
+        compose.onNodeWithText(sessionLabel(first)).assertIsNotSelected()
+        host.capture("adjustment-choice-selected")
+
+        clickSession(second)
+        assertNoAdjustmentChoice()
+        show(SELECTION_CLEARED)
+        host.capture("adjustment-choice-cleared")
+
+        // The separate report action leaves the choice alone.
+        clickSession(first)
+        openReport(second, edit = false)
+        click("취소")
+        waitForText(ADJUSTMENT_TITLE)
+        assertChosen(first, "조정할 일정: 11월 12일(목) 18:00–19:00 공부 주제 1")
+
+        // Leaving the flow and reopening it starts without a choice, by the top bar and by system back.
+        clickDescription("뒤로")
+        awaitPlanView()
+        adjustShownPlan()
+        assertNoAdjustmentChoice()
+        compose.onAllNodesWithText(SELECTION_CLEARED).assertCountEquals(0)
+        clickSession(second)
+        pressBack()
+        awaitPlanView()
+        adjustShownPlan()
+        assertNoAdjustmentChoice()
+
+        assertEquals(0, host.adjustmentCalls.get())
+        assertEquals(before, host.snapshot().plans.single())
+    }
+
+    @Test fun planAwaitingReloadKeepsItsRecoveryTargetAfterLeavingAndReopening() = withApp { host ->
+        val rows = seededRows()
+        val target = PlanGrouping.sessions(rows)[1]
+        val plan = com.swpp.licenseplanner.domain.SessionPlan.register(1, seededRequest(),
+            com.swpp.licenseplanner.data.model.StudyPlanResponse(rows, scheduleCsvFile = "owned-plan.csv"), false)
+            .copy(recovery = PlanRecovery.ReloadRequired, recoveryScheduleId = target.scheduleId)
+        host.storageScope = PlanStorageScope.of(demo = false, apiBaseUrl = "http://test.invalid/api/v1")
+        host.seedSnapshot(com.swpp.licenseplanner.data.PlanSnapshot(listOf(plan)))
+        host.recreate()
+        openSavedPlanAdjustment()
+        repeat(2) {
+            show("최신 계획을 확인해 주세요")
+            compose.onNodeWithText("${sessionLabel(target)} 선택 변경 불가").assertIsSelected().assertIsNotEnabled()
+            compose.onAllNodes(isSelected()).assertCountEquals(1)
+            show("최신 계획 불러오기")
+            if (it == 0) {
+                pressBack()
+                awaitPlanView()
+                adjustShownPlan()
+            }
+        }
+        assertEquals(plan, host.snapshot().plans.single())
+        assertEquals(0, host.adjustmentCalls.get())
+    }
+
+    private fun assertNoAdjustmentChoice() {
+        show(SELECTION_INSTRUCTION)
+        compose.onAllNodes(isSelected()).assertCountEquals(0)
+        compose.onAllNodesWithText("조정할 일정:", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("선택한 일정 조정하기").assertCountEquals(0)
+        compose.onAllNodesWithText("시간 직접 옮기기").assertCountEquals(0)
+    }
+
+    private fun assertChosen(session: PlanSession, status: String) {
+        show(status)
+        compose.onNodeWithText(sessionLabel(session)).assertIsSelected()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "조정할 일정으로 선택됨"))
+        compose.onAllNodes(isSelected()).assertCountEquals(1)
+        compose.onAllNodesWithText(SELECTION_CLEARED).assertCountEquals(0)
+        show("선택한 일정 조정하기")
+        compose.onNodeWithText("선택한 일정 조정하기").assertIsEnabled()
     }
 
     /** 「계획 보기」 on a placed result shows the plan view at the week of its earliest placed session. */
@@ -2483,8 +2996,8 @@ class MainFlowUiTest {
         assertEquals(0, host.calendarWrites.get())
     }
 
-    private fun startQuestions(host: DemoUiHost) {
-        show("아직 만든 계획이 없어요.")
+    private fun startQuestions(host: DemoUiHost, daysToExam: String? = null, firstPlan: Boolean = true) {
+        if (firstPlan) show("아직 만든 계획이 없어요.")
         click("계획 생성", substring = true)
         click(CERTIFICATION_NAME)
         click("다음")
@@ -2492,7 +3005,10 @@ class MainFlowUiTest {
         show("이 앱은 필기 시험 준비만 다뤄요. 실기 준비는 포함하지 않아요.")
         pickDate("준비 시작일", LocalDate.of(2026, 11, 16))
         pickExam(EXAM)
-        show("준비 기간 56일")
+        show("선택한 준비 기간 56일")
+        show("11월 16일부터 1월 11일 시험 전까지")
+        if (daysToExam != null) show(daysToExam)
+        else compose.onNodeWithText("오늘부터 시험까지", substring = true).assertDoesNotExist()
         click("다음")
         chooseBeginner()
         awaitQuestions(host)
@@ -2820,6 +3336,7 @@ class MainFlowUiTest {
         private const val ADJUSTMENT_TITLE = "일정 조정"
         private const val EDIT_INPUTS = "입력 바꿔 새 계획 만들기"
         private const val TOPIC_TOTALS = "topic-totals"
-        private const val SELECTION_INSTRUCTION = "놓친 공부 일정을 하나 고르세요. 기존 일정은 고를 수 없어요."
+        private const val SELECTION_INSTRUCTION = "조정할 공부 일정을 하나 골라 주세요. 고른 일정을 다시 누르면 선택이 풀려요. 기존 일정은 고를 수 없어요."
+        private const val SELECTION_CLEARED = "선택을 풀었어요. 아직 아무것도 보내지 않았어요."
     }
 }

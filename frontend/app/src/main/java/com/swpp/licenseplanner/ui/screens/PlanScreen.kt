@@ -632,9 +632,16 @@ private fun SelectableSession(
 ) {
     val label = sessionLabel(session, date) +
         (if (moved) " $MOVED_TAG" else "") + (if (enabled) "" else " $SELECTION_LOCKED")
-    ChoiceCard(selected = selected, onClick = onClick, choiceLabel = label, enabled = enabled) {
+    // The chosen row says what it was chosen for, on screen and to assistive technology.
+    ChoiceCard(
+        selected = selected,
+        onClick = onClick,
+        choiceLabel = label,
+        enabled = enabled,
+        modifier = if (selected) Modifier.semantics { stateDescription = SELECTED_STATE } else Modifier,
+    ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SessionRow(session, moved, highlighted = highlighted)
+            SessionRow(session, moved, highlighted = highlighted, chosen = selected)
             if (!enabled) Text(SELECTION_LOCKED, style = MaterialTheme.typography.labelSmall, color = InkSecondary)
         }
     }
@@ -655,6 +662,7 @@ private fun SessionRow(
     removedDestination: PlanSession? = null,
     highlighted: Boolean = false,
     onNavigate: (() -> Unit)? = null,
+    chosen: Boolean = false,
 ) {
     val highlightColor by animateColorAsState(
         targetValue = if (highlighted) MutedSurface else Color.Transparent,
@@ -690,6 +698,7 @@ private fun SessionRow(
             )
             if (session.isExternal) Tag("기존 일정")
             if (moved) Tag(MOVED_TAG)
+            if (chosen) Tag(SELECTED_TAG)
             if (removed) Tag("조정 전 위치 · 임시")
         }
         if (removed) {
@@ -707,3 +716,5 @@ private fun SessionRow(
 
 private const val MOVED_TAG = "옮긴 일정"
 private const val SELECTION_LOCKED = "선택 변경 불가"
+private const val SELECTED_TAG = "조정할 일정"
+private const val SELECTED_STATE = "조정할 일정으로 선택됨"

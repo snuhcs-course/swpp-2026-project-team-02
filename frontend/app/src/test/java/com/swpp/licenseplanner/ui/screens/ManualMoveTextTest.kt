@@ -94,6 +94,25 @@ class ManualMoveTextTest {
     }
 
     @Test
+    fun backAsksBeforeLeavingOnlyWhileASentMoveAwaitsItsAnswer() {
+        assertEquals(ManualBack.Cancel, manualBack(loading = false, sending = false))
+        assertEquals(ManualBack.AskToLeave, manualBack(loading = true, sending = true))
+        // A demo move, or a live one not yet sent, finishes without the question.
+        assertEquals(ManualBack.Held, manualBack(loading = true, sending = false))
+    }
+
+    @Test
+    fun leavingASentMoveSaysItMayHaveReachedTheServerAndOffersToKeepWaiting() {
+        assertEquals("기다리지 않고 나갈까요?", LeaveSendingMoveText.TITLE)
+        assertEquals(
+            "이미 서버에 반영됐을 수 있어요. 나가면 최신 계획을 불러온 뒤에 다시 조정할 수 있어요.",
+            LeaveSendingMoveText.BODY,
+        )
+        assertEquals("기다리지 않고 나가기", LeaveSendingMoveText.LEAVE)
+        assertEquals("계속 기다리기", LeaveSendingMoveText.STAY)
+    }
+
+    @Test
     fun dateFieldAndIntervalsReadLikeTheDesign() {
         assertEquals("2026-11-24 (화)", manualDateText(LocalDate.of(2026, 11, 24)))
         assertEquals(

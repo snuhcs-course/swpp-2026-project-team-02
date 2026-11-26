@@ -17,6 +17,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.R
 import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
+import com.swpp.licenseplanner.domain.PlanInputSummary
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.PlanStorage
@@ -36,7 +37,7 @@ import com.swpp.licenseplanner.ui.theme.Outline
 import com.swpp.licenseplanner.ui.theme.Paper
 
 /**
- * Plans saved on this device, distinguished by ordinal and dates. The list needs no server
+ * Plans saved on this device, distinguished by ordinal, dates and a summary of their inputs. The list needs no server
  * route and is never imported from the server. Until the saved plans are read it shows that
  * state instead of an empty list. A visual extension of the existing card components; no Figma
  * frame exists.
@@ -109,6 +110,7 @@ private fun PlanRow(plan: SessionPlan, unsaved: Boolean, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = InkBody,
             )
+            Text(PlanInputSummary.text(plan.original), style = MaterialTheme.typography.bodyMedium, color = InkBody)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("공부 일정 ${plan.studyCount}개", style = MaterialTheme.typography.bodySmall, color = InkSecondary)
                 if (!plan.hasIdentity) Tag("조정 불가")

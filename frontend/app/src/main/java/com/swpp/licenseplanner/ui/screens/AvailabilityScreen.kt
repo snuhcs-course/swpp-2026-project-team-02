@@ -1,6 +1,13 @@
 package com.swpp.licenseplanner.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,17 +16,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerDialog
+import androidx.compose.material3.TimePickerDialogDefaults
+import androidx.compose.material3.TimePickerDisplayMode
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,9 +45,15 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.swpp.licenseplanner.domain.DayAvailability
 import com.swpp.licenseplanner.domain.AvailabilityWindowTarget
@@ -56,6 +76,7 @@ import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.InfoRow
 import com.swpp.licenseplanner.ui.components.InputBox
 import com.swpp.licenseplanner.ui.components.MutedBox
+import com.swpp.licenseplanner.ui.components.OutlinedCard
 import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.PrimaryButton
 import com.swpp.licenseplanner.ui.components.SecondaryButton
@@ -63,15 +84,20 @@ import com.swpp.licenseplanner.ui.theme.Divider
 import com.swpp.licenseplanner.ui.theme.ControlBorder
 import com.swpp.licenseplanner.ui.theme.Ink
 import com.swpp.licenseplanner.ui.theme.InkSecondary
+import com.swpp.licenseplanner.ui.theme.Paper
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 
-/** Editing callbacks; a null week edits the recurring base, a Monday edits that week's replacement. */
+/**
+ * Editing callbacks; a null week edits the recurring base, a Monday edits that week's replacement.
+ * [onApply] adds or changes the window on the captured day and adds it to the other given days,
+ * returning the overlapping weekdays when nothing was added, an empty list once applied, or null.
+ */
 class AvailabilityActions(
     val onCapture: (Weekday, Int?, LocalDate?) -> AvailabilityWindowTarget?,
-    val onApply: (AvailabilityWindowTarget, LocalTime, Int) -> Boolean,
+    val onApply: (AvailabilityWindowTarget, LocalTime, Int, Set<Weekday>) -> List<Weekday>?,
     val onRemove: (AvailabilityWindowTarget) -> Boolean,
     val onShowWeek: (LocalDate) -> Unit,
     val onReplaceWeek: (LocalDate) -> Unit,
@@ -95,6 +121,7 @@ fun AvailabilityScreen(
     onGenerate: () -> Unit,
     onReadCalendar: () -> Unit,
     onOpenCalendarSettings: () -> Unit,
+    inputEditSource: Int? = null,
 ) {
     var editing by rememberSaveable(stateSaver = WindowTargetSaver) { mutableStateOf<AvailabilityWindowTarget?>(null) }
     // The week whose replacement was just removed, for the confirmation line.
@@ -122,8 +149,14 @@ fun AvailabilityScreen(
         onNav = onBack,
         trailing = { ContextHelpButton(ContextHelpTopic.AVAILABILITY) },
         footer = {
+            // Inputs reopened from a plan make another plan; the source plan stays as it is.
+            if (inputEditSource != null) Note(inputEditNote(inputEditSource))
             PrimaryButton(
-                text = if (generating) "계획을 만드는 중…" else "계획 만들기",
+                text = when {
+                    generating -> "계획을 만드는 중…"
+                    inputEditSource != null -> "새 계획 만들기"
+                    else -> "계획 만들기"
+                },
                 onClick = onGenerate,
                 enabled = error == null && !generating && !readingCalendar && plansSaved,
                 // A new plan joins the saved list, so that list must be read and saved first.
@@ -142,37 +175,41 @@ fun AvailabilityScreen(
 
         if (week != null) {
             val index = weeks.indexOf(week)
-            WeekNavigator(
-                week = WeekPlan(week, emptyList()),
-                index = index,
-                count = weeks.size,
-                onPrevious = { resetWeek = null; actions.onShowWeek(weeks[index - 1]) },
-                onNext = { resetWeek = null; actions.onShowWeek(weeks[index + 1]) },
-            )
+            // The week's own actions stay with its dates, ahead of carried-in time and the weekday list.
+            OutlinedCard {
+                WeekNavigator(
+                    week = WeekPlan(week, emptyList()),
+                    index = index,
+                    count = weeks.size,
+                    onPrevious = { resetWeek = null; actions.onShowWeek(weeks[index - 1]) },
+                    onNext = { resetWeek = null; actions.onShowWeek(weeks[index + 1]) },
+                )
+                Text(
+                    weekScopeText(source),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = InkSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (source == WeekSource.REPLACED) {
+                    SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
+                } else {
+                    SecondaryButton("이번 주 시간 바꾸기", { actions.onReplaceWeek(week) }, enabled = !generating)
+                }
+                if (source == WeekSource.BASE) {
+                    SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
+                } else {
+                    SecondaryButton(
+                        "기본 시간으로 되돌리기",
+                        { actions.onResetWeek(week); resetWeek = week.toEpochDay() },
+                        enabled = !generating,
+                    )
+                }
+            }
             for (incoming in form.incomingWindows(week)) {
                 MutedBox {
                     Text("지난주에서 이어지는 시간", style = MaterialTheme.typography.labelLarge, color = Ink)
                     Text(incomingText(incoming), style = MaterialTheme.typography.bodyMedium, color = InkSecondary)
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    if (source == WeekSource.REPLACED) {
-                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
-                    } else {
-                        SecondaryButton("이번 주 시간 바꾸기", { actions.onReplaceWeek(week) }, enabled = !generating)
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    if (source == WeekSource.BASE) {
-                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
-                    } else {
-                        SecondaryButton(
-                            "기본 시간으로 되돌리기",
-                            { actions.onResetWeek(week); resetWeek = week.toEpochDay() },
-                            enabled = !generating,
-                        )
-                    }
                 }
             }
         }
@@ -258,7 +295,10 @@ fun AvailabilityScreen(
             StudyWindowDialog(
                 target = target,
                 onDismiss = { editing = null },
-                onConfirm = { start, minutes -> actions.onApply(target, start, minutes); editing = null },
+                onConfirm = { start, minutes, days ->
+                    // An overlap on any chosen day adds nothing and keeps the dialog open to name it.
+                    actions.onApply(target, start, minutes, days).orEmpty().also { if (it.isEmpty()) editing = null }
+                },
             )
         }
     }
@@ -329,34 +369,124 @@ private fun DayRow(
     }
 }
 
+/** A typed 24-hour time, or null while the hour or minute is empty or out of range. */
+internal fun typedTime(hour: String, minute: String): LocalTime? {
+    val h = hour.toIntOrNull()?.takeIf { it in 0..23 } ?: return null
+    val m = minute.toIntOrNull()?.takeIf { it in 0..59 } ?: return null
+    return LocalTime.of(h, m)
+}
+
+/**
+ * 24-hour time dialog that opens in typed hour and minute entry; the toggle switches to the dial
+ * and back, and both modes show the same time. Only a complete, in-range time can be confirmed.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun StartTimeDialog(initial: LocalTime, onDismiss: () -> Unit, title: String = "시작 시간", onPick: (LocalTime) -> Unit) {
     val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = true)
-    AlertDialog(
+    var typing by rememberSaveable { mutableStateOf(true) }
+    var hourText by rememberSaveable { mutableStateOf("%02d".format(initial.hour)) }
+    var minuteText by rememberSaveable { mutableStateOf("%02d".format(initial.minute)) }
+    val typed = typedTime(hourText, minuteText)
+    fun editTyped(hour: String, minute: String) {
+        hourText = hour
+        minuteText = minute
+        typedTime(hour, minute)?.let {
+            state.hour = it.hour
+            state.minute = it.minute
+        }
+    }
+    TimePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, style = MaterialTheme.typography.titleMedium) },
-        text = { TimePicker(state = state) },
-        confirmButton = { TextButton(modifier = Modifier.testTag("study-clock-confirm"), onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("확인", color = Ink) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소", color = Ink) } },
+        modeToggleButton = {
+            TimePickerDialogDefaults.DisplayModeToggle(
+                onDisplayModeChange = {
+                    if (!typing) {
+                        hourText = "%02d".format(state.hour)
+                        minuteText = "%02d".format(state.minute)
+                    }
+                    typing = !typing
+                },
+                displayMode = if (typing) TimePickerDisplayMode.Input else TimePickerDisplayMode.Picker,
+                modifier = Modifier.testTag("time-mode-toggle"),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                modifier = Modifier.testTag("study-clock-confirm"),
+                onClick = { (if (typing) typed else LocalTime.of(state.hour, state.minute))?.let(onPick) },
+                enabled = !typing || typed != null,
+            ) { Text("확인") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    ) {
+        if (typing) {
+            TypedTimeFields(hourText, minuteText, onHour = { editTyped(it, minuteText) }, onMinute = { editTyped(hourText, it) })
+        } else {
+            TimePicker(state = state)
+        }
+    }
+}
+
+/** Two-digit hour and minute boxes; a number outside the 24-hour range is named underneath. */
+@Composable
+private fun TypedTimeFields(hour: String, minute: String, onHour: (String) -> Unit, onMinute: (String) -> Unit) {
+    val hourInvalid = (hour.toIntOrNull() ?: 0) > 23
+    val minuteInvalid = (minute.toIntOrNull() ?: 0) > 59
+    // A digit typed into a full box starts the number again.
+    val digits = { text: String -> text.filter(Char::isDigit).let { if (it.length > 2) it.takeLast(1) else it } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TimeNumberField(hour, { onHour(digits(it)) }, "시", hourInvalid, ImeAction.Next, "time-input-hour")
+            Text(":", style = MaterialTheme.typography.displayMedium, color = Ink)
+            TimeNumberField(minute, { onMinute(digits(it)) }, "분", minuteInvalid, ImeAction.Done, "time-input-minute")
+        }
+        if (hourInvalid || minuteInvalid) {
+            Text("시는 00~23, 분은 00~59로 입력해 주세요.", style = MaterialTheme.typography.bodyMedium, color = Ink)
+        }
+    }
+}
+
+@Composable
+private fun TimeNumberField(value: String, onValue: (String) -> Unit, label: String, invalid: Boolean, ime: ImeAction, tag: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        singleLine = true,
+        isError = invalid,
+        textStyle = MaterialTheme.typography.displaySmall.copy(textAlign = TextAlign.Center, color = Ink),
+        supportingText = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ime),
+        modifier = Modifier.width(96.dp).testTag(tag),
     )
 }
 
-/** A complete candidate window stays local until the explicit confirmation. */
+/**
+ * A complete candidate window stays local until the explicit confirmation. A new window can also
+ * go to other weekdays; [onConfirm] returns the overlapping weekdays when nothing was added.
+ */
 @Composable
 private fun StudyWindowDialog(
     target: AvailabilityWindowTarget,
     onDismiss: () -> Unit,
-    onConfirm: (LocalTime, Int) -> Unit,
+    onConfirm: (LocalTime, Int, Set<Weekday>) -> List<Weekday>,
 ) {
     val initial = target.index?.let(target.windows::get)
         ?: WindowSpec(DayAvailability.DEFAULT_START, DayAvailability.DEFAULT_DURATION_MINUTES)
     var startSeconds by rememberSaveable { mutableStateOf(initial.start.toSecondOfDay()) }
     var endSeconds by rememberSaveable { mutableStateOf(initial.end.toSecondOfDay()) }
     var pickingStart by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    // Chosen and overlapping weekdays as bit sets; the opened day is always chosen.
+    var chosenDays by rememberSaveable { mutableStateOf(weekdayBits(setOf(target.day))) }
+    var overlapDays by rememberSaveable { mutableStateOf(0) }
+    val adding = target.index == null
+    val chosen = weekdaysOf(chosenDays)
+    val overlapping = weekdaysOf(overlapDays)
     val start = LocalTime.ofSecondOfDay(startSeconds.toLong())
     val end = LocalTime.ofSecondOfDay(endSeconds.toLong())
     val minutes = studyWindowMinutes(start, end)
+    val daysNote = if (chosen.size > 1) " · ${chosen.joinToString("·") { it.label }} ${chosen.size}일에 추가" else ""
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("공부 시간 입력", style = MaterialTheme.typography.titleMedium) },
@@ -373,15 +503,43 @@ private fun StudyWindowDialog(
                         InputBox(WireDateTime.formatTime(end), { pickingStart = false }, Modifier.testTag("study-window-end"))
                     }
                 }
+                if (adding) {
+                    FieldLabel("같은 시간에 공부할 요일")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        for (day in Weekday.entries) {
+                            WeekdayChip(
+                                day = day,
+                                selected = day in chosen,
+                                fixed = day == target.day,
+                                overlapping = day in overlapping,
+                                onToggle = {
+                                    chosenDays = chosenDays xor weekdayBits(setOf(day))
+                                    overlapDays = 0
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    if (overlapping.isNotEmpty()) {
+                        AlertCard(
+                            weekdayOverlapTitle(overlapping),
+                            "다른 공부 시간과 겹쳐서 아무 요일에도 추가하지 않았어요. 시간이나 요일을 바꿔 주세요.",
+                        )
+                    }
+                    Note("${target.day.fullLabel}은 항상 포함돼요. 다른 요일을 눌러 같은 시간을 함께 추가해요.")
+                }
                 when {
                     minutes == null -> Note("시작 시간과 종료 시간을 다르게 정해 주세요.")
-                    end.isBefore(start) -> Note("다음 날 종료 · ${PlanGrouping.formatDuration(minutes.toLong())}")
-                    else -> Note("공부 시간 ${PlanGrouping.formatDuration(minutes.toLong())}")
+                    end.isBefore(start) -> Note("다음 날 종료 · ${PlanGrouping.formatDuration(minutes.toLong())}$daysNote")
+                    else -> Note("공부 시간 ${PlanGrouping.formatDuration(minutes.toLong())}$daysNote")
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { minutes?.let { onConfirm(start, it) } }, enabled = minutes != null) { Text("확인") }
+            TextButton(
+                onClick = { minutes?.let { overlapDays = weekdayBits(onConfirm(start, it, chosen.toSet()).toSet()) } },
+                enabled = minutes != null,
+            ) { Text("확인") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
@@ -393,9 +551,68 @@ private fun StudyWindowDialog(
             onPick = { time ->
                 if (isStart) startSeconds = time.toSecondOfDay() else endSeconds = time.toSecondOfDay()
                 pickingStart = null
+                overlapDays = 0
             },
         )
     }
+}
+
+/** One weekday toggle of the add dialog; the opened day stays on, and an overlapping day is marked. */
+@Composable
+private fun WeekdayChip(
+    day: Weekday,
+    selected: Boolean,
+    fixed: Boolean,
+    overlapping: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier,
+) {
+    val shape = MaterialTheme.shapes.small
+    Box(modifier) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                .clip(shape)
+                .toggleable(value = selected, enabled = !fixed, role = Role.Checkbox, onValueChange = { onToggle() })
+                .testTag("window-day-${day.key}")
+                .semantics {
+                    contentDescription = day.fullLabel + if (overlapping) ", 겹침" else ""
+                    if (fixed) stateDescription = "항상 포함"
+                },
+            shape = shape,
+            color = if (selected) Ink else Paper,
+            contentColor = if (selected) Paper else Ink,
+            border = BorderStroke(1.5.dp, if (selected) Ink else ControlBorder),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(day.label, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        if (overlapping) {
+            Box(
+                Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp).size(16.dp)
+                    .clip(CircleShape).background(Paper).border(1.dp, Ink, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { Text("!", style = MaterialTheme.typography.labelSmall, color = Ink) }
+        }
+    }
+}
+
+private fun weekdayBits(days: Set<Weekday>): Int = days.fold(0) { bits, day -> bits or (1 shl day.ordinal) }
+
+private fun weekdaysOf(bits: Int): List<Weekday> = Weekday.entries.filter { bits and (1 shl it.ordinal) != 0 }
+
+/** The note that the source plan stays as it is; 이, 사, 오 and 구 end in a vowel, so they take 는. */
+internal fun inputEditNote(source: Int): String =
+    "계획 $source${if (source % 10 in setOf(2, 4, 5, 9)) "는" else "은"} 그대로 두고 새 계획을 만들어요."
+
+/** “수요일과 겹쳐요”, or “수요일, 금요일과 겹쳐요”; every weekday name ends in 일, which takes 과. */
+internal fun weekdayOverlapTitle(days: List<Weekday>): String = days.joinToString(", ") { it.fullLabel } + "과 겹쳐요"
+
+/** Whether the shown week follows the base, has its own hours, or has none. */
+internal fun weekScopeText(source: WeekSource): String = when (source) {
+    WeekSource.BASE -> "이번 주는 기본 시간을 사용해요."
+    WeekSource.REPLACED -> "이번 주는 이 주에만 정한 시간을 사용해요. 다른 주는 그대로예요."
+    WeekSource.EMPTY -> "이번 주는 공부하지 않도록 정했어요. 다른 주는 그대로예요."
 }
 
 /** Earlier end times belong to the following day; equal times cannot form a study window. */

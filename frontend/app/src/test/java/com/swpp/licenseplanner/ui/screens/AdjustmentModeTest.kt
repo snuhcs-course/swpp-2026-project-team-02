@@ -32,6 +32,15 @@ class AdjustmentModeTest {
     )
 
     @Test
+    fun selectionLinesNameTheChosenSessionWithoutCallingItMissed() {
+        val session = com.swpp.licenseplanner.domain.PlanGrouping.sessions(rows).first { !it.isExternal }
+        assertEquals("조정할 일정: 10월 5일(월) 18:00–19:00 함수", selectionStatus(session))
+        assertFalse(SELECTION_INSTRUCTION.contains("놓친"))
+        assertTrue(SELECTION_INSTRUCTION.contains("다시 누르면 선택이 풀려요"))
+        assertTrue(SELECTION_CLEARED.contains("아무것도 보내지 않았어요"))
+    }
+
+    @Test
     fun noFitUsesTheSameGuidanceForDemoAndLiveCapacityFailures() {
         assertTrue(AdjustmentState.DemoNoSlot.isNoFit())
         assertTrue(AdjustmentState.Failure(ApiError.InvalidInput("NOT_ENOUGH_TIME: no free slot")).isNoFit())
