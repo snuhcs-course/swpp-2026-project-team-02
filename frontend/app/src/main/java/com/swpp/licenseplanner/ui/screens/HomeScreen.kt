@@ -1,17 +1,29 @@
 package com.swpp.licenseplanner.ui.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,19 +41,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.swpp.licenseplanner.domain.CERTIFICATION_NAME
+import androidx.compose.ui.unit.sp
 import com.swpp.licenseplanner.domain.PlanGrouping
 import com.swpp.licenseplanner.domain.PlanSession
 import com.swpp.licenseplanner.domain.SessionPlan
 import com.swpp.licenseplanner.domain.StudyCheckInStatus
+import com.swpp.licenseplanner.domain.WireDateTime
 import com.swpp.licenseplanner.ui.PlanStorage
 import com.swpp.licenseplanner.ui.components.AlertCard
-import com.swpp.licenseplanner.ui.components.AppScreen
-import com.swpp.licenseplanner.ui.components.Heading
 import com.swpp.licenseplanner.ui.components.LoadingBlock
-import com.swpp.licenseplanner.ui.components.Note
 import com.swpp.licenseplanner.ui.components.PrimaryButton
-import com.swpp.licenseplanner.ui.components.SecondaryButton
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.TextStyle
@@ -72,39 +81,68 @@ fun HomeScreen(
     val selectedDate = LocalDate.ofEpochDay(selectedDay)
     val entries = remember(plans) { calendarEntries(plans) }
     val byDate = remember(entries) { entries.groupBy { it.session.start.toLocalDate() } }
-    AppScreen(
-        title = "학습 달력",
-        navIcon = null,
-        trailing = { ContextHelpButton(ContextHelpTopic.START) },
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("${month.monthValue}월", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-            Text("${month.year}", style = MaterialTheme.typography.bodyMedium, color = CalendarMuted)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CalendarNavButton("‹", "이전 달") {
-                    val target = month.minusMonths(1)
-                    monthKey = target.toString()
-                    selectedDay = target.atDay(selectedDate.dayOfMonth.coerceAtMost(target.lengthOfMonth())).toEpochDay()
-                }
-                CalendarNavButton("›", "다음 달") {
-                    val target = month.plusMonths(1)
-                    monthKey = target.toString()
-                    selectedDay = target.atDay(selectedDate.dayOfMonth.coerceAtMost(target.lengthOfMonth())).toEpochDay()
+    var createMenuOpen by rememberSaveable { mutableStateOf(false) }
+    fun changeMonth(target: YearMonth) {
+        monthKey = target.toString()
+        selectedDay = target.atDay(selectedDate.dayOfMonth.coerceAtMost(target.lengthOfMonth())).toEpochDay()
+    }
+    Scaffold(
+        containerColor = Color.White,
+        contentWindowInsets = WindowInsets.safeDrawing,
+        topBar = {
+            Row(
+                Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                CalendarNavButton("☰", "계획 목록", onAdjust)
+                Text("${month.monthValue}월", Modifier.clickable {
+                    monthKey = YearMonth.from(today).toString()
+                    selectedDay = today.toEpochDay()
+                }, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+                Text("${month.year}", Modifier.weight(1f).padding(start = 4.dp), fontSize = 12.sp, color = CalendarMuted)
+                CalendarNavButton("‹", "이전 달") { changeMonth(month.minusMonths(1)) }
+                CalendarNavButton("›", "다음 달") { changeMonth(month.plusMonths(1)) }
+                ContextHelpButton(ContextHelpTopic.START)
+            }
+        },
+        bottomBar = {
+            Box(Modifier.navigationBarsPadding()) {
+                CalendarAgenda(selectedDate, byDate[selectedDate].orEmpty(), plans.size, storage, onOpenPlan)
+                Box(Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 34.dp)) {
+                    Surface(
+                        onClick = { createMenuOpen = true },
+                        shape = CircleShape,
+                        color = Color(0xFFF1F2F4),
+                        modifier = Modifier.size(58.dp).semantics { contentDescription = "계획 또는 일정 생성" },
+                    ) { Box(contentAlignment = Alignment.Center) { Text("+", fontSize = 32.sp) } }
+                    DropdownMenu(expanded = createMenuOpen, onDismissRequest = { createMenuOpen = false }) {
+                        DropdownMenuItem(text = { Text("학습 계획 생성") }, enabled = storage == PlanStorage.Ready, onClick = {
+                            createMenuOpen = false
+                            onCreate()
+                        })
+                        if (hasDraft) DropdownMenuItem(text = { Text("이어서 만들기") }, enabled = storage == PlanStorage.Ready, onClick = {
+                            createMenuOpen = false
+                            onResume()
+                        })
+                    }
                 }
             }
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            conflictNotices()
+            if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
+            if (storage == PlanStorage.LoadFailure || storage == PlanStorage.SaveFailure) {
+                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StorageAlert(storage, onRetryLoad, onRetrySave)
+                }
+            }
+            CalendarMonth(month, selectedDate, today, byDate, plans, Modifier.weight(1f)) { date ->
+                selectedDay = date.toEpochDay()
+                monthKey = YearMonth.from(date).toString()
+            }
         }
-        CalendarMonth(month, selectedDate, today, byDate) { date ->
-            selectedDay = date.toEpochDay()
-            monthKey = YearMonth.from(date).toString()
-        }
-        CalendarAgenda(selectedDate, byDate[selectedDate].orEmpty(), onOpenPlan)
-        conflictNotices()
-        if (storage == PlanStorage.Loading) LoadingBlock(LOADING_SAVED_PLANS)
-        StorageAlert(storage, onRetryLoad, onRetrySave)
-        planCountNote(storage, plans.size, savedPlans.size)?.let { Note(it) }
-        PrimaryButton("계획 생성", onCreate, subtitle = "$CERTIFICATION_NAME 필기", enabled = storage == PlanStorage.Ready)
-        if (hasDraft) SecondaryButton("이어서 만들기", onResume, enabled = storage == PlanStorage.Ready)
-        SecondaryButton("내 계획 목록", onAdjust)
     }
 }
 
@@ -113,7 +151,7 @@ private val CalendarYellow = Color(0xFFF2CE55)
 private val CalendarRed = Color(0xFFD85A61)
 private val CalendarGray = Color(0xFF55585F)
 private val CalendarMuted = Color(0xFF777E79)
-private val CalendarBorder = Color(0xFFE4EAE6)
+private val CalendarToday = Color(0xFF2B8A57)
 
 internal data class CalendarEntry(val planOrdinal: Int, val session: PlanSession, val status: StudyCheckInStatus?)
 
@@ -140,8 +178,8 @@ private fun entryColor(entry: CalendarEntry): Color = when {
 
 @Composable
 private fun CalendarNavButton(symbol: String, label: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.small, color = Color(0xFFF4F6F4), modifier = Modifier.size(44.dp).semantics { contentDescription = label }) {
-        Box(contentAlignment = Alignment.Center) { Text(symbol, style = MaterialTheme.typography.titleLarge) }
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.small, color = Color.White, modifier = Modifier.size(36.dp, 44.dp).semantics { contentDescription = label }) {
+        Box(contentAlignment = Alignment.Center) { Text(symbol, fontSize = 22.sp, color = Color(0xFF34373A)) }
     }
 }
 
@@ -151,36 +189,55 @@ private fun CalendarMonth(
     selected: LocalDate,
     today: LocalDate,
     entries: Map<LocalDate, List<CalendarEntry>>,
+    plans: List<SessionPlan>,
+    modifier: Modifier = Modifier,
     onSelect: (LocalDate) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(Modifier.fillMaxWidth()) {
+    val examDates = remember(plans) { plans.mapNotNull { plan ->
+        WireDateTime.parseOrNull(plan.original.examDate)?.toLocalDate()?.let { it to plan.ordinal }
+    }.groupBy({ it.first }, { it.second }) }
+    Column(modifier) {
+        Row(Modifier.fillMaxWidth().height(35.dp).padding(horizontal = 10.dp)) {
             listOf("일", "월", "화", "수", "목", "금", "토").forEach { day ->
-                Box(Modifier.weight(1f).heightIn(min = 28.dp), contentAlignment = Alignment.Center) {
-                    Text(day, style = MaterialTheme.typography.labelSmall, color = CalendarMuted)
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Text(day, fontSize = 12.sp, color = CalendarMuted)
                 }
             }
         }
         calendarDays(month).chunked(7).forEach { week ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 10.dp)) {
                 week.forEach { date ->
                     val dayEntries = entries[date].orEmpty()
                     val inMonth = YearMonth.from(date) == month
-                    Surface(
-                        onClick = { onSelect(date) },
-                        shape = MaterialTheme.shapes.small,
-                        color = if (date == selected) Color(0xFFEDF5F0) else Color.White,
-                        border = BorderStroke(1.dp, if (date == today) CalendarGreen else CalendarBorder),
-                        modifier = Modifier.weight(1f).heightIn(min = 49.dp).semantics {
-                            contentDescription = "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일, 일정 ${dayEntries.size}개"
-                        },
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight().clickable { onSelect(date) }
+                            .padding(horizontal = 2.dp)
+                            .semantics { contentDescription = "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일, 일정 ${dayEntries.size}개" },
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Column(Modifier.padding(top = 4.dp, bottom = 3.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(date.dayOfMonth.toString(), style = MaterialTheme.typography.labelMedium, color = if (inMonth) Color(0xFF202124) else CalendarMuted)
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                dayEntries.take(3).forEach { entry -> Box(Modifier.size(5.dp).background(entryColor(entry), CircleShape)) }
-                            }
+                        Box(
+                            Modifier.padding(top = 3.dp, bottom = 6.dp).size(32.dp, 34.dp)
+                                .background(if (date == today) CalendarToday else Color.Transparent, CircleShape)
+                                .then(if (date == selected && date != today) Modifier.background(Color(0xFFF1F2F4), CircleShape) else Modifier),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(date.dayOfMonth.toString(), fontSize = 17.sp,
+                                color = when { date == today -> Color.White; !inMonth -> Color(0xFFC6C7C9); else -> Color(0xFF202124) })
                         }
+                        if (examDates[date].orEmpty().isNotEmpty()) {
+                            Text("시험일", Modifier.fillMaxWidth().background(Color(0xFFFFE7E9), RoundedCornerShape(4.dp)).padding(vertical = 1.dp),
+                                fontSize = 9.sp, color = Color(0xFFB52E3C), maxLines = 1)
+                        }
+                        dayEntries.take(3).forEach { entry ->
+                            Text(
+                                entry.session.topic.ifBlank { if (entry.session.isExternal) "기존 일정" else "학습 일정" },
+                                Modifier.fillMaxWidth().padding(bottom = 3.dp)
+                                    .background(entryColor(entry), RoundedCornerShape(3.dp)).padding(horizontal = 3.dp),
+                                color = if (entry.status == StudyCheckInStatus.Partly || entry.session.isExternal) Color(0xFF26262A) else Color.White,
+                                fontSize = 9.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (dayEntries.size > 3) Text("+${dayEntries.size - 3}개 더", fontSize = 8.sp, color = CalendarMuted, maxLines = 1)
                     }
                 }
             }
@@ -189,18 +246,26 @@ private fun CalendarMonth(
 }
 
 @Composable
-private fun CalendarAgenda(date: LocalDate, entries: List<CalendarEntry>, onOpenPlan: (Int) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("${date.dayOfMonth}일 ${date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.KOREAN)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        if (entries.isEmpty()) {
-            Text("일정이 없습니다", style = MaterialTheme.typography.bodyMedium, color = CalendarMuted)
-        } else entries.forEach { entry ->
-            Surface(onClick = { onOpenPlan(entry.planOrdinal) }, shape = MaterialTheme.shapes.medium, color = Color(0xFFFAFCFB), border = BorderStroke(1.dp, CalendarBorder), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(4.dp, 38.dp).background(entryColor(entry)))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(entry.session.topic.ifBlank { if (entry.session.isExternal) "기존 일정" else "학습 일정" }, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${entry.session.start.toLocalTime()} – ${entry.session.end.toLocalTime()} · 계획 ${entry.planOrdinal}", style = MaterialTheme.typography.bodySmall, color = CalendarMuted)
+private fun CalendarAgenda(date: LocalDate, entries: List<CalendarEntry>, planCount: Int, storage: PlanStorage, onOpenPlan: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth().height(153.dp)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFEEEEEE)))
+        Row(Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 27.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.width(128.dp)) {
+                Text("${date.dayOfMonth}일 ${date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.KOREAN)}", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("${date.year}년 ${date.monthValue}월", Modifier.padding(top = 10.dp), fontSize = 11.sp, color = CalendarMuted)
+            }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(end = 42.dp)) {
+                if (entries.isEmpty()) {
+                    Text(if (planCount == 0 && storage == PlanStorage.Ready) "계획을 만들어 시작하세요" else "일정이 없습니다",
+                        Modifier.padding(top = 15.dp), fontSize = 13.sp, color = Color(0xFF999999))
+                } else entries.forEach { entry ->
+                    Row(Modifier.fillMaxWidth().clickable { onOpenPlan(entry.planOrdinal) }.padding(bottom = 11.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Box(Modifier.width(3.dp).height(36.dp).background(entryColor(entry), RoundedCornerShape(2.dp)))
+                        Column {
+                            Text(entry.session.topic.ifBlank { if (entry.session.isExternal) "기존 일정" else "학습 일정" },
+                                fontSize = 11.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text("${entry.session.start.toLocalTime()} – ${entry.session.end.toLocalTime()}", fontSize = 10.sp, color = CalendarMuted)
+                        }
                     }
                 }
             }
