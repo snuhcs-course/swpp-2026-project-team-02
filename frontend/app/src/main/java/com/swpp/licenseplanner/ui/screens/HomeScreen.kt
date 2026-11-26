@@ -79,13 +79,28 @@ fun HomeScreen(
     var selectedDay by rememberSaveable { mutableLongStateOf(today.toEpochDay()) }
     val month = YearMonth.parse(monthKey)
     val selectedDate = LocalDate.ofEpochDay(selectedDay)
-    val entries = remember(plans) { calendarEntries(plans) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember(context) {
+        val scope = com.swpp.licenseplanner.data.PlanStorageScope.of(
+            com.swpp.licenseplanner.BuildConfig.DEMO_MODE, com.swpp.licenseplanner.BuildConfig.API_BASE_URL,
+        )
+        context.getSharedPreferences("calendar-visibility-" + com.swpp.licenseplanner.data.PlanStorageScope.fileName(scope), 0)
+    }
+    var hidden by remember(preferences) {
+        mutableStateOf(preferences.getStringSet("hidden", emptySet()).orEmpty().toSet())
+    }
+    val activePlans = remember(plans, hidden) { plans.filter { it.ordinal.toString() !in hidden } }
+    val entries = remember(activePlans) { calendarEntries(activePlans) }
     val byDate = remember(entries) { entries.groupBy { it.session.start.toLocalDate() } }
     var createMenuOpen by rememberSaveable { mutableStateOf(false) }
     fun changeMonth(target: YearMonth) {
         monthKey = target.toString()
         selectedDay = target.atDay(selectedDate.dayOfMonth.coerceAtMost(target.lengthOfMonth())).toEpochDay()
     }
+    CalendarPlanDrawer(plans, hidden, storage, onOpenPlan, onCreate, onAdjust, onToggle = { ordinal, visible ->
+        hidden = if (visible) hidden - ordinal.toString() else hidden + ordinal.toString()
+        preferences.edit().putStringSet("hidden", hidden).apply()
+    }) { openList ->
     Scaffold(
         containerColor = Color.White,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -95,7 +110,7 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                CalendarNavButton("☰", "계획 목록", onAdjust)
+                CalendarNavButton("☰", "계획 목록", openList)
                 Text("${month.monthValue}월", Modifier.clickable {
                     monthKey = YearMonth.from(today).toString()
                     selectedDay = today.toEpochDay()
@@ -138,11 +153,12 @@ fun HomeScreen(
                     StorageAlert(storage, onRetryLoad, onRetrySave)
                 }
             }
-            CalendarMonth(month, selectedDate, today, byDate, plans, Modifier.weight(1f)) { date ->
+            CalendarMonth(month, selectedDate, today, byDate, activePlans, Modifier.weight(1f)) { date ->
                 selectedDay = date.toEpochDay()
                 monthKey = YearMonth.from(date).toString()
             }
         }
+    }
     }
 }
 

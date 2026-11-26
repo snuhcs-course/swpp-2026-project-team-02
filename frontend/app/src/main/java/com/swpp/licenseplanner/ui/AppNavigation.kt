@@ -137,8 +137,8 @@ private fun NavHostController.fromHome(route: String) = navigate(route) {
 /** Rebuild only ordinary input destinations; requests and result routes never resume. */
 private fun NavHostController.resumeCreation(step: CreationStep) {
     fromHome(Routes.CERTIFICATION)
-    val routes = listOf(Routes.CERTIFICATION, Routes.DATES, Routes.LEVEL, Routes.QUESTIONS, Routes.RESULTS, Routes.AVAILABILITY)
-    for (route in routes.drop(1).take(step.ordinal)) go(route)
+    if (step != CreationStep.CERTIFICATION) go(Routes.QUESTIONS)
+    if (step == CreationStep.RESULTS || step == CreationStep.AVAILABILITY) go(Routes.AVAILABILITY)
 }
 
 private fun openAppSettings(context: Context) {
@@ -516,8 +516,8 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
         screen(nav, Routes.CERTIFICATION) { entry ->
             BackHandler { leaveCreation(entry) }
             CertificationScreen(form, viewModel::selectCertification, onBack = { leaveCreation(entry) }) {
-                viewModel.reachCreationStep(CreationStep.DATES)
-                nav.go(Routes.DATES)
+                viewModel.reachCreationStep(CreationStep.QUESTIONS)
+                nav.go(Routes.QUESTIONS)
             }
         }
         screen(nav, Routes.DATES) { entry ->
@@ -540,12 +540,11 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             QuestionsScreen(
                 form = form,
                 loadState = questionLoad,
-                index = questionIndex,
-                onShowQuestion = { nav.canGoBack(entry) && viewModel.showQuestion(it) },
+                onLevel = viewModel::setLevel,
                 onLoad = viewModel::loadQuestions,
                 onAnswer = viewModel::answer,
-                onExit = { nav.goBack(entry, Routes.LEVEL) },
-                onFinished = { viewModel.reachCreationStep(CreationStep.RESULTS); nav.go(Routes.RESULTS) },
+                onExit = { nav.goBack(entry) },
+                onFinished = { viewModel.reachCreationStep(CreationStep.AVAILABILITY); nav.go(Routes.AVAILABILITY) },
             )
         }
         screen(nav, Routes.RESULTS) { entry ->
@@ -560,6 +559,11 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
             AvailabilityScreen(
                 form = form,
                 selectedWeek = availabilityWeek,
+                onDates = { start, date ->
+                    if (start) viewModel.setPreparationStart(date) else viewModel.setExamDate(date)
+                    viewModel.reachCreationStep(CreationStep.AVAILABILITY)
+                },
+                onGrid = viewModel::paintTime,
                 generating = generation == GenerationState.Loading,
                 plansSaved = storage == PlanStorage.Ready,
                 calendarRead = calendarRead,

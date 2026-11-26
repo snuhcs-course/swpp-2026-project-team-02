@@ -43,8 +43,7 @@ import com.swpp.licenseplanner.ui.userMessage
 fun QuestionsScreen(
     form: PlanFormState,
     loadState: QuestionLoadState,
-    index: Int,
-    onShowQuestion: (Int) -> Unit,
+    onLevel: (com.swpp.licenseplanner.domain.CurrentLevel) -> Unit,
     onLoad: () -> Unit,
     onAnswer: (questionId: Int, choiceKey: String) -> Unit,
     onExit: () -> Unit,
@@ -53,65 +52,30 @@ fun QuestionsScreen(
     LaunchedEffect(Unit) { onLoad() }
     val questions = form.questions
     val loaded = loadState == QuestionLoadState.Loaded && questions.isNotEmpty()
-    BackHandler(enabled = loaded && index > 0) { onShowQuestion(index - 1) }
-
-    val question = questions.getOrNull(index.coerceAtMost(questions.lastIndex))
-    val selected = question?.let { form.answers[it.id] }
-    val isLast = index >= questions.lastIndex
-
-    AppScreen(
-        title = "예시 문항",
-        navIcon = NavIcon.Close,
-        onNav = onExit,
-        footer = if (loaded && question != null) {
-            {
-                PrimaryButton(
-                    text = if (isLast) "결과 보기" else "다음",
-                    enabled = selected != null,
-                    onClick = { if (isLast) onFinished() else onShowQuestion(index + 1) },
-                )
-            }
-        } else null,
-    ) {
+    AppScreen(title = "학습 계획 생성하기", onNav = onExit, footer = {
+        PrimaryButton("다음", onFinished, enabled = loaded && form.level != null && questions.all { it.id in form.answers })
+    }) {
+        CreationHeading(2, "지금 실력을 확인해볼까요?", "예시 진단 문항에 답해주세요. 모르는 문항은 ‘모르겠음’을 선택하세요.")
+        Text(com.swpp.licenseplanner.domain.CERTIFICATION_NAME)
+        Text("현재 실력")
+        for (level in com.swpp.licenseplanner.domain.CurrentLevel.entries) {
+            CreationOption(level.label, form.level == level) { onLevel(level) }
+        }
         when {
             loadState is QuestionLoadState.Failure -> {
-                Heading("예시 문항을 불러오지 못했어요", loadState.error.userMessage())
+                Heading("문항을 불러오지 못했어요", loadState.error.userMessage())
                 ErrorDetails(loadState.error)
-                Note("입력한 시험, 날짜, 실력은 그대로 있어요.")
                 PrimaryButton("다시 시도", onLoad)
-                SecondaryButton("이전으로", onExit)
             }
-            !loaded || question == null -> LoadingBlock("예시 문항을 불러오는 중이에요")
-            else -> {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "${questions.size}문항 중 ${index + 1}번째",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = InkBody,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text("예시 단원: ${LocalTopics.labelFor(question.id)}", style = MaterialTheme.typography.bodySmall, color = InkBody)
+            !loaded -> LoadingBlock("예시 문항을 불러오는 중이에요")
+            else -> questions.forEachIndexed { number, question ->
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("${(number + 1).toString().padStart(2, '0')}   ${question.prompt}", style = MaterialTheme.typography.titleSmall)
+                    for ((key, label) in question.answerChoices) {
+                        CreationOption(label, form.answers[question.id] == key) { onAnswer(question.id, key) }
                     }
-                    ProgressTrack((index + 1).toFloat() / questions.size)
+                    CreationOption(UNKNOWN_LABEL, form.answers[question.id] == UNKNOWN_KEY) { onAnswer(question.id, UNKNOWN_KEY) }
                 }
-                Text(question.prompt, style = MaterialTheme.typography.titleLarge, color = Ink)
-                // The answer cards and “모르겠음” form one single-choice group driven by form.answers.
-                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        for ((key, label) in question.answerChoices) {
-                            ChoiceCard(selected = selected == key, onClick = { onAnswer(question.id, key) }, choiceLabel = label) {
-                                Text(
-                                    label,
-                                    style = if (label.all { it.code < 128 }) MonoStyles.answer else MaterialTheme.typography.bodyLarge,
-                                    color = Ink,
-                                )
-                            }
-                        }
-                    }
-                    SecondaryButton(UNKNOWN_LABEL, onClick = { onAnswer(question.id, UNKNOWN_KEY) }, selected = selected == UNKNOWN_KEY)
-                }
-                Note("예시로 만든 문항이에요. 실제 기출이나 검증된 진단이 아니에요. 모르면 ‘모르겠음’을 골라 주세요. 0점으로 계산돼요.")
             }
         }
     }

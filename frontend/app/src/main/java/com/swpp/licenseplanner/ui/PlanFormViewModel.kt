@@ -694,6 +694,44 @@ class PlanFormViewModel(
     private fun windowTargetIsCurrent(target: AvailabilityWindowTarget): Boolean =
         captureWindow(target.day, target.index, target.week) == target
 
+    fun paintTime(day: Weekday, minute: Int, week: LocalDate?, add: Boolean) {
+        if (!canEditWindow() || minute !in 0..1410 || minute % 30 != 0) return
+        fun changed(entry: DayAvailability): DayAvailability {
+            val ranges = entry.windows().map {
+                val start = it.start.toSecondOfDay() / 60
+                start until start + it.durationMinutes
+            }
+            val cell = minute until minute + 30
+            val result = if (add) ranges + listOf(cell) else ranges.flatMap { range ->
+                listOf(range.first..minOf(range.last, minute - 1), maxOf(range.first, minute + 30)..range.last)
+                    .filterNot { it.isEmpty() }
+            }
+            val merged = mutableListOf<IntRange>()
+            for (range in result.sortedBy { it.first }) {
+                val last = merged.lastOrNull()
+                if (last != null && range.first <= last.last + 1) {
+                    merged[merged.lastIndex] = last.first..maxOf(last.last, range.last)
+                } else merged.add(range)
+            }
+            val windows = mutableListOf<WindowSpec>()
+            for (range in merged) {
+                var start = range.first
+                while (start <= range.last) {
+                    if (start >= 1440) return entry
+                    val length = minOf(range.last - start + 1, WindowSpec.MAX_DURATION_MINUTES)
+                    windows.add(WindowSpec(LocalTime.ofSecondOfDay(start * 60L), length))
+                    start += length
+                }
+            }
+            return DayAvailability.of(windows)
+        }
+        if (week == null) editDay(day, null, ::changed)
+        else editWeek(week) { state ->
+            val days = state.availabilityOverrides[week] ?: state.availability
+            days + (day to changed(days[day] ?: DayAvailability()))
+        }
+    }
+
     fun showAvailabilityWeek(monday: LocalDate): Boolean {
         if (monday !in _form.value.studyWeeks) return false
         _availabilityWeek.value = monday

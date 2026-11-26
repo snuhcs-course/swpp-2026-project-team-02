@@ -87,6 +87,8 @@ class AvailabilityActions(
 fun AvailabilityScreen(
     form: PlanFormState,
     selectedWeek: LocalDate?,
+    onDates: (Boolean, LocalDate) -> Unit,
+    onGrid: (Weekday, Int, LocalDate?, Boolean) -> Unit,
     generating: Boolean,
     plansSaved: Boolean,
     calendarRead: CalendarReadState,
@@ -118,27 +120,30 @@ fun AvailabilityScreen(
         calendarRead == CalendarReadState.AwaitingPermission || calendarRead == CalendarReadState.Loading
 
     AppScreen(
-        title = "공부 시간",
+        title = "학습 계획 생성하기",
         onNav = onBack,
         trailing = { ContextHelpButton(ContextHelpTopic.AVAILABILITY) },
         footer = {
             PrimaryButton(
-                text = if (generating) "계획을 만드는 중…" else "계획 만들기",
+                text = if (generating) "계획을 만드는 중…" else "학습 계획 생성하기",
                 onClick = onGenerate,
-                enabled = error == null && !generating && !readingCalendar && plansSaved,
+                enabled = form.preparationDays != null && error == null && !generating && !readingCalendar && plansSaved,
                 // A new plan joins the saved list, so that list must be read and saved first.
                 subtitle = if (!generating && !plansSaved) "저장된 계획을 확인한 뒤 만들 수 있어요" else null,
             )
         },
     ) {
-        when {
-            conflict != null -> Heading("공부 시간을 확인해 주세요", "입력한 시간을 확인하고 겹치는 시간대를 바꿔 주세요.")
-            source == WeekSource.REPLACED -> Heading("이번 주 공부 시간", "이 주에만 적용돼요. 다른 주의 공부 시간은 그대로예요.")
-            source == WeekSource.EMPTY -> Heading("이번 주 공부 안 함", "이 주에 시작하는 공부 시간이 없어요.")
-            week != null && resetWeek == week.toEpochDay() ->
-                Heading("이번 주 공부 시간", "${monthDay(week)} 주의 별도 설정을 지웠어요. 이제 기본 시간을 사용해요.")
-            else -> Heading("매주 기본 시간", "시작과 종료 시간을 정해 주세요. 캘린더와 겹치는 시간을 제외하고 모두 계획에 써요.")
+        CreationHeading(3, "나에게 맞는 학습 시간", "공부할 요일과 시간, 준비 기간을 정해주세요.")
+        val correct = form.questions.count { com.swpp.licenseplanner.domain.Scoring.isCorrect(it, form.answers[it.id]) }
+        MutedBox { Text("진단 결과 · $correct / ${form.questions.size}") }
+        var dateField by rememberSaveable { mutableStateOf<Boolean?>(null) }
+        DateField("준비 시작일", form.preparationStart) { dateField = true }
+        DateField("필기 시험일", form.examDate) { dateField = false }
+        dateField?.let { start ->
+            DatePickerSheet(if (start) form.preparationStart else form.examDate ?: form.preparationStart.plusDays(1),
+                onDismiss = { dateField = null }) { onDates(start, it); dateField = null }
         }
+        form.datesError?.let { Note(it) }
 
         if (week != null) {
             val index = weeks.indexOf(week)
@@ -155,47 +160,19 @@ fun AvailabilityScreen(
                     Text(incomingText(incoming), style = MaterialTheme.typography.bodyMedium, color = InkSecondary)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    if (source == WeekSource.REPLACED) {
-                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
-                    } else {
-                        SecondaryButton("이번 주 시간 바꾸기", { actions.onReplaceWeek(week) }, enabled = !generating)
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    if (source == WeekSource.BASE) {
-                        SecondaryButton("이번 주 공부 안 함", { actions.onClearWeek(week) }, enabled = !generating)
-                    } else {
-                        SecondaryButton(
-                            "기본 시간으로 되돌리기",
-                            { actions.onResetWeek(week); resetWeek = week.toEpochDay() },
-                            enabled = !generating,
-                        )
-                    }
-                }
+        }
+        TimeSelectionGrid(form, week, !generating && !readingCalendar && plansSaved, onGrid)
+        var preciseTimes by rememberSaveable { mutableStateOf(false) }
+        TextButton(onClick = { preciseTimes = !preciseTimes }) { Text(if (preciseTimes) "상세 시간 접기" else "분 단위·자정 넘는 시간 편집") }
+        if (preciseTimes && source != WeekSource.EMPTY) {
+            for (day in Weekday.entries) {
+                DayRow(day, days[day] ?: DayAvailability(), !generating && !readingCalendar && plansSaved,
+                    onEdit = { editing = actions.onCapture(day, it, editWeek) },
+                    onRemove = { actions.onCapture(day, it, editWeek)?.let(actions.onRemove) })
             }
         }
-
-        if (source != WeekSource.EMPTY) {
-            Column {
-                for (day in Weekday.entries) {
-                    DayRow(
-                        day = day,
-                        entry = days[day] ?: DayAvailability(),
-                        enabled = !generating && !readingCalendar && plansSaved,
-                        onEdit = { index -> editing = actions.onCapture(day, index, editWeek) },
-                        onRemove = { index -> actions.onCapture(day, index, editWeek)?.let(actions.onRemove) },
-                    )
-                }
-            }
-            val totals = weekTotals(days.toWeekWindows())
-            if (totals.days > 0) {
-                MutedBox {
-                    InfoRow("공부하는 요일", "${totals.days}일")
-                    InfoRow("공부 시간", PlanGrouping.formatDuration(totals.minutes.toLong()))
-                }
-            }
+        if (source != WeekSource.BASE && week != null) {
+            SecondaryButton("기본 시간으로 되돌리기", { actions.onResetWeek(week) }, enabled = !generating)
         }
         when {
             conflict != null -> AlertCard(conflict.title, conflict.body)

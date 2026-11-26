@@ -576,6 +576,22 @@ class PlanFormViewModelTest {
         assertEquals(null, vm.form.value.availabilityError)
     }
 
+    @Test fun gridPaintAndWeekExclusionReachGenerationRequest() = runTest(dispatcher) {
+        val planning = FakePlanning(PlanOutcome.Success(plan, isDemo = false))
+        val vm = loadedViewModel(planning)
+        val day = Weekday.FRIDAY
+        val week = vm.form.value.studyWeeks.first()
+        for (minute in listOf(480, 510, 540)) vm.paintTime(day, minute, null, true)
+        vm.paintTime(day, 510, week, false)
+        assertTrue(vm.generateAfterCalendarCheck())
+        advanceUntilIdle()
+        val sent = AvailabilityWire.context(planning.requests.single())!!
+        assertTrue(WindowSpec(LocalTime.of(8, 0), 90) in sent.base[day].orEmpty())
+        val replacement = sent.overrides.getValue(week).getValue(day)
+        assertTrue(WindowSpec(LocalTime.of(8, 0), 30) in replacement)
+        assertTrue(WindowSpec(LocalTime.of(9, 0), 30) in replacement)
+    }
+
     @Test fun fullListEditsStayScopedAndRejectStaleTargets() = runTest(dispatcher) {
         val vm = loadedViewModel(FakePlanning())
         val original = vm.form.value

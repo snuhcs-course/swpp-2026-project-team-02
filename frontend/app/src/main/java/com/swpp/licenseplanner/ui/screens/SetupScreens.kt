@@ -42,17 +42,12 @@ import java.time.ZoneOffset
 fun CertificationScreen(form: PlanFormState, onSelect: (String) -> Unit, onBack: () -> Unit, onContinue: () -> Unit) {
     val selected = form.certificationId == CERTIFICATION_ID
     AppScreen(
-        title = "자격증",
+        title = "학습 계획 생성하기",
         onNav = onBack,
         footer = { PrimaryButton("다음", onContinue, enabled = selected) },
     ) {
-        Heading("어떤 시험을 준비하나요?", "지금은 컴퓨터활용능력 2급만 지원해요.")
-        ChoiceCard(selected = selected, onClick = { onSelect(CERTIFICATION_ID) }) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(CERTIFICATION_NAME, style = MaterialTheme.typography.titleMedium, color = Ink)
-                Text("필기", style = MaterialTheme.typography.labelSmall, color = InkSecondary)
-            }
-        }
+        CreationHeading(1, "어떤 자격증을 준비하나요?", "목표 자격증을 하나 선택해주세요.")
+        CertificateCard(selected) { onSelect(CERTIFICATION_ID) }
     }
 }
 
@@ -139,7 +134,7 @@ fun ExamDateEditScreen(form: PlanFormState, onBack: () -> Unit, onConfirm: (Loca
 }
 
 @Composable
-private fun DateField(label: String, date: LocalDate?, onClick: () -> Unit) {
+internal fun DateField(label: String, date: LocalDate?, onClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         FieldLabel(label)
         InputBox(date?.toString() ?: "날짜 선택", onClick, Modifier.testTag("date-$label"))
