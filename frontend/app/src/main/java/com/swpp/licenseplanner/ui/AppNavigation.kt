@@ -452,6 +452,7 @@ fun AppNavigation(viewModel: PlanFormViewModel) {
                 onResume = ::resumeDraft,
                 onCreate = ::createPlan,
                 onAdjust = { nav.fromHome(Routes.PLAN_LIST) },
+                onOpenPlan = { ordinal -> nav.go(Routes.plan(ordinal)) },
                 onRetryLoad = viewModel::retryLoad,
                 onRetrySave = viewModel::retrySave,
                 conflictNotices = noticeCounts,
