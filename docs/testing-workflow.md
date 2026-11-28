@@ -147,10 +147,12 @@ only with matching artifacts and environment.
 
 ## Bounded local daemon comparison
 
-JBR 25 launches Gradle, but the checked-in daemon criteria require Java 17.
-Even `--no-daemon` therefore starts a separate single-use daemon and stops it
-afterward. These commands compare fresh versus reused daemons; they do not
-compare in-process execution with a daemon. Android Studio may already have
+The checked-in daemon criteria now require Java 25, including on Windows.
+The timing measurements below were collected before that migration with Java 17;
+they are historical evidence, not measurements of the current Java 25 setup.
+With different launcher JVM arguments, `--no-daemon` can still start a separate
+single-use daemon and stop it afterward. These commands compare fresh versus
+reused daemons; they do not compare in-process execution with a daemon. Android Studio may already have
 warmed a compatible daemon. Do not stop shared daemons to manufacture a cold run.
 
 From `frontend/` with the launcher above, the matched commands are:

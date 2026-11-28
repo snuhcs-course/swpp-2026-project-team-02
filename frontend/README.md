@@ -88,8 +88,10 @@ and the [remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnU
 Open this `frontend/` directory (not the repository root) in Android Studio and
 let Gradle sync. Pick a build variant: `demoDebug` (default) or `liveDebug`.
 
-The checked-in Gradle daemon requests Java 17
+The checked-in Gradle daemon requests Java 25
 (`gradle/gradle-daemon-jvm.properties`).
+This also makes Windows JVM tests use Java 25: the earlier Java 17 runtime
+failed to replace existing files in the AndroidX `AtomicFile` persistence tests.
 From the command line, using Android Studio's bundled Java runtime:
 
 ```bash
@@ -113,8 +115,8 @@ all required full gates/device recipes.
 
 The commands below reproduce CI; the local recipes do not replace them.
 CI runs these in order (Android SDK platform 36 and build-tools 36.0.0,
-Python 3.14). `ci.yml` provisions Java 25, while the checked-in Gradle daemon
-criteria select Java 17. The separate signed-release workflow provisions Java 17:
+Python 3.14). Both `ci.yml` and the signed-release workflow provision Java 25,
+matching the checked-in Gradle daemon criteria:
 
 ```bash
 # from frontend/

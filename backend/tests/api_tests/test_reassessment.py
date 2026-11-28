@@ -6,12 +6,14 @@ import json
 import tempfile
 import threading
 import unittest
+from collections import Counter
 from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
@@ -144,6 +146,68 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertEqual([key for key in before if before[key] != after[key]],
                          [next(key for key in before if key.endswith(".csv"))])
         self.assert_invalid(commit, "PLAN_CONFLICT", 409)
+
+    def test_two_weakness_profiles_preview_commit_and_http_readback(self):
+        """Compare independent runs on exactly the same original saved plan."""
+        topics = sorted({q["topic"] for q in self.questions})
+        profiles = (set(topics[:4]), set(topics[4:]))
+        allocations = []
+        self.comparison_report = []
+        for weak in profiles:
+            with self.subTest(weak=sorted(weak)):
+                self.store.update(self.store.snapshot(self.plan), self.csv)
+                before = self.files()
+                payload = self.payload()
+                for result, question in zip(payload["assessment_results"]["results"], self.questions):
+                    correct = question["topic"] not in weak
+                    result.update(user_answer=question["correct_answer"] if correct else "UNKNOWN", is_correct=correct)
+                status, preview = self.call("/schedules/adjust", payload)
+                self.assertEqual(status, 200, preview)
+                self.assertEqual(self.files(), before)
+                revised = parse_schedule_rows(preview["schedules"])
+                for fixed in parse_schedule_rows(ROWS[:4]):
+                    self.assertIn(fixed, revised)
+                totals = Counter()
+                for original in parse_schedule_rows(ROWS[4:]):
+                    inside = [r for r in revised if original.start_datetime <= r.start_datetime < original.end_datetime]
+                    self.assertEqual(inside[0].start_datetime, original.start_datetime)
+                    self.assertEqual(inside[-1].end_datetime, original.end_datetime)
+                    for a, b in zip(inside, inside[1:]):
+                        self.assertEqual(a.end_datetime, b.start_datetime)
+                    for row in inside:
+                        duration = int((row.end_datetime-row.start_datetime).total_seconds()/60)
+                        self.assertGreaterEqual(duration, 15)
+                        totals[row.topic] += duration
+                self.assertEqual(sum(totals.values()), 240)
+                self.assertGreater(min(totals[t] for t in weak), max(totals[t] for t in topics if t not in weak))
+                status, saved = self.call("/schedules/adjust", payload | {
+                    "commit": True, "previewed_schedules": preview["schedules"]})
+                self.assertEqual(status, 200, saved)
+                self.assertEqual(saved["schedules"], preview["schedules"])
+                status, readback = self.call("/study-plans?" + urlencode({"schedule_csv_file": self.plan}))
+                self.assertEqual(status, 200, readback)
+                self.assertEqual(readback["plans"][0]["schedules"], preview["schedules"])
+                self.assertEqual(self.store.snapshot(self.plan).entries, revised)
+                after = self.files()
+                for path in before:
+                    if not path.endswith(".csv"):
+                        self.assertEqual(after[path], before[path])
+                allocations.append(totals)
+                self.comparison_report.append({
+                    "weak_topics": sorted(weak), "topic_minutes": dict(totals), "remaining_minutes": sum(totals.values()),
+                    "original_rows": ROWS, "preview_request": payload, "preview": preview,
+                    "commit_request": payload | {"commit": True, "previewed_schedules": preview["schedules"]},
+                    "saved": saved, "readback": readback,
+                    "checks": {"no_new_short_sessions": True, "all_original_intervals_covered": True,
+                               "past_ongoing_reported_and_external_unchanged": True, "metadata_unchanged": True,
+                               "preview_read_only": True, "preview_saved_readback_equal": True},
+                })
+        self.assertNotEqual(allocations[0], allocations[1])
+        for topic in topics:
+            if topic in profiles[0]:
+                self.assertGreater(allocations[0][topic], allocations[1][topic])
+            else:
+                self.assertLess(allocations[0][topic], allocations[1][topic])
 
     def test_commit_saves_only_the_previewed_rows(self):
         tampered = copy.deepcopy(self.previewed)

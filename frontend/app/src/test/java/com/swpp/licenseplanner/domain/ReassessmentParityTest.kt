@@ -13,7 +13,7 @@ class ReassessmentParityTest {
         val fixture = File(requireNotNull(System.getProperty("user.dir")))
             .resolve("../../backend/tests/schedule_adjuster_tests/fixtures/reassessment_parity.json")
         val cases = ApiJson.parseToJsonElement(fixture.readText()).jsonObject.getValue("cases").jsonArray
-        assertEquals(6, cases.size)
+        assertEquals(9, cases.size)
         for (element in cases) {
             val case = element.jsonObject
             val name = case.getValue("name").jsonPrimitive.content

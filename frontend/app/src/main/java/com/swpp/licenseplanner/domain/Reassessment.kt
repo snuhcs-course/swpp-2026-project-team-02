@@ -5,6 +5,7 @@ import java.math.BigDecimal
 import java.time.Duration
 import java.time.LocalDateTime
 import java.util.Locale
+import java.util.PriorityQueue
 
 /** One answered reassessment item, reduced to what topic scoring needs. */
 data class TopicAnswer(val topic: String, val possibleScore: Double, val isCorrect: Boolean)
@@ -42,14 +43,71 @@ data class ReassessmentPreview(
  * Re-splits the topics of future unreported study rows by new assessment scores, keeping every
  * row's time. Rows that start at or after `replanFrom` and are not kept are revisable. Their total
  * minutes are budgeted like plan generation (one minute per topic, the rest by `2 - score/100`,
- * largest remainder), then packed weakest topic first through those rows in time order. A row is
- * cut only where a topic's budget ends. A row that keeps its single original topic keeps its ID;
+ * largest remainder). If exact packing creates short pieces, targets are rounded to balanced
+ * cells of at least 15 minutes inside each original row, reserving a cell per topic and keeping
+ * weak-topic order. Existing shorter rows stay indivisible. A row that
+ * keeps its single original topic keeps its ID;
  * every other revisable row is replaced by pieces numbered from the first new study ID.
  */
 object Reassessment {
     private val studyId = Regex("study-([0-9]+)")
     private val hundred = BigDecimal(100)
     private val two = BigDecimal(2)
+
+    /** Same interval-constrained target rounding as Python's _session_budgets. */
+    private fun sessionBudgets(durations: List<Int>, budget: List<Pair<String, Int>>): List<List<Pair<String, Int>>>? {
+        var topicIndex = 0
+        var left = budget[0].second
+        val exact = durations.map { duration ->
+            var remaining = duration
+            val pieces = mutableListOf<Pair<String, Int>>()
+            while (remaining > 0) {
+                val take = minOf(left, remaining)
+                pieces += budget[topicIndex].first to take
+                remaining -= take
+                left -= take
+                if (left == 0 && ++topicIndex < budget.size) left = budget[topicIndex].second
+            }
+            pieces
+        }
+        if (durations.zip(exact).all { (duration, pieces) -> pieces.all { it.second >= minOf(15, duration) } }) return exact
+        val counts = durations.map { maxOf(1, it / 15) }
+        val cells = durations.flatMapIndexed { index, duration ->
+            val count = counts[index]
+            List(count) { duration / count + if (it < duration % count) 1 else 0 }
+        }
+        if (cells.size < budget.size) return null
+        val total = cells.sum().toLong()
+        val allocated = IntArray(budget.size) { 1 }
+        val queue = PriorityQueue(compareBy<Pair<Long, Int>> { it.first }.thenBy { it.second })
+        budget.forEachIndexed { index, (_, minutes) -> queue += total - minutes.toLong() * cells.size to index }
+        repeat(cells.size - budget.size) {
+            val (deficit, index) = queue.remove()
+            allocated[index]++
+            queue += deficit + total to index
+        }
+        val assigned = budget.flatMapIndexed { index, (topic, _) ->
+            List(allocated[index]) { topic }
+        }
+        val realized = assigned.zip(cells).groupBy({ it.first }, { it.second }).mapValues { it.value.sum() }
+        val rank = budget.mapIndexed { index, (topic, _) -> topic to index }.toMap()
+        val actualOrder = realized.keys.sortedWith(compareByDescending<String> { realized.getValue(it) }
+            .thenBy { rank.getValue(it) })
+        val renamed = actualOrder.zip(budget.map { it.first }).toMap()
+        val labels = assigned.map { renamed.getValue(it) }
+        var offset = 0
+        return counts.map { count ->
+            val pieces = mutableListOf<Pair<String, Int>>()
+            for (index in offset until offset + count) {
+                val topic = labels[index]
+                if (pieces.lastOrNull()?.first == topic) {
+                    pieces[pieces.lastIndex] = topic to pieces.last().second + cells[index]
+                } else pieces += topic to cells[index]
+            }
+            offset += count
+            pieces
+        }
+    }
 
     /** Points per topic, weakest first, like the backend's topic summary. */
     fun scores(answers: List<TopicAnswer>): List<TopicScore> = answers.groupBy { it.topic }.map { (topic, items) ->
@@ -111,22 +169,18 @@ object Reassessment {
         if (revisable.isEmpty()) return ResplitResult.Failed(ReassessmentFailure.NothingToRevise)
         val budget = budget(scores(answers), revisable.sumOf { minutes(it) })
             ?: return ResplitResult.Failed(ReassessmentFailure.NotEnoughTime)
+        val allocation = sessionBudgets(revisable.map { minutes(it) }, budget)
+            ?: return ResplitResult.Failed(ReassessmentFailure.NotEnoughTime)
         var next = requireNotNull(studyId.matchEntire(firstNewStudyId)?.groupValues?.get(1)?.toLong()) {
             "새 공부 일정 번호를 처리할 수 없어요."
         }
-        var topic = 0
-        var left = budget[0].second
         val revised = mutableListOf<ScheduleRow>()
-        for (row in revisable) {
-            val end = parse(row.endDate)
+        for ((row, assigned) in revisable.zip(allocation)) {
             var cursor = parse(row.startDate)
             val pieces = mutableListOf<Triple<String, LocalDateTime, LocalDateTime>>()
-            while (cursor < end) {
-                val take = minOf(left.toLong(), Duration.between(cursor, end).toMinutes())
-                pieces += Triple(budget[topic].first, cursor, cursor.plusMinutes(take))
-                cursor = cursor.plusMinutes(take)
-                left -= take.toInt()
-                if (left == 0 && ++topic < budget.size) left = budget[topic].second
+            for ((topic, take) in assigned) {
+                pieces += Triple(topic, cursor, cursor.plusMinutes(take.toLong()))
+                cursor = cursor.plusMinutes(take.toLong())
             }
             if (pieces.size == 1 && pieces[0].first == row.topic) {
                 revised += row

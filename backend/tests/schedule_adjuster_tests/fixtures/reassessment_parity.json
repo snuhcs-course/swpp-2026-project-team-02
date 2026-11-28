@@ -100,18 +100,18 @@
         {
           "schedule_id": "study-5",
           "start_date": "2026/12/04/19/00",
-          "end_date": "2026/12/04/19/06",
+          "end_date": "2026/12/04/19/15",
           "topic": "차트와 분석"
         },
         {
           "schedule_id": "study-6",
-          "start_date": "2026/12/04/19/06",
-          "end_date": "2026/12/04/19/56",
+          "start_date": "2026/12/04/19/15",
+          "end_date": "2026/12/04/20/00",
           "topic": "매크로 활용"
         },
         {
           "schedule_id": "study-7",
-          "start_date": "2026/12/04/19/56",
+          "start_date": "2026/12/04/20/00",
           "end_date": "2026/12/04/20/30",
           "topic": "스프레드시트 기본"
         }
@@ -251,60 +251,48 @@
         {
           "schedule_id": "study-9",
           "start_date": "2026/12/05/19/00",
-          "end_date": "2026/12/05/19/39",
+          "end_date": "2026/12/05/19/45",
           "topic": "매크로 활용"
         },
         {
           "schedule_id": "study-10",
-          "start_date": "2026/12/05/19/39",
-          "end_date": "2026/12/05/20/18",
+          "start_date": "2026/12/05/19/45",
+          "end_date": "2026/12/05/20/30",
           "topic": "차트와 분석"
         },
         {
           "schedule_id": "study-11",
-          "start_date": "2026/12/05/20/18",
-          "end_date": "2026/12/05/20/30",
+          "start_date": "2026/12/06/10/00",
+          "end_date": "2026/12/06/10/30",
           "topic": "인터넷 자료 활용"
         },
         {
           "schedule_id": "study-12",
-          "start_date": "2026/12/06/10/00",
-          "end_date": "2026/12/06/10/22",
-          "topic": "인터넷 자료 활용"
-        },
-        {
-          "schedule_id": "study-13",
-          "start_date": "2026/12/06/10/22",
-          "end_date": "2026/12/06/10/55",
+          "start_date": "2026/12/06/10/30",
+          "end_date": "2026/12/06/11/00",
           "topic": "컴퓨터 시스템 활용"
         },
         {
-          "schedule_id": "study-14",
-          "start_date": "2026/12/06/10/55",
-          "end_date": "2026/12/06/11/00",
-          "topic": "함수와 데이터 관리"
-        },
-        {
-          "schedule_id": "study-15",
+          "schedule_id": "study-13",
           "start_date": "2026/12/07/20/00",
-          "end_date": "2026/12/07/20/25",
+          "end_date": "2026/12/07/20/30",
           "topic": "함수와 데이터 관리"
         },
         {
-          "schedule_id": "study-16",
-          "start_date": "2026/12/07/20/25",
-          "end_date": "2026/12/07/20/50",
+          "schedule_id": "study-14",
+          "start_date": "2026/12/07/20/30",
+          "end_date": "2026/12/07/21/00",
           "topic": "스프레드시트 기본"
         },
         {
-          "schedule_id": "study-17",
-          "start_date": "2026/12/07/20/50",
-          "end_date": "2026/12/07/21/10",
+          "schedule_id": "study-15",
+          "start_date": "2026/12/07/21/00",
+          "end_date": "2026/12/07/21/15",
           "topic": "컴퓨터 시스템 보호"
         },
         {
-          "schedule_id": "study-18",
-          "start_date": "2026/12/07/21/10",
+          "schedule_id": "study-16",
+          "start_date": "2026/12/07/21/15",
           "end_date": "2026/12/07/21/30",
           "topic": "페이지 설정과 인쇄"
         }
@@ -524,6 +512,134 @@
         }
       ],
       "expected_code": "REASSESSMENT_PREVIEW_EXPIRED"
+    },
+    {
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-3",
+      "results": [
+        {
+          "topic": "A",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "B",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "name": "unequal_indivisible_intervals_keep_weak_order",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/15",
+          "topic": "old"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/03/20/00",
+          "end_date": "2026/12/03/20/29",
+          "topic": "old"
+        }
+      ],
+      "expected_rows": [
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/15",
+          "topic": "B"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/03/20/00",
+          "end_date": "2026/12/03/20/29",
+          "topic": "A"
+        }
+      ]
+    },
+    {
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-3",
+      "results": [
+        {
+          "topic": "A",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "B",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "name": "legacy_short_interval_stays_whole",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/07",
+          "topic": "old"
+        },
+        {
+          "schedule_id": "study-2",
+          "start_date": "2026/12/03/20/00",
+          "end_date": "2026/12/03/20/40",
+          "topic": "old"
+        }
+      ],
+      "expected_rows": [
+        {
+          "schedule_id": "study-3",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/07",
+          "topic": "A"
+        },
+        {
+          "schedule_id": "study-4",
+          "start_date": "2026/12/03/20/00",
+          "end_date": "2026/12/03/20/24",
+          "topic": "A"
+        },
+        {
+          "schedule_id": "study-5",
+          "start_date": "2026/12/03/20/24",
+          "end_date": "2026/12/03/20/40",
+          "topic": "B"
+        }
+      ]
+    },
+    {
+      "keep_schedule_ids": [],
+      "replan_from": "2026/12/02/12/00",
+      "now": "2026/12/02/12/00",
+      "first_new_study_id": "study-3",
+      "results": [
+        {
+          "topic": "A",
+          "possible_score": 1,
+          "is_correct": false
+        },
+        {
+          "topic": "B",
+          "possible_score": 1,
+          "is_correct": true
+        }
+      ],
+      "name": "cannot_cover_topics_without_new_short_piece",
+      "rows": [
+        {
+          "schedule_id": "study-1",
+          "start_date": "2026/12/03/19/00",
+          "end_date": "2026/12/03/19/29",
+          "topic": "old"
+        }
+      ],
+      "expected_code": "NOT_ENOUGH_TIME"
     }
   ]
 }
