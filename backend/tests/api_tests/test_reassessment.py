@@ -6,12 +6,14 @@ import json
 import tempfile
 import threading
 import unittest
+from collections import Counter
 from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 
 import api_service
 from api_server import DEFAULT_API_CONFIG, make_handler
@@ -22,6 +24,7 @@ from study_plan_store import PlanConflictError
 from test_support.admission import roomy_admission
 from test_support.device_tokens import bearer, owner_store
 from test_support.question_banks import level_2_bank, temporary_question_bank
+from test_support.reassessment_agent import ScriptedReassessmentAgent
 
 CERT = "computer_specialist_level_2"
 QUESTIONS_PATH = f"/certifications/{CERT}/reassessment-questions"
@@ -49,6 +52,7 @@ class ReassessmentApiTests(unittest.TestCase):
         self.plan = self.store.create(self.csv, datetime(2026, 12, 10),
                                       preparation_start=datetime(2026, 12, 1), availability=self.context)
         for name, value in (("STUDY_PLAN_OUTPUT_DIR", self.root), ("current_korea_minute", lambda: NOW),
+                            ("ReassessmentAgent", ScriptedReassessmentAgent),
                             ("PlanningAgent", self.forbidden), ("AdjustmentAgent", self.forbidden),
                             ("load_adjuster_availability", self.forbidden), ("load_personal_availability", self.forbidden)):
             patcher = patch.object(api_service, name, value)
@@ -64,10 +68,11 @@ class ReassessmentApiTests(unittest.TestCase):
         status, preview = self.call("/schedules/adjust", self.payload())
         self.assertEqual(status, 200, preview)
         self.previewed = preview["schedules"]
+        self.preview_token = preview["preview_token"]
 
     @staticmethod
     def forbidden(*args, **kwargs):
-        raise AssertionError("reassessment must not call a provider or shared availability profile")
+        raise AssertionError("reassessment must not call the generation/other adjustment agent or shared availability profile")
 
     def call(self, path, payload=None, headers=None):
         data = json.dumps(payload).encode() if payload is not None else None
@@ -83,6 +88,8 @@ class ReassessmentApiTests(unittest.TestCase):
     def payload(self, **changes):
         if changes.get("commit") is True and "previewed_schedules" not in changes:
             changes["previewed_schedules"] = copy.deepcopy(self.previewed)
+        if changes.get("commit") is True and "preview_token" not in changes:
+            changes["preview_token"] = self.preview_token
         results = [{"problem_id": q["id"], "question": q["prompt"],
                     "choices": q["choices"] | {"UNKNOWN": "모르겠음"}, "correct_answer": q["correct_answer"],
                     "possible_score": q["possible_score"], "user_answer": "UNKNOWN", "is_correct": False}
@@ -132,7 +139,7 @@ class ReassessmentApiTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(sum(int((row.end_datetime-row.start_datetime).total_seconds()/60)
                              for row in parse_schedule_rows(changed)), 240)
-        commit = payload | {"commit": True, "previewed_schedules": preview["schedules"]}
+        commit = payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]}
         status, committed = self.call("/schedules/adjust", commit)
         self.assertEqual(status, 200, committed)
         self.assertEqual(committed["action"], "reassessed")
@@ -145,6 +152,97 @@ class ReassessmentApiTests(unittest.TestCase):
                          [next(key for key in before if key.endswith(".csv"))])
         self.assert_invalid(commit, "PLAN_CONFLICT", 409)
 
+    def test_model_chosen_single_review_is_signed_saved_and_read_back(self):
+        from schedule_adjuster.reassessment_agent import ReassessmentAgent
+        topics = ["매크로 활용"] + sorted({q["topic"] for q in self.questions} - {"매크로 활용"})
+        proposal = {"rationale": "명시적으로 보고된 실제 학습이 10분이므로 대표 문제를 한 번 복습합니다.",
+                    "weak_topic_allocations": [{"topic": t, "minutes": 30, "review_minutes": 15, "reason": "진단 저점수와 미보고 상태를 고려한 추가 학습"} for t in topics if t != "매크로 활용"],
+                    "review_sessions": [{"topic": "매크로 활용", "minutes": 30, "reason": "대표 문제 풀이와 오답 확인에 30분 선택"}],
+                    "allocations": [{"schedule_id": f"study-{4+i}", "pieces": [{"topic": t, "minutes": 30} for t in topics[i*4:(i+1)*4]]} for i in range(2)]}
+        reply = {"status": "completed", "output": [{"type": "function_call", "call_id": "review-1", "name": "propose_reassessment", "arguments": json.dumps(proposal)}]}
+        payload = self.payload(study_reports={"study-1": {"status": "partly", "actual_minutes": 10}})
+        for result, question in zip(payload["assessment_results"]["results"], self.questions):
+            if question["topic"] == "매크로 활용":
+                result.update(user_answer=question["correct_answer"], is_correct=True)
+        before = self.files()
+        with patch.object(api_service, "ReassessmentAgent", ReassessmentAgent), \
+             patch("schedule_adjuster.reassessment_agent.load_api_key", return_value="synthetic"), \
+             patch("schedule_adjuster.reassessment_agent.load_model", return_value="test-model"), \
+             patch("schedule_adjuster.reassessment_agent.create_response", return_value=reply) as model:
+            status, preview = self.call("/schedules/adjust", payload)
+            self.assertEqual(status, 200, preview)
+            self.assertEqual(self.files(), before)
+            self.assertEqual(preview["tool_calls"][0]["arguments"]["review_sessions"][0]["minutes"], 30)
+            commit = payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]}
+            status, saved = self.call("/schedules/adjust", commit)
+            self.assertEqual(status, 200, saved)
+            status, readback = self.call("/study-plans?" + urlencode({"schedule_csv_file": self.plan}))
+            self.assertEqual(status, 200, readback)
+            self.assertEqual(saved["schedules"], preview["schedules"])
+            self.assertEqual(readback["plans"][0]["schedules"], preview["schedules"])
+            self.assertEqual(model.call_count, 1)
+    def test_two_weakness_profiles_preview_commit_and_http_readback(self):
+        """Compare independent runs on exactly the same original saved plan."""
+        topics = sorted({q["topic"] for q in self.questions})
+        profiles = (set(topics[:4]), set(topics[4:]))
+        allocations = []
+        self.comparison_report = []
+        for weak in profiles:
+            with self.subTest(weak=sorted(weak)):
+                self.store.update(self.store.snapshot(self.plan), self.csv)
+                before = self.files()
+                payload = self.payload()
+                for result, question in zip(payload["assessment_results"]["results"], self.questions):
+                    correct = question["topic"] not in weak
+                    result.update(user_answer=question["correct_answer"] if correct else "UNKNOWN", is_correct=correct)
+                status, preview = self.call("/schedules/adjust", payload)
+                self.assertEqual(status, 200, preview)
+                self.assertEqual(self.files(), before)
+                revised = parse_schedule_rows(preview["schedules"])
+                for fixed in parse_schedule_rows(ROWS[:4]):
+                    self.assertIn(fixed, revised)
+                totals = Counter()
+                for original in parse_schedule_rows(ROWS[4:]):
+                    inside = [r for r in revised if original.start_datetime <= r.start_datetime < original.end_datetime]
+                    self.assertEqual(inside[0].start_datetime, original.start_datetime)
+                    self.assertEqual(inside[-1].end_datetime, original.end_datetime)
+                    for a, b in zip(inside, inside[1:]):
+                        self.assertEqual(a.end_datetime, b.start_datetime)
+                    for row in inside:
+                        duration = int((row.end_datetime-row.start_datetime).total_seconds()/60)
+                        self.assertGreaterEqual(duration, 15)
+                        totals[row.topic] += duration
+                self.assertEqual(sum(totals.values()), 240)
+                self.assertGreater(min(totals[t] for t in weak), max(totals[t] for t in topics if t not in weak))
+                status, saved = self.call("/schedules/adjust", payload | {
+                    "commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]})
+                self.assertEqual(status, 200, saved)
+                self.assertEqual(saved["schedules"], preview["schedules"])
+                status, readback = self.call("/study-plans?" + urlencode({"schedule_csv_file": self.plan}))
+                self.assertEqual(status, 200, readback)
+                self.assertEqual(readback["plans"][0]["schedules"], preview["schedules"])
+                self.assertEqual(self.store.snapshot(self.plan).entries, revised)
+                after = self.files()
+                for path in before:
+                    if not path.endswith(".csv"):
+                        self.assertEqual(after[path], before[path])
+                allocations.append(totals)
+                self.comparison_report.append({
+                    "weak_topics": sorted(weak), "topic_minutes": dict(totals), "remaining_minutes": sum(totals.values()),
+                    "original_rows": ROWS, "preview_request": payload, "preview": preview,
+                    "commit_request": payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]},
+                    "saved": saved, "readback": readback,
+                    "checks": {"no_new_short_sessions": True, "all_original_intervals_covered": True,
+                               "past_ongoing_reported_and_external_unchanged": True, "metadata_unchanged": True,
+                               "preview_read_only": True, "preview_saved_readback_equal": True},
+                })
+        self.assertNotEqual(allocations[0], allocations[1])
+        for topic in topics:
+            if topic in profiles[0]:
+                self.assertGreater(allocations[0][topic], allocations[1][topic])
+            else:
+                self.assertLess(allocations[0][topic], allocations[1][topic])
+
     def test_commit_saves_only_the_previewed_rows(self):
         tampered = copy.deepcopy(self.previewed)
         changed = next(row for row in tampered if row["schedule_id"] not in {r["schedule_id"] for r in ROWS})
@@ -152,6 +250,32 @@ class ReassessmentApiTests(unittest.TestCase):
         for rows in (tampered, self.previewed[:-1]):
             with self.subTest(rows=len(rows)):
                 self.assert_invalid(self.payload(commit=True, previewed_schedules=rows), "REASSESSMENT_PREVIEW_EXPIRED")
+
+    def test_progress_reaches_agent_and_commit_does_not_resample(self):
+        payload = self.payload(study_reports={"study-1": {"status": "done", "actual_minutes": 55},
+                                             "study-2": {"status": "partly", "actual_minutes": 20}})
+        status, preview = self.call("/schedules/adjust", payload)
+        self.assertEqual(status, 200, preview)
+        context = ScriptedReassessmentAgent.contexts[-1]
+        self.assertIn("실제 학습 75분", preview["agent_summary"])
+        macro = next(t for t in context["topics"] if t["topic"] == "매크로 활용")
+        self.assertEqual(macro["actual_study_minutes"], 75)
+        self.assertEqual(macro["completed_planned_minutes"], 80)
+        commit = payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]}
+        with patch.object(api_service, "ReassessmentAgent", side_effect=AssertionError("commit must not call model")):
+            status, saved = self.call("/schedules/adjust", commit)
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved["schedules"], preview["schedules"])
+
+    def test_signed_preview_rejects_changed_progress_and_forged_token(self):
+        self.assert_invalid(self.payload(commit=True, preview_token=self.preview_token+"x"), "REASSESSMENT_PREVIEW_EXPIRED")
+        self.assert_invalid(self.payload(commit=True, study_reports={"study-1": {"status": "done", "actual_minutes": 60}}), "REASSESSMENT_PREVIEW_EXPIRED")
+        for report in ({"study-999": {"status": "done", "actual_minutes": 10}},
+                       {"study-1": {"status": "done", "actual_minutes": 0}},
+                       {"study-1": {"status": "missed", "actual_minutes": 10}},
+                       {"study-4": {"status": "partly", "actual_minutes": 10}}):
+            with self.subTest(report=report):
+                self.assert_invalid(self.payload(study_reports=report))
 
     def test_bank_topic_edit_after_preview_blocks_commit(self):
         first = self.questions[0]
@@ -168,7 +292,7 @@ class ReassessmentApiTests(unittest.TestCase):
             status, current = self.call("/schedules/adjust", payload)
             self.assertEqual(status, 200, current)
             self.assertNotEqual(current["schedules"], preview["schedules"])
-            self.assert_invalid(payload | {"commit": True, "previewed_schedules": preview["schedules"]},
+            self.assert_invalid(payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]},
                                 "REASSESSMENT_PREVIEW_EXPIRED")
 
     def test_correct_answers_and_reversed_result_order(self):

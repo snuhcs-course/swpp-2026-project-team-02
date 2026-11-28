@@ -1,11 +1,14 @@
 """Shared Android/Python parity cases and reassessment boundary validation."""
 import json
+import random
 import unittest
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from schedule_adjuster.csv_io import parse_schedule_rows
 from schedule_adjuster.reassessment import ReassessmentPreviewExpired, resplit_study
+from schedule_adjuster.models import ScheduleEntry
 
 
 def date(value):
@@ -16,6 +19,128 @@ CASES = json.loads((Path(__file__).parent / "fixtures/reassessment_parity.json")
 
 
 class ReassessmentTests(unittest.TestCase):
+    def test_captured_real_generated_plan_matches_both_live_api_results(self):
+        self.check_capture("generated_plan_reassessment.json")
+
+    def test_historical_low_study_capture_preserves_high_score_review_rules(self):
+        # This earlier real capture predates balanced weak additions. Keep it as
+        # historical evidence for the unchanged high-score rules, not as a v5 proposal.
+        self.check_capture("generated_plan_low_study_reassessment.json", historical=True)
+        capture = json.loads((Path(__file__).parent / "fixtures/generated_plan_low_study_reassessment.json").read_text(encoding="utf-8"))
+        self.assertEqual(sum(v["actualMinutes"] for v in capture["check_ins"].values()), 10)
+        a, b = capture["profiles"]
+        review_names = lambda profile: {r["topic"] for r in profile["preview"]["tool_calls"][0]["arguments"]["review_sessions"]}
+        self.assertNotIn("매크로 활용", review_names(a))
+        self.assertIn("매크로 활용", review_names(b))
+
+    def check_capture(self, filename, historical=False):
+        from schedule_adjuster.reassessment_agent import build_context, validate_proposal, materialize_budgets, validate_reviews
+        capture = json.loads((Path(__file__).parent / "fixtures" / filename).read_text(encoding="utf-8"))
+        original = parse_schedule_rows(capture["generated"]["schedules"])
+        next_id = max(int(r.schedule_id[6:]) for r in original if r.schedule_type == "study") + 1
+        cutoff = date(capture["replan_from"])
+        for profile in capture["profiles"]:
+            with self.subTest(profile=profile["label"]):
+                results = [(q["topic"], q["possible_score"], profile["answers"][str(q["id"])] == q["correct_answer"])
+                           for q in capture["questions"]]
+                reports = {key: {"status": value["status"].lower(), "actual_minutes": value["actualMinutes"]}
+                           for key, value in capture["check_ins"].items()}
+                from license_planner.catalog import get_certification
+                passing_score = get_certification(capture["creation_request"]["certification_id"]).passing_score
+                context = build_context(original, set(), results, replan_from=cutoff, now=cutoff,
+                                        first_new_study_id=f"study-{next_id}", reports=reports, passing_score=passing_score)
+                expected = parse_schedule_rows(profile["preview"]["schedules"])
+                trace = profile["preview"]["tool_calls"][0]
+                if historical:
+                    actual = expected
+                    validate_reviews(context, trace["arguments"]["review_sessions"],
+                                     {t["topic"]: t for t in context["topics"] if t["review_only_reasons"]}, actual)
+                    changed = [r for r in actual if r.schedule_id not in context["protected_schedule_ids"]]
+                    for source in parse_schedule_rows(context["revisable_intervals"]):
+                        pieces = [r for r in changed if source.start_datetime <= r.start_datetime < source.end_datetime]
+                        self.assertEqual(pieces[0].start_datetime, source.start_datetime)
+                        self.assertEqual(pieces[-1].end_datetime, source.end_datetime)
+                        self.assertTrue(all(a.end_datetime == b.start_datetime for a, b in zip(pieces, pieces[1:])))
+                else:
+                    proposal = materialize_budgets(context, trace["arguments"]) if trace["tool"] == "propose_topic_budgets" else trace["arguments"]
+                    self.assertEqual(proposal, trace.get("validated_allocation", proposal))
+                    actual = validate_proposal(context, proposal)
+                self.assertEqual(actual, expected)
+                self.assertEqual(profile["preview"]["schedules"], profile["saved"]["schedules"])
+                for key in capture["check_ins"]:
+                    self.assertIn(next(r for r in original if r.schedule_id == key), actual)
+                for row in actual:
+                    if row.schedule_type == "study":
+                        self.assertGreaterEqual((row.end_datetime-row.start_datetime).total_seconds()/60, 15)
+
+    def test_no_new_short_sessions_and_exact_interval_coverage(self):
+        rng = random.Random(28)
+        for _ in range(200):
+            durations = [rng.randint(15, 180) for _ in range(8)] + [7]
+            start = datetime(2026, 12, 3, 19)
+            rows = tuple(ScheduleEntry(f"study-{i+1}", start + timedelta(days=i),
+                                      start + timedelta(days=i, minutes=duration), "old")
+                         for i, duration in enumerate(durations))
+            answers = [(f"topic-{i}", 1.0, rng.choice([True, False])) for i in range(8)]
+            revised = self.run_case(CASES[0], schedule=rows, keep=set(), results=answers,
+                                    first_new_study_id="study-10")
+            self.assertEqual(revised, self.run_case(CASES[0], schedule=rows, keep=set(),
+                             results=list(reversed(answers)), first_new_study_id="study-10"))
+            self.assertEqual({r.topic for r in revised}, {r[0] for r in answers})
+            totals = Counter()
+            for row in revised:
+                totals[row.topic] += int((row.end_datetime-row.start_datetime).total_seconds()/60)
+            for weak, _, correct in answers:
+                if not correct:
+                    for strong, _, other_correct in answers:
+                        if other_correct:
+                            self.assertGreaterEqual(totals[weak], totals[strong])
+            for source, duration in zip(rows, durations):
+                inside = [r for r in revised if source.start_datetime <= r.start_datetime < source.end_datetime]
+                self.assertEqual(inside[0].start_datetime, source.start_datetime)
+                self.assertEqual(inside[-1].end_datetime, source.end_datetime)
+                for a, b in zip(inside, inside[1:]):
+                    self.assertEqual(a.end_datetime, b.start_datetime)
+                self.assertTrue(all((r.end_datetime-r.start_datetime).total_seconds()/60 >= min(15, duration)
+                                    for r in inside))
+                if duration < 15:
+                    self.assertEqual(len(inside), 1)
+
+    def test_two_answer_sets_change_which_topics_receive_more_time(self):
+        start = datetime(2026, 12, 3, 19)
+        rows = tuple(ScheduleEntry(f"study-{i+1}", start + timedelta(days=i),
+                                  start + timedelta(days=i, minutes=60), "old") for i in range(8))
+        totals = []
+        for weak in ({"topic-0", "topic-1", "topic-2", "topic-3"},
+                     {"topic-4", "topic-5", "topic-6", "topic-7"}):
+            revised = self.run_case(CASES[0], schedule=rows, keep=set(),
+                                    results=[(f"topic-{i}", 1.0, f"topic-{i}" not in weak) for i in range(8)],
+                                    first_new_study_id="study-9")
+            minutes = Counter()
+            for row in revised:
+                minutes[row.topic] += int((row.end_datetime-row.start_datetime).total_seconds()/60)
+            self.assertEqual(sum(minutes.values()), 480)
+            self.assertGreater(min(minutes[t] for t in weak), max(m for t, m in minutes.items() if t not in weak))
+            totals.append(minutes)
+        for topic in totals[0]:
+            if topic < "topic-4":
+                self.assertGreater(totals[0][topic], totals[1][topic])
+            else:
+                self.assertLess(totals[0][topic], totals[1][topic])
+
+    def test_infeasible_topic_coverage_does_not_create_short_sessions(self):
+        start = datetime(2026, 12, 3, 19)
+        with self.assertRaisesRegex(ValueError, "NOT_ENOUGH_TIME"):
+            self.run_case(CASES[0], schedule=(ScheduleEntry("study-1", start, start + timedelta(minutes=29), "old"),),
+                          keep=set(), results=[("A", 1.0, False), ("B", 1.0, True)], first_new_study_id="study-2")
+
+    def test_valid_exact_targets_are_not_rounded_unnecessarily(self):
+        start = datetime(2026, 12, 3, 19)
+        revised = self.run_case(CASES[0], schedule=(ScheduleEntry("study-1", start, start + timedelta(minutes=60), "old"),),
+                                keep=set(), results=[("A", 1.0, False), ("B", 1.0, True)], first_new_study_id="study-2")
+        self.assertEqual([(r.topic, int((r.end_datetime-r.start_datetime).total_seconds()/60)) for r in revised],
+                         [("A", 40), ("B", 20)])
+
     def run_case(self, case, **overrides):
         options = dict(schedule=parse_schedule_rows(case["rows"]), keep=set(case["keep_schedule_ids"]),
                        results=[(row["topic"], row["possible_score"], row["is_correct"]) for row in case["results"]],

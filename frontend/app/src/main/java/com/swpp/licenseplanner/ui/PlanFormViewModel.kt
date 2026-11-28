@@ -1545,7 +1545,7 @@ class PlanFormViewModel(
                     "이 기기에 저장하지 못해 요청을 보내지 않았어요. 다시 저장한 뒤 다시 진단해 주세요.")
                 return@launch
             }
-            val received = reassessmentRepository.commit(input, shown.preview.rows)
+            val received = reassessmentRepository.commit(input.copy(previewToken = shown.preview.previewToken), shown.preview.rows)
             val outcome = if (received is ReassessmentOutcome.Committed) {
                 (reassessmentResponseProblem(input, received.response) ?: "result differs from the preview".takeIf {
                     received.response.schedules.associateBy { it.scheduleId } != shown.preview.rows.associateBy { it.scheduleId }

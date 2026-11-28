@@ -21,7 +21,9 @@ from schedule_adjuster.csv_io import parse_schedule_rows, render_schedule_csv as
 from schedule_adjuster.models import AdjustmentRequest, ScheduleEntry
 from schedule_adjuster.availability import load_personal_availability as load_adjuster_availability
 from schedule_adjuster.remaining_study import RemainingSession, place_remaining_sessions, validate_remaining_destinations
-from schedule_adjuster.reassessment import ReassessmentPreviewExpired, resplit_study
+from schedule_adjuster.reassessment import ReassessmentPreviewExpired
+from schedule_adjuster.reassessment_agent import ReassessmentAgent, build_context
+from schedule_adjuster import reassessment_preview
 from schedule_adjuster.schedule_logic import move_study_entry, place_study_entry_manually, remove_external_entry
 from study_availability import (
     EMPTY_WEEK, AvailabilityContext, context_payload, make_context, parse_availability_payload,
@@ -393,12 +395,7 @@ def _adjust_remaining(payload: dict[str, Any], store: StudyPlanStore) -> dict[st
 
 
 def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict[str, Any]:
-    """Stateless deterministic preview/commit over the same authoritative plan snapshot.
-
-    Identical input produces identical output; commits recheck both the live clock
-    and the saved CSV/metadata. No question, model, profile or plan writes happen
-    during preview. Device reports are represented only by keep_schedule_ids.
-    """
+    """Agent preview with progress; signed confirmation saves without a second model call."""
     fields = ("schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
               "preparation_start", "exam_date", "replan_from", "keep_schedule_ids",
               "first_new_study_id", "assessment_results", "commit")
@@ -412,6 +409,8 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
         raise ValueError("commit must be true or false")
     if payload["commit"] != ("previewed_schedules" in payload):
         raise ValueError("previewed_schedules is required when commit is true and not used otherwise")
+    if payload["commit"] != ("preview_token" in payload):
+        raise ValueError("preview_token is required when commit is true and not used otherwise")
     previewed = parse_schedule_rows(payload["previewed_schedules"]) if payload["commit"] else None
     keep = payload["keep_schedule_ids"]
     if (not isinstance(keep, list) or not all(isinstance(key, str) for key in keep)
@@ -437,21 +436,44 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
         raise ValueError("replan_from must be before exam_date")
     certification_id = snapshot.certification_id or LEGACY_PLAN_CERTIFICATION_ID
     results = reassessment_topic_results(certification_id, payload["assessment_results"])
-    revised = resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
-                           now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
-    csv_text = render_adjusted_csv(revised)
+    from license_planner.catalog import get_certification
+    passing_score = get_certification(certification_id).passing_score
+    def context():
+        value = build_context(snapshot.entries, set(keep), results, replan_from=cutoff,
+                              now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"],
+                              reports=payload.get("study_reports", {}), passing_score=passing_score)
+        value.update(certification_id=certification_id, preparation_start=payload["preparation_start"],
+                     exam_date=payload["exam_date"], availability=context_payload(snapshot.availability, include_end=True),
+                     plan_identifier=snapshot.identifier,
+                     plan_metadata_digest=snapshot.metadata_digest.hex() if snapshot.metadata_digest else "")
+        return value
+    agent_context = context()
     if previewed is not None:
-        # Validation above may span a minute boundary. Recheck before persisting.
-        resplit_study(snapshot.entries, set(keep), results, replan_from=cutoff,
-                      now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"])
-        # Server inputs outside the request, such as the question bank, can change after the preview.
-        if {row.schedule_id: row for row in previewed} != {row.schedule_id: row for row in revised}:
-            raise ReassessmentPreviewExpired("The confirmed rows differ from the current result. Preview again.")
+        # Only an output signed after agent validation can be committed. Never ask
+        # the model again on confirmation: another sample could differ.
+        rows = _csv_rows(render_adjusted_csv(previewed))
+        reassessment_preview.verify(payload["preview_token"], agent_context, rows)
+        context()  # Recheck the clock immediately before the optimistic write.
+        revised, summary, trace = previewed, "확인한 재평가 계획을 저장했어요.", []
+        token = payload["preview_token"]
+        csv_text = render_adjusted_csv(revised)
         store.update(snapshot, csv_text)
+    else:
+        revised, summary, trace = ReassessmentAgent().run(agent_context)
+        # Agent latency may cross the start of a session; do not issue a stale preview.
+        context()
+        csv_text = render_adjusted_csv(revised)
+        token = reassessment_preview.issue(agent_context, _csv_rows(csv_text))
+        # Show only facts we can establish from the input/output. The model's
+        # free-form explanation remains in the proposal trace, not product copy.
+        actual = sum(topic["actual_study_minutes"] or 0 for topic in agent_context["topics"])
+        summary = (f"학습 기록 {len(agent_context['study_reports'])}건(실제 학습 {actual}분)과 새 진단 결과를 "
+                   f"에이전트에 전달해 남은 {agent_context['total_remaining_minutes']}분의 배분을 제안받았어요. "
+                   "기존 시간대와 총학습 시간은 유지돼요.")
     return {"schedules": _csv_rows(csv_text), "schedule_csv": csv_text, **plan_fields(snapshot.identifier),
             "availability_snapshot": context_payload(snapshot.availability, include_end=True),
             "action": "reassessed" if payload["commit"] else "reassessment_preview",
-            "agent_summary": "새 진단 결과로 남은 공부의 토픽별 시간을 다시 나눴어요.", "tool_calls": []}
+            "preview_token": token, "agent_summary": summary, "tool_calls": trace}
 
 
 # AI-assisted with Codex, 2026-10-17; execution verification pending.

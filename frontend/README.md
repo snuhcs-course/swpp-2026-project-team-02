@@ -88,8 +88,10 @@ and the [remaining-work states](https://www.figma.com/design/bBGUci8yPyPwFP6dHnU
 Open this `frontend/` directory (not the repository root) in Android Studio and
 let Gradle sync. Pick a build variant: `demoDebug` (default) or `liveDebug`.
 
-The checked-in Gradle daemon requests Java 17
+The checked-in Gradle daemon requests Java 25
 (`gradle/gradle-daemon-jvm.properties`).
+This also makes Windows JVM tests use Java 25: the earlier Java 17 runtime
+failed to replace existing files in the AndroidX `AtomicFile` persistence tests.
 From the command line, using Android Studio's bundled Java runtime:
 
 ```bash
@@ -113,8 +115,8 @@ all required full gates/device recipes.
 
 The commands below reproduce CI; the local recipes do not replace them.
 CI runs these in order (Android SDK platform 36 and build-tools 36.0.0,
-Python 3.14). `ci.yml` provisions Java 25, while the checked-in Gradle daemon
-criteria select Java 17. The separate signed-release workflow provisions Java 17:
+Python 3.14). Both `ci.yml` and the signed-release workflow provision Java 25,
+matching the checked-in Gradle daemon criteria:
 
 ```bash
 # from frontend/
@@ -1589,9 +1591,30 @@ unreported study rows change, and only their topics: dates, times and total
 minutes stay fixed, and a row may split into back-to-back pieces where one topic
 ends and the next begins. Past rows, a row in progress, reported rows, external
 rows, the exam date, the preparation start and the study windows stay unchanged.
-Future minutes are split by the new scores alone (one minute per topic, the rest
-weighted by `2 − score/100`) and packed weakest-first in time order; completed
-study is not subtracted. The preview lists each topic's minutes before → after
+Live sends the selected plan's study reports (status and actual minutes) for an
+agent to consider alongside the existing topic workload and new scores. The agent
+chooses the allocation; the backend checks weak-topic coverage, minimum 15-minute
+pieces and every original interval. Live review-only rules apply ONLY to scores
+at least `min(certification passing_score + 10, 100)`, when at least 95% of a
+topic's original total is still revisable, or existing reports sum to at most 10
+actual minutes. Missing reports are unknown. The agent chooses
+one topic-specific continuous review and explains its duration; the backend
+checks `max(chosen duration, 15 minutes)` and a reduction from an original
+remainder over 15 minutes. Low-scoring topics are excluded from both rules.
+High-scoring topics satisfying neither condition have no per-topic reduction
+limit or minimum review allocation and may receive zero even below 100%.
+Only topics below the high-score threshold require low-score coverage.
+For net increases in weak-topic time, the Live agent declares each topic's review
+duration and proposed gain over its original remainder. Each gain covers at
+least one review (minimum 15); only proven physical infeasibility permits a
+15-minute minimum alternative. A concentration cap prevents a few topics from
+taking all extra time. Unknown/missing study is passed as null, not zero.
+The agent chooses budgets; the backend places exact budgets and verifies them.
+The original total time is preserved,
+so freed time is allocated elsewhere rather than removed from the plan.
+Already shorter intervals remain indivisible.
+Unreported past study is not treated as completed. Demo retains its labeled local
+score-based simulation. The preview lists each topic's minutes before → after
 with the same total, and every changed session with its date, time and old → new
 topic. **바뀌는 남은 공부가 없어요** and too little remaining time to re-split
 both leave the plan unchanged.
@@ -1607,12 +1630,16 @@ acknowledgments and kept conflicts stay under their original IDs, and new pieces
 get fresh study IDs. Calendar copies exported earlier keep their old topics;
 export stays the separate existing action.
 
-Demo uses bundled copies of the 18 questions, computes the preview and update
-locally with the same rules, saves on the device and keeps the local-demo label.
+Demo uses bundled copies of the 18 questions, computes a local score-based
+simulation with the same preservation/minimum-length guards, and saves on the device.
+Its allocation can differ from the live agent's proposal and keeps the local-demo label.
 It makes no network or calendar request. Live loads
 `GET /certifications/{id}/reassessment-questions` and sends
 `POST /schedules/adjust` with `mode: "reassessment"`, first with `commit: false`
-for the preview and then with `commit: true` after confirmation. The backend in
+for the agent preview and then with `commit: true`, the approved rows and their
+signed `preview_token` after confirmation. Confirmation does not ask the model
+again. The preview shows a factual summary of the progress supplied to the agent;
+unverified model prose is not rendered as a mastery assessment. The backend in
 this checkout implements both endpoints. Live requires deploying that version;
 older servers show **서버 업데이트가 필요해요** and never substitute demo questions.
 

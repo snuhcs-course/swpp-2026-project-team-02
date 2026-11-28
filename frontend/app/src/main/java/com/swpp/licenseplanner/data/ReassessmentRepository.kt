@@ -26,7 +26,8 @@ sealed interface ReassessmentQuestionsOutcome {
 /**
  * Everything one preview or confirmation sends: the selected plan as captured, the answered set,
  * the moment from which study may change, the reported rows kept from that moment on and the first
- * fresh study ID. Reports themselves never enter the HTTP model.
+ * fresh study ID. Live serializes status/actual minutes for reports on current rows;
+ * orphaned report history stays on the device. The signed token belongs to one preview.
  */
 data class ReassessmentInput(
     val source: SessionPlan,
@@ -35,6 +36,7 @@ data class ReassessmentInput(
     val replanFrom: LocalDateTime,
     val keep: Set<String> = Reassessment.keepIds(source, replanFrom),
     val firstNewStudyId: String = Reassessment.firstNewStudyId(source),
+    val previewToken: String? = null,
 ) {
     val topicAnswers: List<TopicAnswer>
         get() = questions.map { TopicAnswer(it.topic, it.question.possibleScore, Scoring.isCorrect(it.question, answers[it.question.id])) }

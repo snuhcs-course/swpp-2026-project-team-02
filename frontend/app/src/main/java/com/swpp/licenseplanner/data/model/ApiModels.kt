@@ -213,9 +213,14 @@ data class ReassessmentRequest(
     @SerialName("keep_schedule_ids") val keepScheduleIds: List<String>,
     @SerialName("first_new_study_id") val firstNewStudyId: String,
     @SerialName("assessment_results") val assessmentResults: AssessmentResults,
+    @SerialName("study_reports") val studyReports: Map<String, ReassessmentStudyReport> = emptyMap(),
+    @SerialName("preview_token") val previewToken: String? = null,
     /** Only on a confirmation: the rows the learner approved, so the server saves nothing else. */
     @SerialName("previewed_schedules") val previewedSchedules: List<ScheduleRow>? = null,
 )
+
+@Serializable
+data class ReassessmentStudyReport(val status: String, @SerialName("actual_minutes") val actualMinutes: Int)
 
 @Serializable
 data class ReassessmentResponse(
@@ -225,4 +230,5 @@ data class ReassessmentResponse(
     @SerialName("schedule_csv_file") val scheduleCsvFile: String,
     @SerialName("availability_snapshot") val availabilitySnapshot: AvailabilitySnapshot,
     @SerialName("agent_summary") val agentSummary: String? = null,
+    @SerialName("preview_token") val previewToken: String? = null,
 )

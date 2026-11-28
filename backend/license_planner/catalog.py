@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ class Certification:
     certification_id: str
     display_name: str
     topics: tuple[str, ...]
+    passing_score: float | None = None
 
 
 def load_certifications(path: Path = CATALOG_PATH) -> dict[str, Certification]:
@@ -46,7 +48,10 @@ def load_certifications(path: Path = CATALOG_PATH) -> dict[str, Certification]:
             raise RuntimeError(f"Certification {certification_id} needs a non-empty topics array")
         if len(set(topics)) != len(topics):
             raise RuntimeError(f"Certification {certification_id} has duplicate topics")
-        catalog[certification_id] = Certification(certification_id, display_name, tuple(topics))
+        passing_score = row.get("passing_score")
+        if passing_score is not None and (type(passing_score) not in (int, float) or not math.isfinite(passing_score) or not 0 <= passing_score <= 100):
+            raise RuntimeError(f"Certification {certification_id} needs a passing_score between 0 and 100")
+        catalog[certification_id] = Certification(certification_id, display_name, tuple(topics), passing_score)
     return catalog
 
 

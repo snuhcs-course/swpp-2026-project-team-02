@@ -30,12 +30,27 @@ class ReassessmentTest {
         assertNull(Reassessment.budget(Reassessment.scores(answers), 2))
     }
 
+    @Test fun irregularIntervalsGiveTheLongerAllocationToTheWeakerTopic() {
+        val input = listOf(
+            rows[3].copy(endDate = "2026/12/03/19/15"),
+            rows[4].copy(endDate = "2026/12/04/19/29"))
+        val answers = listOf(TopicAnswer("weak", 1.0, false), TopicAnswer("strong", 1.0, true))
+        val result = Reassessment.resplit(input, emptySet(), answers, replanFrom, replanFrom, "study-5") as ResplitResult.Revised
+        val totals = result.rows.groupBy { it.topic }.mapValues { (_, rows) -> rows.sumOf {
+            java.time.Duration.between(WireDateTime.parseOrNull(it.startDate), WireDateTime.parseOrNull(it.endDate)).toMinutes()
+        } }
+        assertEquals(mapOf("weak" to 29L, "strong" to 15L), totals)
+        assertTrue(Reassessment.isValidRevision(input, emptySet(), replanFrom, "study-5", result.rows))
+        assertEquals(ResplitResult.Failed(ReassessmentFailure.NotEnoughTime),
+            Reassessment.resplit(listOf(input[1]), emptySet(), answers, replanFrom, replanFrom, "study-5"))
+    }
+
     @Test fun previewListsTopicMinutesAndOnlyTheChangedSession() {
         val preview = Reassessment.preview(rows, keep, replanFrom, revised())
         assertEquals(listOf(
-            TopicMinutes(LocalTopics.SPREADSHEET_BASICS, 90, 34),
-            TopicMinutes(LocalTopics.CHARTS_AND_ANALYSIS, 60, 66),
-            TopicMinutes(LocalTopics.MACROS, 0, 50),
+            TopicMinutes(LocalTopics.SPREADSHEET_BASICS, 90, 30),
+            TopicMinutes(LocalTopics.CHARTS_AND_ANALYSIS, 60, 75),
+            TopicMinutes(LocalTopics.MACROS, 0, 45),
         ), preview.topics)
         assertEquals(150, preview.totalMinutes)
         assertEquals(1, preview.sessions.size)

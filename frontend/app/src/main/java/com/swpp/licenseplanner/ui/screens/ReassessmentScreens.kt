@@ -296,6 +296,12 @@ private fun ReassessmentPreviewScreen(
         Heading("계획 ${state.source.ordinal} · $CERTIFICATION_NAME")
         if (state.source.isDemo) Note("로컬 시연 계산 · 서버나 AI를 사용하지 않아요.")
         Text("바꿀 수 있는 남은 공부 ${preview.totalMinutes}분", style = MaterialTheme.typography.titleMedium, color = Ink)
+        preview.rationale?.takeIf { it.isNotBlank() }?.let { reason ->
+            OutlinedCard {
+                Text("학습 기록과 새 진단을 반영한 제안", style = MaterialTheme.typography.titleSmall, color = Ink)
+                Note(reason)
+            }
+        }
         ReassessmentTopicMinutes(preview)
         Text("바뀌는 일정 ${pieces.size}개", style = MaterialTheme.typography.titleSmall, color = Ink)
         for ((before, piece) in pieces) {
