@@ -152,6 +152,35 @@ class ReassessmentApiTests(unittest.TestCase):
                          [next(key for key in before if key.endswith(".csv"))])
         self.assert_invalid(commit, "PLAN_CONFLICT", 409)
 
+    def test_model_chosen_single_review_is_signed_saved_and_read_back(self):
+        from schedule_adjuster.reassessment_agent import ReassessmentAgent
+        topics = ["매크로 활용"] + sorted({q["topic"] for q in self.questions} - {"매크로 활용"})
+        proposal = {"rationale": "명시적으로 보고된 실제 학습이 10분이므로 대표 문제를 한 번 복습합니다.",
+                    "weak_topic_allocations": [{"topic": t, "minutes": 30, "review_minutes": 15, "reason": "진단 저점수와 미보고 상태를 고려한 추가 학습"} for t in topics if t != "매크로 활용"],
+                    "review_sessions": [{"topic": "매크로 활용", "minutes": 30, "reason": "대표 문제 풀이와 오답 확인에 30분 선택"}],
+                    "allocations": [{"schedule_id": f"study-{4+i}", "pieces": [{"topic": t, "minutes": 30} for t in topics[i*4:(i+1)*4]]} for i in range(2)]}
+        reply = {"status": "completed", "output": [{"type": "function_call", "call_id": "review-1", "name": "propose_reassessment", "arguments": json.dumps(proposal)}]}
+        payload = self.payload(study_reports={"study-1": {"status": "partly", "actual_minutes": 10}})
+        for result, question in zip(payload["assessment_results"]["results"], self.questions):
+            if question["topic"] == "매크로 활용":
+                result.update(user_answer=question["correct_answer"], is_correct=True)
+        before = self.files()
+        with patch.object(api_service, "ReassessmentAgent", ReassessmentAgent), \
+             patch("schedule_adjuster.reassessment_agent.load_api_key", return_value="synthetic"), \
+             patch("schedule_adjuster.reassessment_agent.load_model", return_value="test-model"), \
+             patch("schedule_adjuster.reassessment_agent.create_response", return_value=reply) as model:
+            status, preview = self.call("/schedules/adjust", payload)
+            self.assertEqual(status, 200, preview)
+            self.assertEqual(self.files(), before)
+            self.assertEqual(preview["tool_calls"][0]["arguments"]["review_sessions"][0]["minutes"], 30)
+            commit = payload | {"commit": True, "previewed_schedules": preview["schedules"], "preview_token": preview["preview_token"]}
+            status, saved = self.call("/schedules/adjust", commit)
+            self.assertEqual(status, 200, saved)
+            status, readback = self.call("/study-plans?" + urlencode({"schedule_csv_file": self.plan}))
+            self.assertEqual(status, 200, readback)
+            self.assertEqual(saved["schedules"], preview["schedules"])
+            self.assertEqual(readback["plans"][0]["schedules"], preview["schedules"])
+            self.assertEqual(model.call_count, 1)
     def test_two_weakness_profiles_preview_commit_and_http_readback(self):
         """Compare independent runs on exactly the same original saved plan."""
         topics = sorted({q["topic"] for q in self.questions})

@@ -30,9 +30,15 @@ class GeneratedPlanReassessmentTest {
     @Before fun before() = Dispatchers.setMain(dispatcher)
     @After fun after() = Dispatchers.resetMain()
 
-    @Test fun bothCapturedAnswerProfilesPreserveReportsAndSurviveAppStateRecreation() = runTest(dispatcher) {
+    @Test fun bothCapturedAnswerProfilesPreserveReportsAndSurviveAppStateRecreation() =
+        replayCapture("generated_plan_reassessment.json")
+
+    @Test fun lowStudyReportsAndAgentChosenReviewsSurviveAppStateRecreation() =
+        replayCapture("generated_plan_low_study_reassessment.json")
+
+    private fun replayCapture(filename: String) = runTest(dispatcher) {
         val fixture = ApiJson.parseToJsonElement(File(requireNotNull(System.getProperty("user.dir")))
-            .resolve("../../backend/tests/schedule_adjuster_tests/fixtures/generated_plan_reassessment.json").readText()).jsonObject
+            .resolve("../../backend/tests/schedule_adjuster_tests/fixtures/$filename").readText()).jsonObject
         val rawRequest = fixture.getValue("creation_request").jsonObject
         // These optional API fields have required Android DTO fields; use the API defaults.
         val request = ApiJson.decodeFromJsonElement<StudyPlanRequest>(JsonObject(rawRequest + mapOf(
@@ -44,7 +50,9 @@ class GeneratedPlanReassessmentTest {
             StudyCheckIn(StudyCheckInStatus.valueOf(record.getValue("status").jsonPrimitive.content),
                 record.getValue("actualMinutes").jsonPrimitive.int)
         }
-        assertTrue(reports.values.any { it.status == StudyCheckInStatus.Done })
+        if (filename == "generated_plan_reassessment.json") {
+            assertTrue(reports.values.any { it.status == StudyCheckInStatus.Done })
+        }
         assertTrue(reports.values.any { it.status == StudyCheckInStatus.Partly })
         for (element in fixture.getValue("profiles").jsonArray) {
             val profile = element.jsonObject

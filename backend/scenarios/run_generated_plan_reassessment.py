@@ -90,6 +90,8 @@ def main():
                         help="Explicitly export an offline regression capture for Python and Android tests")
     parser.add_argument("--reuse-generation", type=Path,
                         help="Reuse a captured real model generation; reassessment still uses live model requests")
+    parser.add_argument("--low-reported-study", action="store_true",
+                        help="Report only 10 actual study minutes for the first elapsed topic")
     options = parser.parse_args()
     options.output.parent.mkdir(parents=True, exist_ok=True)
     public = get_public_questions(CERT)["questions"]
@@ -165,6 +167,9 @@ def main():
         assert len(past) >= 2 and len(totals(original)) == 8 and len(revisable) >= 2
         check_ins = {past[0]["schedule_id"]: {"status": "Done", "actualMinutes": minutes(past[0])},
                      past[1]["schedule_id"]: {"status": "Partly", "actualMinutes": max(1, minutes(past[1]) // 2)}}
+        if options.low_reported_study:
+            assert past[0]["topic"] == past[1]["topic"] and all(minutes(r) >= 5 for r in past[:2])
+            check_ins = {r["schedule_id"]: {"status": "Partly", "actualMinutes": 5} for r in past[:2]}
         questions = call(f"/certifications/{CERT}/reassessment-questions")["questions"]
         assert set(q["topic"] for q in questions) == set(topics)
         next_id = max(int(r["schedule_id"][6:]) for r in original if r["schedule_id"].startswith("study-")) + 1
@@ -174,6 +179,7 @@ def main():
                   "original_remaining_minutes": sum(minutes(r) for r in revisable), "profiles": []}
         before_metadata = {p.name: p.read_bytes() for p in store.directory.glob("*.json")}
         for label, weak in (("A", set(topics[:4])), ("B", set(topics[4:]))):
+            print(f"Live reassessment: {label}", flush=True)
             store.update(store.snapshot(plan_id), generated["schedule_csv"])
             baseline_files = {p.name: p.read_bytes() for p in store.directory.iterdir() if p.is_file()}
             payload = {"mode": "reassessment", "commit": False, "schedule_csv_file": plan_id,
@@ -215,6 +221,8 @@ def main():
                 "readback": readback, "remaining_minutes": sum(allocation.values()),
                 "agent_context": REASSESSMENT_AGENTS[-1].captured_context,
                 "agent_model_requests": REASSESSMENT_AGENTS[-1].api_request_count,
+                "agent_validation_errors": REASSESSMENT_AGENTS[-1].validation_errors,
+                "agent_model": REASSESSMENT_AGENTS[-1].model,
                 "minimum_remaining_session_minutes": min(map(minutes, changed)),
                 "new_short_sessions": sum(minutes(r) < 15 for r in changed if r not in revisable),
                 "checks": {"preview_read_only": True, "protected_rows_and_reported_ids_preserved": True,

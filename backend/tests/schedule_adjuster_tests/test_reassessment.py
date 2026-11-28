@@ -20,8 +20,22 @@ CASES = json.loads((Path(__file__).parent / "fixtures/reassessment_parity.json")
 
 class ReassessmentTests(unittest.TestCase):
     def test_captured_real_generated_plan_matches_both_live_api_results(self):
-        from schedule_adjuster.reassessment_agent import build_context, validate_proposal
-        capture = json.loads((Path(__file__).parent / "fixtures/generated_plan_reassessment.json").read_text(encoding="utf-8"))
+        self.check_capture("generated_plan_reassessment.json")
+
+    def test_historical_low_study_capture_preserves_high_score_review_rules(self):
+        # This earlier real capture predates balanced weak additions. Keep it as
+        # historical evidence for the unchanged high-score rules, not as a v5 proposal.
+        self.check_capture("generated_plan_low_study_reassessment.json", historical=True)
+        capture = json.loads((Path(__file__).parent / "fixtures/generated_plan_low_study_reassessment.json").read_text(encoding="utf-8"))
+        self.assertEqual(sum(v["actualMinutes"] for v in capture["check_ins"].values()), 10)
+        a, b = capture["profiles"]
+        review_names = lambda profile: {r["topic"] for r in profile["preview"]["tool_calls"][0]["arguments"]["review_sessions"]}
+        self.assertNotIn("매크로 활용", review_names(a))
+        self.assertIn("매크로 활용", review_names(b))
+
+    def check_capture(self, filename, historical=False):
+        from schedule_adjuster.reassessment_agent import build_context, validate_proposal, materialize_budgets, validate_reviews
+        capture = json.loads((Path(__file__).parent / "fixtures" / filename).read_text(encoding="utf-8"))
         original = parse_schedule_rows(capture["generated"]["schedules"])
         next_id = max(int(r.schedule_id[6:]) for r in original if r.schedule_type == "study") + 1
         cutoff = date(capture["replan_from"])
@@ -31,10 +45,26 @@ class ReassessmentTests(unittest.TestCase):
                            for q in capture["questions"]]
                 reports = {key: {"status": value["status"].lower(), "actual_minutes": value["actualMinutes"]}
                            for key, value in capture["check_ins"].items()}
+                from license_planner.catalog import get_certification
+                passing_score = get_certification(capture["creation_request"]["certification_id"]).passing_score
                 context = build_context(original, set(), results, replan_from=cutoff, now=cutoff,
-                                        first_new_study_id=f"study-{next_id}", reports=reports)
-                actual = validate_proposal(context, profile["preview"]["tool_calls"][0]["arguments"])
+                                        first_new_study_id=f"study-{next_id}", reports=reports, passing_score=passing_score)
                 expected = parse_schedule_rows(profile["preview"]["schedules"])
+                trace = profile["preview"]["tool_calls"][0]
+                if historical:
+                    actual = expected
+                    validate_reviews(context, trace["arguments"]["review_sessions"],
+                                     {t["topic"]: t for t in context["topics"] if t["review_only_reasons"]}, actual)
+                    changed = [r for r in actual if r.schedule_id not in context["protected_schedule_ids"]]
+                    for source in parse_schedule_rows(context["revisable_intervals"]):
+                        pieces = [r for r in changed if source.start_datetime <= r.start_datetime < source.end_datetime]
+                        self.assertEqual(pieces[0].start_datetime, source.start_datetime)
+                        self.assertEqual(pieces[-1].end_datetime, source.end_datetime)
+                        self.assertTrue(all(a.end_datetime == b.start_datetime for a, b in zip(pieces, pieces[1:])))
+                else:
+                    proposal = materialize_budgets(context, trace["arguments"]) if trace["tool"] == "propose_topic_budgets" else trace["arguments"]
+                    self.assertEqual(proposal, trace.get("validated_allocation", proposal))
+                    actual = validate_proposal(context, proposal)
                 self.assertEqual(actual, expected)
                 self.assertEqual(profile["preview"]["schedules"], profile["saved"]["schedules"])
                 for key in capture["check_ins"]:

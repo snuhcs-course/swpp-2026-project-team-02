@@ -879,15 +879,52 @@ rows keep their IDs; changed pieces receive fresh IDs from `first_new_study_id`,
 which must exceed every current study ID. FE may reserve a higher number for
 retained reports. Preparation dates, exam date and study windows cannot change.
 
-The model receives each topic's current planned minutes, actual study minutes,
+The model receives each topic's current planned minutes, reported actual study minutes,
 completed planned work, unmet planned work, revisable minutes and new score.
 Done credits the row's planned work, partly credits up to its scheduled minutes;
 unreported past rows are not inferred to be completed. The model chooses pieces
 inside each revisable interval and records its explanation in the proposal trace.
 The app's `agent_summary` is generated from verified progress/remaining-time data;
 free-form model prose is not shown as a claim about mastery or passing the exam.
-Every topic below 100% on the sample diagnostic must receive future study;
-100%-scoring topics can receive zero. All new pieces must be at least 15 minutes;
+Actual minutes are null when no report exists; an explicit missed/zero report is
+0. The app summary sums reported minutes only. Low-scoring topics have individual
+`weak_topic_allocations` proposals containing final minutes, agent-chosen
+`review_minutes` and a reason connecting score, reports and original remainder.
+When net weak-topic time increases, each gain over its original revisable minutes
+must cover at least one such review (minimum 15). Physical placement checks those
+minima and a continuous review-sized run inside the existing intervals. Only a
+proven infeasible full minimum proposal permits a 15-minute minimum alternative;
+unknown feasibility/search limits and invalid model arithmetic never permit it.
+If even 15-minute additions cannot fit, the proposal is rejected.
+To prevent concentration, a gain is also capped at the larger of its effective
+minimum and 1.5 times the equal share of the net weak-topic increase (rounded up).
+The actual budgets remain model choices. The preferred `propose_topic_budgets`
+tool lets the backend place those exact budgets; it never chooses replacement
+topic totals. Validated allocations and fallback decisions are kept in tool trace.
+Every topic below `min(certification passing_score + 10, 100)` on the sample
+diagnostic must receive future study.
+Only topics scoring at least `min(certification passing_score + 10, 100)` become
+review-only under the following rules: original planned total is positive and
+revisable minutes are at least 95% of that total, OR at least one valid study
+report exists and reported actual minutes sum to at most 10. No reports is
+unknown and does not trigger the second rule. Passing scores come from the
+server's certification catalog, never a client-supplied threshold. The supported
+Level 2 written exam uses passing_score 60, giving a high-score threshold of 70.
+The agent chooses a topic-specific duration and reason in its internal
+`review_sessions` proposal. The backend requires exactly one continuous future
+review of `max(declared minutes, 15)`, strictly below the original remainder when
+that remainder exceeds 15 minutes. A shorter remainder can reach the 15-minute
+floor. A zero-remainder high-scoring topic with explicitly low reported study
+receives one new review. Low-scoring topics are excluded from both review rules.
+Adjacent pieces across original row boundaries count as one continuous session.
+Review duration is not fixed at 15 minutes. Rule 3: high-scoring topics satisfying
+neither condition have no per-topic reduction limit or review floor, including
+scores between the high-score threshold and 100. They may receive zero, a reduced
+amount, or their existing amount as chosen by the agent; failure to trigger the
+review-only rules is not a requirement to retain their original time.
+Released time is redistributed within the original intervals; total time
+is still preserved. If the constraints cannot coexist, return `NOT_ENOUGH_TIME`
+or reject invalid model proposals without saving. All new pieces must be at least 15 minutes;
 an already shorter original interval stays indivisible. Invalid proposals are
 returned to the model for correction, at most four requests. Failure never falls
 back to the old fixed score formula and never saves a plan. Study reports are

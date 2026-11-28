@@ -436,10 +436,12 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
         raise ValueError("replan_from must be before exam_date")
     certification_id = snapshot.certification_id or LEGACY_PLAN_CERTIFICATION_ID
     results = reassessment_topic_results(certification_id, payload["assessment_results"])
+    from license_planner.catalog import get_certification
+    passing_score = get_certification(certification_id).passing_score
     def context():
         value = build_context(snapshot.entries, set(keep), results, replan_from=cutoff,
                               now=current_korea_minute(), first_new_study_id=payload["first_new_study_id"],
-                              reports=payload.get("study_reports", {}))
+                              reports=payload.get("study_reports", {}), passing_score=passing_score)
         value.update(certification_id=certification_id, preparation_start=payload["preparation_start"],
                      exam_date=payload["exam_date"], availability=context_payload(snapshot.availability, include_end=True),
                      plan_identifier=snapshot.identifier,
@@ -464,7 +466,7 @@ def _adjust_reassessment(payload: dict[str, Any], store: StudyPlanStore) -> dict
         token = reassessment_preview.issue(agent_context, _csv_rows(csv_text))
         # Show only facts we can establish from the input/output. The model's
         # free-form explanation remains in the proposal trace, not product copy.
-        actual = sum(topic["actual_study_minutes"] for topic in agent_context["topics"])
+        actual = sum(topic["actual_study_minutes"] or 0 for topic in agent_context["topics"])
         summary = (f"학습 기록 {len(agent_context['study_reports'])}건(실제 학습 {actual}분)과 새 진단 결과를 "
                    f"에이전트에 전달해 남은 {agent_context['total_remaining_minutes']}분의 배분을 제안받았어요. "
                    "기존 시간대와 총학습 시간은 유지돼요.")

@@ -23,4 +23,8 @@ class ScriptedReassessmentAgent:
                 inside = [r for r in rows if r.schedule_type == "study" and row.start_datetime <= r.start_datetime and r.end_datetime <= row.end_datetime]
                 allocations.append({"schedule_id": row.schedule_id, "pieces": [{"topic": r.topic, "minutes": duration(r)} for r in inside]})
         proposal = {"allocations": allocations, "rationale": "오프라인 계약 테스트의 고정 제안입니다."}
+        weak = [t for t in context["topics"] if t["new_score_percent"] < context["high_score_threshold_percent"]]
+        if weak:
+            proposal["weak_topic_allocations"] = [{"topic": t["topic"], "minutes": sum(duration(r) for r in rows if r.topic == t["topic"] and r.schedule_id not in context["protected_schedule_ids"]),
+                                                   "review_minutes": 15, "reason": "오프라인 계약 테스트에서 원본·진단에 따른 분량 검증"} for t in weak]
         return validate_proposal(context, proposal), proposal["rationale"], [{"tool": "propose_reassessment", "arguments": proposal}]

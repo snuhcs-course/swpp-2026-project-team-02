@@ -1,0 +1,1715 @@
+{
+  "provenance": {
+    "model_mocked": false,
+    "planner_mocked": false,
+    "reassessment_mocked": false,
+    "models": [
+      "google/gemini-2.5-flash"
+    ],
+    "model_requests": 3,
+    "successful_model_responses": 3,
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {
+          "problem_topics": null
+        }
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "generation_reused": true
+  },
+  "creation_request": {
+    "certification_id": "computer_specialist_level_2",
+    "preparation_start": "2026/11/30/00/00",
+    "exam_date": "2026/12/08/00/00",
+    "weekly_availability": {
+      "monday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "tuesday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "wednesday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "thursday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "friday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "saturday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ],
+      "sunday": [
+        {
+          "start": "18:00",
+          "duration_minutes": 120
+        }
+      ]
+    },
+    "availability_overrides": {},
+    "busy_schedules": [
+      {
+        "schedule_id": "1",
+        "start_date": "2026/12/03/16/00",
+        "end_date": "2026/12/03/17/00",
+        "topic": "기존 외부 일정"
+      }
+    ],
+    "assessment_results": {
+      "certification_id": "computer_specialist_level_2",
+      "results": [
+        {
+          "problem_id": 1,
+          "question": "셀 주소 A1을 수식에서 고정 참조로 사용하려면 어떻게 표시하나요?",
+          "choices": {
+            "A": "A1",
+            "B": "$A$1",
+            "C": "A$",
+            "D": "#A1",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "B",
+          "is_correct": true
+        },
+        {
+          "problem_id": 2,
+          "question": "A1부터 A5까지의 합계를 구하는 수식으로 알맞은 것은 무엇인가요?",
+          "choices": {
+            "A": "=COUNT(A1:A5)",
+            "B": "=SUM(A1:A5)",
+            "C": "=MAX(A1:A5)",
+            "D": "=AVERAGE(A1:A5)",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "B",
+          "is_correct": true
+        },
+        {
+          "problem_id": 3,
+          "question": "A1의 값이 60 이상이면 '통과', 아니면 '재시험'을 표시하는 수식은 무엇인가요?",
+          "choices": {
+            "A": "=IF(A1>=60,\"통과\",\"재시험\")",
+            "B": "=SUM(A1>=60,\"통과\",\"재시험\")",
+            "C": "=COUNTIF(A1,60,\"통과\")",
+            "D": "=AVERAGE(A1>=60)",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "A",
+          "possible_score": 1,
+          "user_answer": "A",
+          "is_correct": true
+        },
+        {
+          "problem_id": 4,
+          "question": "전체에 대한 각 항목의 비율을 비교할 때 일반적으로 알맞은 차트는 무엇인가요?",
+          "choices": {
+            "A": "원형 차트",
+            "B": "분산형 차트",
+            "C": "주식형 차트",
+            "D": "표면형 차트",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "A",
+          "possible_score": 1,
+          "user_answer": "A",
+          "is_correct": true
+        },
+        {
+          "problem_id": 5,
+          "question": "자동 필터를 적용했을 때 조건에 맞지 않는 행은 어떻게 되나요?",
+          "choices": {
+            "A": "영구 삭제됩니다",
+            "B": "다른 워크시트로 이동합니다",
+            "C": "화면에서 일시적으로 숨겨집니다",
+            "D": "셀 수식이 값으로 바뀝니다",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "C",
+          "possible_score": 1,
+          "user_answer": "C",
+          "is_correct": true
+        },
+        {
+          "problem_id": 6,
+          "question": "Windows 파일 탐색기에서 선택한 파일의 이름을 바꾸는 바로 가기 키는 무엇인가요?",
+          "choices": {
+            "A": "F1",
+            "B": "F2",
+            "C": "F5",
+            "D": "F11",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "B",
+          "is_correct": true
+        },
+        {
+          "problem_id": 7,
+          "question": "실행 중인 프로그램의 작업 데이터를 임시로 보관하며 전원을 끄면 내용이 사라지는 장치는 무엇인가요?",
+          "choices": {
+            "A": "SSD",
+            "B": "ROM",
+            "C": "USB 플래시 드라이브",
+            "D": "RAM",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "D",
+          "possible_score": 1,
+          "user_answer": "D",
+          "is_correct": true
+        },
+        {
+          "problem_id": 8,
+          "question": "Windows에서 설치된 장치의 상태를 확인하고 특정 장치의 드라이버를 업데이트하는 도구는 무엇인가요?",
+          "choices": {
+            "A": "장치 관리자",
+            "B": "파일 탐색기",
+            "C": "디스크 정리",
+            "D": "작업 스케줄러",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "A",
+          "possible_score": 1,
+          "user_answer": "A",
+          "is_correct": true
+        },
+        {
+          "problem_id": 9,
+          "question": "웹 주소에 입력한 도메인 이름을 IP 주소로 확인할 때 사용하는 서비스는 무엇인가요?",
+          "choices": {
+            "A": "SMTP",
+            "B": "FTP",
+            "C": "DNS",
+            "D": "DHCP",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "C",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 10,
+          "question": "사진을 저장할 때 널리 사용하는 손실 압축 이미지 형식은 무엇인가요?",
+          "choices": {
+            "A": "PNG",
+            "B": "JPEG",
+            "C": "BMP",
+            "D": "SVG",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 11,
+          "question": "네트워크를 통해 저장 공간이나 컴퓨팅 자원을 필요에 따라 사용하는 방식은 무엇인가요?",
+          "choices": {
+            "A": "디스크 조각 모음",
+            "B": "로컬 이중 부팅",
+            "C": "화면 미러링",
+            "D": "클라우드 컴퓨팅",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "D",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 12,
+          "question": "웹 페이지의 제목, 문단, 링크 같은 문서 구조를 정의하는 데 사용하는 것은 무엇인가요?",
+          "choices": {
+            "A": "HTML",
+            "B": "CSS",
+            "C": "DNS",
+            "D": "JPEG",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "A",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 13,
+          "question": "은행을 사칭한 이메일이 링크에서 비밀번호를 입력하라고 합니다. 가장 적절한 대응은 무엇인가요?",
+          "choices": {
+            "A": "자물쇠 표시만 보고 입력한다",
+            "B": "발신자 이름만 보고 입력한다",
+            "C": "링크를 열지 않고 은행 공식 앱이나 연락처로 확인한다",
+            "D": "답장으로 비밀번호를 보낸다",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "C",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 14,
+          "question": "정해진 규칙에 따라 들어오거나 나가는 네트워크 통신을 허용하거나 차단하는 기능은 무엇인가요?",
+          "choices": {
+            "A": "파일 압축",
+            "B": "방화벽",
+            "C": "화면 잠금",
+            "D": "디스크 조각 모음",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 15,
+          "question": "Excel 2021에서 사용자가 워크시트를 삭제하거나 이름을 바꾸지 못하게 하려면 어떤 기능을 사용하나요?",
+          "choices": {
+            "A": "셀 잠금",
+            "B": "인쇄 영역 설정",
+            "C": "틀 고정",
+            "D": "통합 문서 구조 보호",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "D",
+          "possible_score": 1,
+          "user_answer": "D",
+          "is_correct": true
+        },
+        {
+          "problem_id": 16,
+          "question": "Excel 2021에서 값이 100 이상인 셀만 자동으로 색을 표시하려면 어떤 기능이 알맞나요?",
+          "choices": {
+            "A": "조건부 서식",
+            "B": "틀 고정",
+            "C": "찾기 및 바꾸기",
+            "D": "인쇄 제목",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "A",
+          "possible_score": 1,
+          "user_answer": "A",
+          "is_correct": true
+        },
+        {
+          "problem_id": 17,
+          "question": "Excel 2021에서 여러 페이지에 걸친 표의 첫 행을 각 인쇄 페이지 위에 반복하려면 어떤 기능이 알맞나요?",
+          "choices": {
+            "A": "인쇄 영역",
+            "B": "틀 고정",
+            "C": "인쇄 제목",
+            "D": "페이지 나누기 미리 보기",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "C",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        },
+        {
+          "problem_id": 18,
+          "question": "VBA 매크로를 포함한 통합 문서를 표준 매크로 사용 형식으로 저장할 때 사용하는 확장자는 무엇인가요?",
+          "choices": {
+            "A": ".xlsx",
+            "B": ".xlsm",
+            "C": ".csv",
+            "D": ".xltx",
+            "UNKNOWN": "모르겠음"
+          },
+          "correct_answer": "B",
+          "possible_score": 1,
+          "user_answer": "UNKNOWN",
+          "is_correct": false
+        }
+      ]
+    }
+  },
+  "generated": {
+    "schedules": [
+      {
+        "schedule_id": "study-2",
+        "start_date": "2026/11/30/18/00",
+        "end_date": "2026/11/30/20/00",
+        "topic": "매크로 활용"
+      },
+      {
+        "schedule_id": "study-3",
+        "start_date": "2026/12/01/18/00",
+        "end_date": "2026/12/01/18/40",
+        "topic": "매크로 활용"
+      },
+      {
+        "schedule_id": "study-4",
+        "start_date": "2026/12/01/18/40",
+        "end_date": "2026/12/01/20/00",
+        "topic": "스프레드시트 기본"
+      },
+      {
+        "schedule_id": "study-5",
+        "start_date": "2026/12/02/18/00",
+        "end_date": "2026/12/02/20/00",
+        "topic": "인터넷 자료 활용"
+      },
+      {
+        "schedule_id": "external-1",
+        "start_date": "2026/12/03/16/00",
+        "end_date": "2026/12/03/17/00",
+        "topic": "기존 외부 일정"
+      },
+      {
+        "schedule_id": "study-6",
+        "start_date": "2026/12/03/18/00",
+        "end_date": "2026/12/03/18/40",
+        "topic": "인터넷 자료 활용"
+      },
+      {
+        "schedule_id": "study-7",
+        "start_date": "2026/12/03/18/40",
+        "end_date": "2026/12/03/20/00",
+        "topic": "차트와 분석"
+      },
+      {
+        "schedule_id": "study-8",
+        "start_date": "2026/12/04/18/00",
+        "end_date": "2026/12/04/20/00",
+        "topic": "컴퓨터 시스템 보호"
+      },
+      {
+        "schedule_id": "study-9",
+        "start_date": "2026/12/05/18/00",
+        "end_date": "2026/12/05/18/40",
+        "topic": "컴퓨터 시스템 보호"
+      },
+      {
+        "schedule_id": "study-10",
+        "start_date": "2026/12/05/18/40",
+        "end_date": "2026/12/05/20/00",
+        "topic": "컴퓨터 시스템 활용"
+      },
+      {
+        "schedule_id": "study-11",
+        "start_date": "2026/12/06/18/00",
+        "end_date": "2026/12/06/20/00",
+        "topic": "페이지 설정과 인쇄"
+      },
+      {
+        "schedule_id": "study-12",
+        "start_date": "2026/12/07/18/00",
+        "end_date": "2026/12/07/18/40",
+        "topic": "페이지 설정과 인쇄"
+      },
+      {
+        "schedule_id": "study-13",
+        "start_date": "2026/12/07/18/40",
+        "end_date": "2026/12/07/20/00",
+        "topic": "함수와 데이터 관리"
+      }
+    ],
+    "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-2,2026/11/30/18/00,2026/11/30/20/00,매크로 활용\nstudy-3,2026/12/01/18/00,2026/12/01/18/40,매크로 활용\nstudy-4,2026/12/01/18/40,2026/12/01/20/00,스프레드시트 기본\nstudy-5,2026/12/02/18/00,2026/12/02/20/00,인터넷 자료 활용\nexternal-1,2026/12/03/16/00,2026/12/03/17/00,기존 외부 일정\nstudy-6,2026/12/03/18/00,2026/12/03/18/40,인터넷 자료 활용\nstudy-7,2026/12/03/18/40,2026/12/03/20/00,차트와 분석\nstudy-8,2026/12/04/18/00,2026/12/04/20/00,컴퓨터 시스템 보호\nstudy-9,2026/12/05/18/00,2026/12/05/18/40,컴퓨터 시스템 보호\nstudy-10,2026/12/05/18/40,2026/12/05/20/00,컴퓨터 시스템 활용\nstudy-11,2026/12/06/18/00,2026/12/06/20/00,페이지 설정과 인쇄\nstudy-12,2026/12/07/18/00,2026/12/07/18/40,페이지 설정과 인쇄\nstudy-13,2026/12/07/18/40,2026/12/07/20/00,함수와 데이터 관리\n",
+    "schedule_csv_file": "license_planner/output/study_plan_20261128T233526016429+0900_1db994e4.csv",
+    "schedule_csv_url": "/api/v1/study-plans/study_plan_20261128T233526016429+0900_1db994e4.csv",
+    "agent_summary": "8개 학습 주제에 학습 일정 12개, 총 960분을 배치했습니다. 준비 기간의 공부 가능 시간은 총 960분입니다.",
+    "tool_calls": [
+      {
+        "tool": "get_certification_profile",
+        "arguments": {
+          "certification_id": "computer_specialist_level_2"
+        }
+      },
+      {
+        "tool": "analyze_exam_results",
+        "arguments": {
+          "problem_topics": null
+        }
+      },
+      {
+        "tool": "build_study_schedule",
+        "arguments": {}
+      }
+    ],
+    "availability_snapshot": {
+      "weekly_availability": {
+        "monday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "tuesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "wednesday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "thursday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "friday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "saturday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ],
+        "sunday": [
+          {
+            "start": "18:00",
+            "duration_minutes": 120,
+            "end": "20:00"
+          }
+        ]
+      },
+      "availability_overrides": {}
+    }
+  },
+  "replan_from": "2026/12/02/18/10",
+  "check_ins": {
+    "study-2": {
+      "status": "Partly",
+      "actualMinutes": 5
+    },
+    "study-3": {
+      "status": "Partly",
+      "actualMinutes": 5
+    }
+  },
+  "questions": [
+    {
+      "id": 19,
+      "prompt": "Excel 2021에서 한 셀 안에서 줄을 바꿔 입력하려면 어떤 키를 누르나요?",
+      "choices": {
+        "A": "Enter",
+        "B": "Alt+Enter",
+        "C": "Ctrl+Enter",
+        "D": "Shift+Enter"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "스프레드시트 기본",
+      "explanation": "Alt+Enter는 같은 셀 안에서 줄을 바꿉니다. Ctrl+Enter는 선택한 여러 셀에 같은 값을 한 번에 입력합니다."
+    },
+    {
+      "id": 20,
+      "prompt": "같은 통합 문서의 Sheet2 워크시트에 있는 B3 셀을 참조하는 수식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "=Sheet2!B3",
+        "B": "=Sheet2.B3",
+        "C": "=Sheet2:B3",
+        "D": "=[Sheet2]B3"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "스프레드시트 기본",
+      "explanation": "다른 워크시트의 셀은 시트 이름 뒤에 느낌표(!)를 붙이고 셀 주소를 적어 참조합니다."
+    },
+    {
+      "id": 21,
+      "prompt": "Excel 2021에서 표의 행을 특정 열의 값에 따라 오름차순이나 내림차순으로 다시 배열하는 기능은 무엇인가요?",
+      "choices": {
+        "A": "정렬",
+        "B": "부분합",
+        "C": "목표값 찾기",
+        "D": "데이터 유효성 검사"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "스프레드시트 기본",
+      "explanation": "정렬은 기준 열의 값 순서대로 행을 다시 배열합니다. 부분합은 그룹별 요약 값을 계산합니다."
+    },
+    {
+      "id": 22,
+      "prompt": "Excel 2021에서 셀에 1부터 100 사이의 정수만 입력할 수 있도록 제한하려면 어떤 기능을 사용하나요?",
+      "choices": {
+        "A": "조건부 서식",
+        "B": "데이터 유효성 검사",
+        "C": "시트 보호",
+        "D": "자동 채우기"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "스프레드시트 기본",
+      "explanation": "데이터 유효성 검사로 입력할 수 있는 값의 종류와 범위를 정하면 조건에 맞지 않는 입력을 막을 수 있습니다."
+    },
+    {
+      "id": 23,
+      "prompt": "B2:B10 범위에서 값이 80 이상인 셀의 개수를 구하는 수식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "=COUNT(B2:B10)",
+        "B": "=COUNTIF(B2:B10,\">=80\")",
+        "C": "=SUMIF(B2:B10,\">=80\")",
+        "D": "=COUNTA(B2:B10)"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "함수와 데이터 관리",
+      "explanation": "COUNTIF는 범위에서 조건을 만족하는 셀의 개수를 셉니다. SUMIF는 조건에 맞는 값의 합계를 구합니다."
+    },
+    {
+      "id": 24,
+      "prompt": "=ROUND(3.14159, 2)의 결과로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "3.14",
+        "B": "3.15",
+        "C": "3.1",
+        "D": "3"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "함수와 데이터 관리",
+      "explanation": "ROUND는 지정한 자릿수로 반올림합니다. 소수 둘째 자리까지 남기며 셋째 자리가 1이므로 3.14가 됩니다."
+    },
+    {
+      "id": 25,
+      "prompt": "시간에 따른 값의 변화 추세를 나타낼 때 일반적으로 알맞은 차트는 무엇인가요?",
+      "choices": {
+        "A": "원형 차트",
+        "B": "꺾은선형 차트",
+        "C": "방사형 차트",
+        "D": "도넛형 차트"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "차트와 분석",
+      "explanation": "꺾은선형 차트는 일정한 간격의 시간 흐름에 따른 변화와 추세를 보여 주는 데 적합합니다."
+    },
+    {
+      "id": 26,
+      "prompt": "Excel 2021에서 워크시트의 특정 범위만 인쇄되도록 지정하려면 어떤 기능을 사용하나요?",
+      "choices": {
+        "A": "인쇄 영역 설정",
+        "B": "인쇄 제목",
+        "C": "틀 고정",
+        "D": "창 나누기"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "페이지 설정과 인쇄",
+      "explanation": "인쇄 영역을 설정하면 지정한 범위만 인쇄됩니다. 인쇄 제목은 각 페이지에 반복할 행이나 열을 정합니다."
+    },
+    {
+      "id": 27,
+      "prompt": "Excel 2021에서 매크로를 기록할 때 지정할 수 있는 바로 가기 키의 형식으로 알맞은 것은 무엇인가요?",
+      "choices": {
+        "A": "Ctrl+영문자",
+        "B": "Alt+숫자",
+        "C": "Ctrl+숫자",
+        "D": "F1~F12 기능 키"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "매크로 활용",
+      "explanation": "매크로 기록 대화 상자에서는 Ctrl과 함께 누를 영문자를 지정합니다. 대문자를 입력하면 Ctrl+Shift+영문자가 됩니다."
+    },
+    {
+      "id": 28,
+      "prompt": "Windows에서 응답하지 않는 프로그램을 끝낼 수 있는 작업 관리자를 바로 여는 바로 가기 키는 무엇인가요?",
+      "choices": {
+        "A": "Ctrl+Shift+Esc",
+        "B": "Alt+F4",
+        "C": "Windows 로고 키+D",
+        "D": "Ctrl+Alt+Tab"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "컴퓨터 시스템 활용",
+      "explanation": "Ctrl+Shift+Esc는 작업 관리자를 바로 엽니다. Alt+F4는 활성 창을 닫고, Windows 로고 키+D는 바탕 화면을 표시합니다."
+    },
+    {
+      "id": 29,
+      "prompt": "CPU 안에서 처리 중인 데이터나 명령을 잠시 저장하며 가장 빠르게 접근할 수 있는 기억 장치는 무엇인가요?",
+      "choices": {
+        "A": "레지스터",
+        "B": "하드 디스크",
+        "C": "ROM",
+        "D": "광디스크"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "컴퓨터 시스템 활용",
+      "explanation": "레지스터는 CPU 내부에 있는 고속 임시 기억 장치로, 주기억 장치보다 접근 속도가 빠릅니다."
+    },
+    {
+      "id": 30,
+      "prompt": "Windows에서 디스크에 흩어져 저장된 파일 조각을 모아 접근 속도를 높이는 도구는 무엇인가요?",
+      "choices": {
+        "A": "디스크 정리",
+        "B": "드라이브 조각 모음 및 최적화",
+        "C": "시스템 복원",
+        "D": "파일 히스토리"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "컴퓨터 시스템 활용",
+      "explanation": "드라이브 조각 모음 및 최적화는 흩어진 파일 조각을 모아 읽기 속도를 높입니다. 디스크 정리는 불필요한 파일을 지웁니다."
+    },
+    {
+      "id": 31,
+      "prompt": "IPv6 주소는 몇 비트로 구성되나요?",
+      "choices": {
+        "A": "32비트",
+        "B": "64비트",
+        "C": "128비트",
+        "D": "256비트"
+      },
+      "correct_answer": "C",
+      "possible_score": 1,
+      "topic": "인터넷 자료 활용",
+      "explanation": "IPv6 주소는 128비트이며 16비트씩 8부분을 콜론(:)으로 구분합니다. IPv4 주소는 32비트입니다."
+    },
+    {
+      "id": 32,
+      "prompt": "웹 브라우저와 웹 서버가 하이퍼텍스트 문서를 주고받을 때 사용하는 프로토콜은 무엇인가요?",
+      "choices": {
+        "A": "FTP",
+        "B": "HTTP",
+        "C": "SMTP",
+        "D": "TELNET"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "인터넷 자료 활용",
+      "explanation": "HTTP는 웹 문서를 주고받는 프로토콜입니다. FTP는 파일 전송, SMTP는 전자우편 발송에 사용합니다."
+    },
+    {
+      "id": 33,
+      "prompt": "256색까지 표현하며 여러 장면을 이어 보여 주는 간단한 애니메이션을 지원하는 이미지 형식은 무엇인가요?",
+      "choices": {
+        "A": "GIF",
+        "B": "BMP",
+        "C": "TIFF",
+        "D": "JPEG"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "인터넷 자료 활용",
+      "explanation": "GIF는 최대 256색을 사용하고 여러 프레임으로 된 간단한 애니메이션을 저장할 수 있습니다."
+    },
+    {
+      "id": 34,
+      "prompt": "메일 서버에 도착한 전자우편을 사용자 컴퓨터로 내려받을 때 사용하는 프로토콜은 무엇인가요?",
+      "choices": {
+        "A": "SMTP",
+        "B": "POP3",
+        "C": "SNMP",
+        "D": "DHCP"
+      },
+      "correct_answer": "B",
+      "possible_score": 1,
+      "topic": "인터넷 자료 활용",
+      "explanation": "POP3는 메일 서버의 메일을 사용자 컴퓨터로 가져올 때 사용합니다. SMTP는 메일을 보낼 때 사용합니다."
+    },
+    {
+      "id": 35,
+      "prompt": "사용자의 파일을 암호화한 뒤 복구해 주는 대가로 돈을 요구하는 악성 프로그램은 무엇인가요?",
+      "choices": {
+        "A": "랜섬웨어",
+        "B": "스파이웨어",
+        "C": "애드웨어",
+        "D": "트로이 목마"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "컴퓨터 시스템 보호",
+      "explanation": "랜섬웨어는 파일을 암호화해 쓸 수 없게 만든 뒤 대가를 요구합니다. 중요한 파일을 따로 백업해 두면 피해를 줄일 수 있습니다."
+    },
+    {
+      "id": 36,
+      "prompt": "공개키 암호화 방식에서 상대방에게 보낼 데이터를 암호화할 때 사용하는 키는 무엇인가요?",
+      "choices": {
+        "A": "받는 사람의 공개키",
+        "B": "받는 사람의 개인키",
+        "C": "보내는 사람의 개인키",
+        "D": "두 사람이 미리 나눈 비밀키"
+      },
+      "correct_answer": "A",
+      "possible_score": 1,
+      "topic": "컴퓨터 시스템 보호",
+      "explanation": "공개키 암호화에서는 받는 사람의 공개키로 암호화하고, 받는 사람만 가진 개인키로 복호화합니다."
+    }
+  ],
+  "profiles": [
+    {
+      "label": "A",
+      "answers": {
+        "19": "UNKNOWN",
+        "20": "UNKNOWN",
+        "21": "UNKNOWN",
+        "22": "UNKNOWN",
+        "23": "B",
+        "24": "A",
+        "25": "UNKNOWN",
+        "26": "A",
+        "27": "UNKNOWN",
+        "28": "A",
+        "29": "A",
+        "30": "B",
+        "31": "UNKNOWN",
+        "32": "UNKNOWN",
+        "33": "UNKNOWN",
+        "34": "UNKNOWN",
+        "35": "A",
+        "36": "A"
+      },
+      "preview": {
+        "schedules": [
+          {
+            "schedule_id": "study-2",
+            "start_date": "2026/11/30/18/00",
+            "end_date": "2026/11/30/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-3",
+            "start_date": "2026/12/01/18/00",
+            "end_date": "2026/12/01/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-4",
+            "start_date": "2026/12/01/18/40",
+            "end_date": "2026/12/01/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-5",
+            "start_date": "2026/12/02/18/00",
+            "end_date": "2026/12/02/20/00",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "external-1",
+            "start_date": "2026/12/03/16/00",
+            "end_date": "2026/12/03/17/00",
+            "topic": "기존 외부 일정"
+          },
+          {
+            "schedule_id": "study-6",
+            "start_date": "2026/12/03/18/00",
+            "end_date": "2026/12/03/18/40",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "study-7",
+            "start_date": "2026/12/03/18/40",
+            "end_date": "2026/12/03/20/00",
+            "topic": "차트와 분석"
+          },
+          {
+            "schedule_id": "study-14",
+            "start_date": "2026/12/04/18/00",
+            "end_date": "2026/12/04/18/15",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-15",
+            "start_date": "2026/12/04/18/15",
+            "end_date": "2026/12/04/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-16",
+            "start_date": "2026/12/05/18/00",
+            "end_date": "2026/12/05/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-17",
+            "start_date": "2026/12/05/18/40",
+            "end_date": "2026/12/05/18/55",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-18",
+            "start_date": "2026/12/05/18/55",
+            "end_date": "2026/12/05/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-19",
+            "start_date": "2026/12/06/18/00",
+            "end_date": "2026/12/06/18/15",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-20",
+            "start_date": "2026/12/06/18/15",
+            "end_date": "2026/12/06/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-21",
+            "start_date": "2026/12/07/18/00",
+            "end_date": "2026/12/07/18/40",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-22",
+            "start_date": "2026/12/07/18/40",
+            "end_date": "2026/12/07/18/55",
+            "topic": "함수와 데이터 관리"
+          },
+          {
+            "schedule_id": "study-23",
+            "start_date": "2026/12/07/18/55",
+            "end_date": "2026/12/07/20/00",
+            "topic": "매크로 활용"
+          }
+        ],
+        "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-2,2026/11/30/18/00,2026/11/30/20/00,매크로 활용\nstudy-3,2026/12/01/18/00,2026/12/01/18/40,매크로 활용\nstudy-4,2026/12/01/18/40,2026/12/01/20/00,스프레드시트 기본\nstudy-5,2026/12/02/18/00,2026/12/02/20/00,인터넷 자료 활용\nexternal-1,2026/12/03/16/00,2026/12/03/17/00,기존 외부 일정\nstudy-6,2026/12/03/18/00,2026/12/03/18/40,인터넷 자료 활용\nstudy-7,2026/12/03/18/40,2026/12/03/20/00,차트와 분석\nstudy-14,2026/12/04/18/00,2026/12/04/18/15,컴퓨터 시스템 보호\nstudy-15,2026/12/04/18/15,2026/12/04/20/00,매크로 활용\nstudy-16,2026/12/05/18/00,2026/12/05/18/40,매크로 활용\nstudy-17,2026/12/05/18/40,2026/12/05/18/55,컴퓨터 시스템 활용\nstudy-18,2026/12/05/18/55,2026/12/05/20/00,스프레드시트 기본\nstudy-19,2026/12/06/18/00,2026/12/06/18/15,페이지 설정과 인쇄\nstudy-20,2026/12/06/18/15,2026/12/06/20/00,스프레드시트 기본\nstudy-21,2026/12/07/18/00,2026/12/07/18/40,스프레드시트 기본\nstudy-22,2026/12/07/18/40,2026/12/07/18/55,함수와 데이터 관리\nstudy-23,2026/12/07/18/55,2026/12/07/20/00,매크로 활용\n",
+        "schedule_csv_file": "license_planner/output/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "schedule_csv_url": "/api/v1/study-plans/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "availability_snapshot": {
+          "weekly_availability": {
+            "monday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "tuesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "wednesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "thursday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "friday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "saturday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "sunday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ]
+          },
+          "availability_overrides": {}
+        },
+        "action": "reassessment_preview",
+        "preview_token": "eyJjb250ZXh0IjogIjgxMjQ4NDhlOTIzMGVkNGU5ZTUyODg0NTM4ODIyYzdiYTJiYmYzMmZjYjc0YzNlMTk3ODYzYjAzNjMxOTE2YTAiLCAiZXhwaXJlcyI6IDE3OTU4Nzc0NTYsICJyb3dzIjogImM5MDVjY2U0ODU5MzlhZjg2Zjg0MzA3NGMxMWZmNDdlZjc5MTExMTI4OTJiMGI3YTQ5NTJhYTY3ZmNkNzQyZjEiLCAidmVyc2lvbiI6IDF9.fe2eb27e7e1da7a152a94156c7b0eab05eb7792d1425ac24191cad57aa1c0a4b",
+        "agent_summary": "학습 기록 2건(실제 학습 10분)과 새 진단 결과를 에이전트에 전달해 남은 600분의 배분을 제안받았어요. 기존 시간대와 총학습 시간은 유지돼요.",
+        "tool_calls": [
+          {
+            "tool": "propose_reassessment",
+            "arguments": {
+              "rationale": "새로운 진단 점수와 실제 학습 시간을 바탕으로 스터디 계획을 수정했습니다. 점수가 0%인 '인터넷 자료 활용'과 '차트와 분석'은 모든 가용 시간을 할당하여 집중 학습이 필요하다고 판단했습니다. 100% 점수를 받은 '컴퓨터 시스템 보호', '컴퓨터 시스템 활용', '페이지 설정과 인쇄', '함수와 데이터 관리'는 실제 학습 시간이 0분이므로 숙련도 유지를 위해 각각 15분의 복습 시간을 할당했습니다. 이 주제들에 할당되었던 나머지 시간은 진단 점수가 0%인 '매크로 활용'과 '스프레드시트 기본'에 재배분하여 약한 주제에 대한 학습을 강화했습니다. 이는 약한 주제에 더 많은 학습 기회를 제공하면서도, 강한 주제의 숙련도를 유지하기 위한 효율적인 시간 배분입니다.",
+              "allocations": [
+                {
+                  "schedule_id": "study-6",
+                  "pieces": [
+                    {
+                      "topic": "인터넷 자료 활용",
+                      "minutes": 40
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-7",
+                  "pieces": [
+                    {
+                      "topic": "차트와 분석",
+                      "minutes": 80
+                    }
+                  ]
+                },
+                {
+                  "pieces": [
+                    {
+                      "topic": "컴퓨터 시스템 보호",
+                      "minutes": 15
+                    },
+                    {
+                      "minutes": 105,
+                      "topic": "매크로 활용"
+                    }
+                  ],
+                  "schedule_id": "study-8"
+                },
+                {
+                  "schedule_id": "study-9",
+                  "pieces": [
+                    {
+                      "topic": "매크로 활용",
+                      "minutes": 40
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-10",
+                  "pieces": [
+                    {
+                      "topic": "컴퓨터 시스템 활용",
+                      "minutes": 15
+                    },
+                    {
+                      "minutes": 65,
+                      "topic": "스프레드시트 기본"
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-11",
+                  "pieces": [
+                    {
+                      "minutes": 15,
+                      "topic": "페이지 설정과 인쇄"
+                    },
+                    {
+                      "minutes": 105,
+                      "topic": "스프레드시트 기본"
+                    }
+                  ]
+                },
+                {
+                  "pieces": [
+                    {
+                      "minutes": 40,
+                      "topic": "스프레드시트 기본"
+                    }
+                  ],
+                  "schedule_id": "study-12"
+                },
+                {
+                  "schedule_id": "study-13",
+                  "pieces": [
+                    {
+                      "topic": "함수와 데이터 관리",
+                      "minutes": 15
+                    },
+                    {
+                      "minutes": 65,
+                      "topic": "매크로 활용"
+                    }
+                  ]
+                }
+              ],
+              "review_sessions": [
+                {
+                  "topic": "컴퓨터 시스템 보호",
+                  "reason": "진단 점수 100%로 숙달되었으나, 실제 학습 시간이 0분이므로 숙련도 유지를 위한 최소 복습 시간을 할당합니다. 해당 구간의 남은 시간은 점수가 낮은 다른 주제에 재배분하여 효율을 높였습니다.",
+                  "minutes": 15
+                },
+                {
+                  "reason": "진단 점수 100%로 숙달되었으나, 실제 학습 시간이 0분이므로 숙련도 유지를 위한 최소 복습 시간을 할당합니다. 해당 구간의 남은 시간은 점수가 낮은 다른 주제에 재배분하여 효율을 높였습니다.",
+                  "topic": "컴퓨터 시스템 활용",
+                  "minutes": 15
+                },
+                {
+                  "reason": "진단 점수 100%로 숙달되었으나, 실제 학습 시간이 0분이므로 숙련도 유지를 위한 최소 복습 시간을 할당합니다. 해당 구간의 남은 시간은 점수가 낮은 다른 주제에 재배분하여 효율을 높였습니다.",
+                  "topic": "페이지 설정과 인쇄",
+                  "minutes": 15
+                },
+                {
+                  "topic": "함수와 데이터 관리",
+                  "minutes": 15,
+                  "reason": "진단 점수 100%로 숙달되었으나, 실제 학습 시간이 0분이므로 숙련도 유지를 위한 최소 복습 시간을 할당합니다. 해당 구간의 남은 시간은 점수가 낮은 다른 주제에 재배분하여 효율을 높였습니다."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "saved": {
+        "schedules": [
+          {
+            "schedule_id": "study-2",
+            "start_date": "2026/11/30/18/00",
+            "end_date": "2026/11/30/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-3",
+            "start_date": "2026/12/01/18/00",
+            "end_date": "2026/12/01/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-4",
+            "start_date": "2026/12/01/18/40",
+            "end_date": "2026/12/01/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-5",
+            "start_date": "2026/12/02/18/00",
+            "end_date": "2026/12/02/20/00",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "external-1",
+            "start_date": "2026/12/03/16/00",
+            "end_date": "2026/12/03/17/00",
+            "topic": "기존 외부 일정"
+          },
+          {
+            "schedule_id": "study-6",
+            "start_date": "2026/12/03/18/00",
+            "end_date": "2026/12/03/18/40",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "study-7",
+            "start_date": "2026/12/03/18/40",
+            "end_date": "2026/12/03/20/00",
+            "topic": "차트와 분석"
+          },
+          {
+            "schedule_id": "study-14",
+            "start_date": "2026/12/04/18/00",
+            "end_date": "2026/12/04/18/15",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-15",
+            "start_date": "2026/12/04/18/15",
+            "end_date": "2026/12/04/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-16",
+            "start_date": "2026/12/05/18/00",
+            "end_date": "2026/12/05/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-17",
+            "start_date": "2026/12/05/18/40",
+            "end_date": "2026/12/05/18/55",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-18",
+            "start_date": "2026/12/05/18/55",
+            "end_date": "2026/12/05/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-19",
+            "start_date": "2026/12/06/18/00",
+            "end_date": "2026/12/06/18/15",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-20",
+            "start_date": "2026/12/06/18/15",
+            "end_date": "2026/12/06/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-21",
+            "start_date": "2026/12/07/18/00",
+            "end_date": "2026/12/07/18/40",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-22",
+            "start_date": "2026/12/07/18/40",
+            "end_date": "2026/12/07/18/55",
+            "topic": "함수와 데이터 관리"
+          },
+          {
+            "schedule_id": "study-23",
+            "start_date": "2026/12/07/18/55",
+            "end_date": "2026/12/07/20/00",
+            "topic": "매크로 활용"
+          }
+        ],
+        "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-2,2026/11/30/18/00,2026/11/30/20/00,매크로 활용\nstudy-3,2026/12/01/18/00,2026/12/01/18/40,매크로 활용\nstudy-4,2026/12/01/18/40,2026/12/01/20/00,스프레드시트 기본\nstudy-5,2026/12/02/18/00,2026/12/02/20/00,인터넷 자료 활용\nexternal-1,2026/12/03/16/00,2026/12/03/17/00,기존 외부 일정\nstudy-6,2026/12/03/18/00,2026/12/03/18/40,인터넷 자료 활용\nstudy-7,2026/12/03/18/40,2026/12/03/20/00,차트와 분석\nstudy-14,2026/12/04/18/00,2026/12/04/18/15,컴퓨터 시스템 보호\nstudy-15,2026/12/04/18/15,2026/12/04/20/00,매크로 활용\nstudy-16,2026/12/05/18/00,2026/12/05/18/40,매크로 활용\nstudy-17,2026/12/05/18/40,2026/12/05/18/55,컴퓨터 시스템 활용\nstudy-18,2026/12/05/18/55,2026/12/05/20/00,스프레드시트 기본\nstudy-19,2026/12/06/18/00,2026/12/06/18/15,페이지 설정과 인쇄\nstudy-20,2026/12/06/18/15,2026/12/06/20/00,스프레드시트 기본\nstudy-21,2026/12/07/18/00,2026/12/07/18/40,스프레드시트 기본\nstudy-22,2026/12/07/18/40,2026/12/07/18/55,함수와 데이터 관리\nstudy-23,2026/12/07/18/55,2026/12/07/20/00,매크로 활용\n",
+        "schedule_csv_file": "license_planner/output/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "schedule_csv_url": "/api/v1/study-plans/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "availability_snapshot": {
+          "weekly_availability": {
+            "monday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "tuesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "wednesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "thursday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "friday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "saturday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "sunday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ]
+          },
+          "availability_overrides": {}
+        },
+        "action": "reassessed",
+        "preview_token": "eyJjb250ZXh0IjogIjgxMjQ4NDhlOTIzMGVkNGU5ZTUyODg0NTM4ODIyYzdiYTJiYmYzMmZjYjc0YzNlMTk3ODYzYjAzNjMxOTE2YTAiLCAiZXhwaXJlcyI6IDE3OTU4Nzc0NTYsICJyb3dzIjogImM5MDVjY2U0ODU5MzlhZjg2Zjg0MzA3NGMxMWZmNDdlZjc5MTExMTI4OTJiMGI3YTQ5NTJhYTY3ZmNkNzQyZjEiLCAidmVyc2lvbiI6IDF9.fe2eb27e7e1da7a152a94156c7b0eab05eb7792d1425ac24191cad57aa1c0a4b",
+        "agent_summary": "확인한 재평가 계획을 저장했어요.",
+        "tool_calls": []
+      }
+    },
+    {
+      "label": "B",
+      "answers": {
+        "19": "B",
+        "20": "A",
+        "21": "A",
+        "22": "B",
+        "23": "UNKNOWN",
+        "24": "UNKNOWN",
+        "25": "B",
+        "26": "UNKNOWN",
+        "27": "A",
+        "28": "UNKNOWN",
+        "29": "UNKNOWN",
+        "30": "UNKNOWN",
+        "31": "C",
+        "32": "B",
+        "33": "A",
+        "34": "B",
+        "35": "UNKNOWN",
+        "36": "UNKNOWN"
+      },
+      "preview": {
+        "schedules": [
+          {
+            "schedule_id": "study-2",
+            "start_date": "2026/11/30/18/00",
+            "end_date": "2026/11/30/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-3",
+            "start_date": "2026/12/01/18/00",
+            "end_date": "2026/12/01/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-4",
+            "start_date": "2026/12/01/18/40",
+            "end_date": "2026/12/01/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-5",
+            "start_date": "2026/12/02/18/00",
+            "end_date": "2026/12/02/20/00",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "external-1",
+            "start_date": "2026/12/03/16/00",
+            "end_date": "2026/12/03/17/00",
+            "topic": "기존 외부 일정"
+          },
+          {
+            "schedule_id": "study-14",
+            "start_date": "2026/12/03/18/00",
+            "end_date": "2026/12/03/18/15",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-15",
+            "start_date": "2026/12/03/18/15",
+            "end_date": "2026/12/03/18/40",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-16",
+            "start_date": "2026/12/03/18/40",
+            "end_date": "2026/12/03/18/55",
+            "topic": "차트와 분석"
+          },
+          {
+            "schedule_id": "study-17",
+            "start_date": "2026/12/03/18/55",
+            "end_date": "2026/12/03/20/00",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-8",
+            "start_date": "2026/12/04/18/00",
+            "end_date": "2026/12/04/20/00",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-9",
+            "start_date": "2026/12/05/18/00",
+            "end_date": "2026/12/05/18/40",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-18",
+            "start_date": "2026/12/05/18/40",
+            "end_date": "2026/12/05/18/55",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-19",
+            "start_date": "2026/12/05/18/55",
+            "end_date": "2026/12/05/20/00",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-11",
+            "start_date": "2026/12/06/18/00",
+            "end_date": "2026/12/06/20/00",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-12",
+            "start_date": "2026/12/07/18/00",
+            "end_date": "2026/12/07/18/40",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-13",
+            "start_date": "2026/12/07/18/40",
+            "end_date": "2026/12/07/20/00",
+            "topic": "함수와 데이터 관리"
+          }
+        ],
+        "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-2,2026/11/30/18/00,2026/11/30/20/00,매크로 활용\nstudy-3,2026/12/01/18/00,2026/12/01/18/40,매크로 활용\nstudy-4,2026/12/01/18/40,2026/12/01/20/00,스프레드시트 기본\nstudy-5,2026/12/02/18/00,2026/12/02/20/00,인터넷 자료 활용\nexternal-1,2026/12/03/16/00,2026/12/03/17/00,기존 외부 일정\nstudy-14,2026/12/03/18/00,2026/12/03/18/15,매크로 활용\nstudy-15,2026/12/03/18/15,2026/12/03/18/40,컴퓨터 시스템 보호\nstudy-16,2026/12/03/18/40,2026/12/03/18/55,차트와 분석\nstudy-17,2026/12/03/18/55,2026/12/03/20/00,컴퓨터 시스템 활용\nstudy-8,2026/12/04/18/00,2026/12/04/20/00,컴퓨터 시스템 보호\nstudy-9,2026/12/05/18/00,2026/12/05/18/40,컴퓨터 시스템 보호\nstudy-18,2026/12/05/18/40,2026/12/05/18/55,컴퓨터 시스템 활용\nstudy-19,2026/12/05/18/55,2026/12/05/20/00,페이지 설정과 인쇄\nstudy-11,2026/12/06/18/00,2026/12/06/20/00,페이지 설정과 인쇄\nstudy-12,2026/12/07/18/00,2026/12/07/18/40,페이지 설정과 인쇄\nstudy-13,2026/12/07/18/40,2026/12/07/20/00,함수와 데이터 관리\n",
+        "schedule_csv_file": "license_planner/output/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "schedule_csv_url": "/api/v1/study-plans/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "availability_snapshot": {
+          "weekly_availability": {
+            "monday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "tuesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "wednesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "thursday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "friday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "saturday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "sunday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ]
+          },
+          "availability_overrides": {}
+        },
+        "action": "reassessment_preview",
+        "preview_token": "eyJjb250ZXh0IjogIjRlNDIwOGE1ZTI1YTc1N2Y2OTg0OThjYTE0MDdkYTZhY2QyNTg4NTU1N2E0MDJjNzQ0NWZlMTNiMjQxMzM3YTciLCAiZXhwaXJlcyI6IDE3OTU4Nzc0ODksICJyb3dzIjogImY0NTY4ZTI3ZTk0YTkwMzg1YWRiYTgyYzZiZTkxMWI3MmNkM2NjYTM5MDdkOTQ3YjU5YTZiZGY2MDA1NzJlZTciLCAidmVyc2lvbiI6IDF9.1bd398f16d0f7dd9fdf1a72774c54d1313ed9232d262820321cbc980c568d112",
+        "agent_summary": "학습 기록 2건(실제 학습 10분)과 새 진단 결과를 에이전트에 전달해 남은 600분의 배분을 제안받았어요. 기존 시간대와 총학습 시간은 유지돼요.",
+        "tool_calls": [
+          {
+            "tool": "propose_reassessment",
+            "arguments": {
+              "allocations": [
+                {
+                  "schedule_id": "study-6",
+                  "pieces": [
+                    {
+                      "minutes": 15,
+                      "topic": "매크로 활용"
+                    },
+                    {
+                      "minutes": 25,
+                      "topic": "컴퓨터 시스템 보호"
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-7",
+                  "pieces": [
+                    {
+                      "minutes": 15,
+                      "topic": "차트와 분석"
+                    },
+                    {
+                      "minutes": 65,
+                      "topic": "컴퓨터 시스템 활용"
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-8",
+                  "pieces": [
+                    {
+                      "topic": "컴퓨터 시스템 보호",
+                      "minutes": 120
+                    }
+                  ]
+                },
+                {
+                  "pieces": [
+                    {
+                      "topic": "컴퓨터 시스템 보호",
+                      "minutes": 40
+                    }
+                  ],
+                  "schedule_id": "study-9"
+                },
+                {
+                  "pieces": [
+                    {
+                      "minutes": 15,
+                      "topic": "컴퓨터 시스템 활용"
+                    },
+                    {
+                      "topic": "페이지 설정과 인쇄",
+                      "minutes": 65
+                    }
+                  ],
+                  "schedule_id": "study-10"
+                },
+                {
+                  "schedule_id": "study-11",
+                  "pieces": [
+                    {
+                      "minutes": 120,
+                      "topic": "페이지 설정과 인쇄"
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-12",
+                  "pieces": [
+                    {
+                      "topic": "페이지 설정과 인쇄",
+                      "minutes": 40
+                    }
+                  ]
+                },
+                {
+                  "schedule_id": "study-13",
+                  "pieces": [
+                    {
+                      "minutes": 80,
+                      "topic": "함수와 데이터 관리"
+                    }
+                  ]
+                }
+              ],
+              "review_sessions": [
+                {
+                  "minutes": 15,
+                  "topic": "매크로 활용",
+                  "reason": "실제 학습 시간이 10분 이하였기 때문에 필수적으로 15분 복습 시간을 할당합니다. 이 시간은 '인터넷 자료 활용' 과목의 revisable 시간에서 가져옵니다."
+                },
+                {
+                  "reason": "계획된 학습 시간의 95% 이상이 남아있고 100점의 고득점이지만, 주요 개념 상기를 위해 15분 복습을 할당합니다. 남은 revisable 시간은 다른 낮은 점수의 과목에 재할당합니다.",
+                  "topic": "차트와 분석",
+                  "minutes": 15
+                }
+              ],
+              "rationale": "새로운 진단 점수를 바탕으로 학습 계획을 재조정합니다. 0점을 받은 과목들에 revisable 시간을 최대로 할당하고, 100점을 받았으나 복습 조건에 해당하는 과목들은 최소 복습 시간을 할당합니다. 100점을 받았으나 복습 조건에 해당하지 않는 과목의 남은 revisable 시간은 점수가 낮은 과목을 보강하는 데 재할당합니다."
+            }
+          }
+        ]
+      },
+      "saved": {
+        "schedules": [
+          {
+            "schedule_id": "study-2",
+            "start_date": "2026/11/30/18/00",
+            "end_date": "2026/11/30/20/00",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-3",
+            "start_date": "2026/12/01/18/00",
+            "end_date": "2026/12/01/18/40",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-4",
+            "start_date": "2026/12/01/18/40",
+            "end_date": "2026/12/01/20/00",
+            "topic": "스프레드시트 기본"
+          },
+          {
+            "schedule_id": "study-5",
+            "start_date": "2026/12/02/18/00",
+            "end_date": "2026/12/02/20/00",
+            "topic": "인터넷 자료 활용"
+          },
+          {
+            "schedule_id": "external-1",
+            "start_date": "2026/12/03/16/00",
+            "end_date": "2026/12/03/17/00",
+            "topic": "기존 외부 일정"
+          },
+          {
+            "schedule_id": "study-14",
+            "start_date": "2026/12/03/18/00",
+            "end_date": "2026/12/03/18/15",
+            "topic": "매크로 활용"
+          },
+          {
+            "schedule_id": "study-15",
+            "start_date": "2026/12/03/18/15",
+            "end_date": "2026/12/03/18/40",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-16",
+            "start_date": "2026/12/03/18/40",
+            "end_date": "2026/12/03/18/55",
+            "topic": "차트와 분석"
+          },
+          {
+            "schedule_id": "study-17",
+            "start_date": "2026/12/03/18/55",
+            "end_date": "2026/12/03/20/00",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-8",
+            "start_date": "2026/12/04/18/00",
+            "end_date": "2026/12/04/20/00",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-9",
+            "start_date": "2026/12/05/18/00",
+            "end_date": "2026/12/05/18/40",
+            "topic": "컴퓨터 시스템 보호"
+          },
+          {
+            "schedule_id": "study-18",
+            "start_date": "2026/12/05/18/40",
+            "end_date": "2026/12/05/18/55",
+            "topic": "컴퓨터 시스템 활용"
+          },
+          {
+            "schedule_id": "study-19",
+            "start_date": "2026/12/05/18/55",
+            "end_date": "2026/12/05/20/00",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-11",
+            "start_date": "2026/12/06/18/00",
+            "end_date": "2026/12/06/20/00",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-12",
+            "start_date": "2026/12/07/18/00",
+            "end_date": "2026/12/07/18/40",
+            "topic": "페이지 설정과 인쇄"
+          },
+          {
+            "schedule_id": "study-13",
+            "start_date": "2026/12/07/18/40",
+            "end_date": "2026/12/07/20/00",
+            "topic": "함수와 데이터 관리"
+          }
+        ],
+        "schedule_csv": "schedule_id,start_date,end_date,topic\nstudy-2,2026/11/30/18/00,2026/11/30/20/00,매크로 활용\nstudy-3,2026/12/01/18/00,2026/12/01/18/40,매크로 활용\nstudy-4,2026/12/01/18/40,2026/12/01/20/00,스프레드시트 기본\nstudy-5,2026/12/02/18/00,2026/12/02/20/00,인터넷 자료 활용\nexternal-1,2026/12/03/16/00,2026/12/03/17/00,기존 외부 일정\nstudy-14,2026/12/03/18/00,2026/12/03/18/15,매크로 활용\nstudy-15,2026/12/03/18/15,2026/12/03/18/40,컴퓨터 시스템 보호\nstudy-16,2026/12/03/18/40,2026/12/03/18/55,차트와 분석\nstudy-17,2026/12/03/18/55,2026/12/03/20/00,컴퓨터 시스템 활용\nstudy-8,2026/12/04/18/00,2026/12/04/20/00,컴퓨터 시스템 보호\nstudy-9,2026/12/05/18/00,2026/12/05/18/40,컴퓨터 시스템 보호\nstudy-18,2026/12/05/18/40,2026/12/05/18/55,컴퓨터 시스템 활용\nstudy-19,2026/12/05/18/55,2026/12/05/20/00,페이지 설정과 인쇄\nstudy-11,2026/12/06/18/00,2026/12/06/20/00,페이지 설정과 인쇄\nstudy-12,2026/12/07/18/00,2026/12/07/18/40,페이지 설정과 인쇄\nstudy-13,2026/12/07/18/40,2026/12/07/20/00,함수와 데이터 관리\n",
+        "schedule_csv_file": "license_planner/output/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "schedule_csv_url": "/api/v1/study-plans/study_plan_20261128T233526016429+0900_1db994e4.csv",
+        "availability_snapshot": {
+          "weekly_availability": {
+            "monday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "tuesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "wednesday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "thursday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "friday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "saturday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ],
+            "sunday": [
+              {
+                "start": "18:00",
+                "duration_minutes": 120,
+                "end": "20:00"
+              }
+            ]
+          },
+          "availability_overrides": {}
+        },
+        "action": "reassessed",
+        "preview_token": "eyJjb250ZXh0IjogIjRlNDIwOGE1ZTI1YTc1N2Y2OTg0OThjYTE0MDdkYTZhY2QyNTg4NTU1N2E0MDJjNzQ0NWZlMTNiMjQxMzM3YTciLCAiZXhwaXJlcyI6IDE3OTU4Nzc0ODksICJyb3dzIjogImY0NTY4ZTI3ZTk0YTkwMzg1YWRiYTgyYzZiZTkxMWI3MmNkM2NjYTM5MDdkOTQ3YjU5YTZiZGY2MDA1NzJlZTciLCAidmVyc2lvbiI6IDF9.1bd398f16d0f7dd9fdf1a72774c54d1313ed9232d262820321cbc980c568d112",
+        "agent_summary": "확인한 재평가 계획을 저장했어요.",
+        "tool_calls": []
+      }
+    }
+  ]
+}
