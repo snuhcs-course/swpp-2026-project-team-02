@@ -1591,9 +1591,12 @@ unreported study rows change, and only their topics: dates, times and total
 minutes stay fixed, and a row may split into back-to-back pieces where one topic
 ends and the next begins. Past rows, a row in progress, reported rows, external
 rows, the exam date, the preparation start and the study windows stay unchanged.
-Future minutes are split by the new scores alone (one minute per topic, the rest
-weighted by `2 − score/100`) and packed weakest-first in time order; completed
-study is not subtracted. The preview lists each topic's minutes before → after
+Live sends the selected plan's study reports (status and actual minutes) for an
+agent to consider alongside the existing topic workload and new scores. The agent
+chooses the allocation; the backend checks weak-topic coverage, minimum 15-minute
+pieces and every original interval. Already shorter intervals remain indivisible.
+Unreported past study is not treated as completed. Demo retains its labeled local
+score-based simulation. The preview lists each topic's minutes before → after
 with the same total, and every changed session with its date, time and old → new
 topic. **바뀌는 남은 공부가 없어요** and too little remaining time to re-split
 both leave the plan unchanged.
@@ -1609,12 +1612,16 @@ acknowledgments and kept conflicts stay under their original IDs, and new pieces
 get fresh study IDs. Calendar copies exported earlier keep their old topics;
 export stays the separate existing action.
 
-Demo uses bundled copies of the 18 questions, computes the preview and update
-locally with the same rules, saves on the device and keeps the local-demo label.
+Demo uses bundled copies of the 18 questions, computes a local score-based
+simulation with the same preservation/minimum-length guards, and saves on the device.
+Its allocation can differ from the live agent's proposal and keeps the local-demo label.
 It makes no network or calendar request. Live loads
 `GET /certifications/{id}/reassessment-questions` and sends
 `POST /schedules/adjust` with `mode: "reassessment"`, first with `commit: false`
-for the preview and then with `commit: true` after confirmation. The backend in
+for the agent preview and then with `commit: true`, the approved rows and their
+signed `preview_token` after confirmation. Confirmation does not ask the model
+again. The preview shows a factual summary of the progress supplied to the agent;
+unverified model prose is not rendered as a mastery assessment. The backend in
 this checkout implements both endpoints. Live requires deploying that version;
 older servers show **서버 업데이트가 필요해요** and never substitute demo questions.
 

@@ -49,7 +49,7 @@ class LiveReassessmentRepositoryTest {
     private val revised = fixture.revised(input)
     private val snapshot = AvailabilitySnapshot(input.source.original.weeklyAvailability, input.source.original.availabilityOverrides)
     private fun response(action: String, rows: List<ScheduleRow> = revised) =
-        ReassessmentResponse(rows, remainingCsv(rows), action, "plans/a.csv", snapshot)
+        ReassessmentResponse(rows, remainingCsv(rows), action, "plans/a.csv", snapshot, previewToken = "signed-test-preview")
 
     @Before fun start() { server = MockWebServer().apply { start() } }
     @After fun stop() { server.shutdown() }
@@ -59,7 +59,7 @@ class LiveReassessmentRepositoryTest {
     private fun enqueueError(status: Int, code: String, message: String) =
         server.enqueue(MockResponse().setResponseCode(status).setBody("""{"error":{"code":"$code","message":"$message"}}"""))
     private fun preview() = runBlocking { repository().preview(input) }
-    private fun commit(previewed: List<ScheduleRow> = revised) = runBlocking { repository().commit(input, previewed) }
+    private fun commit(previewed: List<ScheduleRow> = revised) = runBlocking { repository().commit(input.copy(previewToken = "signed-test-preview"), previewed) }
 
     @Test fun loadsQuestionsWithTopicAndExplanationInServedOrder() {
         server.enqueue(MockResponse().setBody("""{"certification_id":"$CERTIFICATION_ID","questions":[
@@ -96,7 +96,10 @@ class LiveReassessmentRepositoryTest {
         assertEquals("/api/v1/schedules/adjust", request.path)
         val sent = ApiJson.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals(setOf("mode", "commit", "schedule_csv_file", "schedules", "weekly_availability", "availability_overrides",
-            "preparation_start", "exam_date", "replan_from", "keep_schedule_ids", "first_new_study_id", "assessment_results"), sent.keys)
+            "preparation_start", "exam_date", "replan_from", "keep_schedule_ids", "first_new_study_id", "assessment_results", "study_reports"), sent.keys)
+        assertEquals("signed-test-preview", outcome.preview.previewToken)
+        assertEquals(input.source.checkIns.keys.intersect(input.source.current.schedules.map { it.scheduleId }.toSet()),
+            sent.getValue("study_reports").jsonObject.keys)
         val dto = ApiJson.decodeFromJsonElement(ReassessmentRequest.serializer(), sent)
         assertEquals("reassessment", dto.mode)
         assertFalse(dto.commit)

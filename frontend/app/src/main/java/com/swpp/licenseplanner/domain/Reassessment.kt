@@ -34,13 +34,16 @@ data class ReassessmentPreview(
     val rows: List<ScheduleRow>,
     val topics: List<TopicMinutes>,
     val sessions: List<RevisedSession>,
+    val previewToken: String? = null,
+    val rationale: String? = null,
 ) {
     val hasChanges: Boolean get() = sessions.isNotEmpty()
     val totalMinutes: Int get() = topics.sumOf { it.after }
 }
 
 /**
- * Re-splits the topics of future unreported study rows by new assessment scores, keeping every
+ * Local Demo re-splitting (Live obtains an agent proposal). Shared helpers below also validate
+ * and summarize Live rows. Re-splits future unreported study rows by scores, keeping every
  * row's time. Rows that start at or after `replanFrom` and are not kept are revisable. Their total
  * minutes are budgeted like plan generation (one minute per topic, the rest by `2 - score/100`,
  * largest remainder). If exact packing creates short pieces, targets are rounded to balanced

@@ -19,6 +19,30 @@ CASES = json.loads((Path(__file__).parent / "fixtures/reassessment_parity.json")
 
 
 class ReassessmentTests(unittest.TestCase):
+    def test_captured_real_generated_plan_matches_both_live_api_results(self):
+        from schedule_adjuster.reassessment_agent import build_context, validate_proposal
+        capture = json.loads((Path(__file__).parent / "fixtures/generated_plan_reassessment.json").read_text(encoding="utf-8"))
+        original = parse_schedule_rows(capture["generated"]["schedules"])
+        next_id = max(int(r.schedule_id[6:]) for r in original if r.schedule_type == "study") + 1
+        cutoff = date(capture["replan_from"])
+        for profile in capture["profiles"]:
+            with self.subTest(profile=profile["label"]):
+                results = [(q["topic"], q["possible_score"], profile["answers"][str(q["id"])] == q["correct_answer"])
+                           for q in capture["questions"]]
+                reports = {key: {"status": value["status"].lower(), "actual_minutes": value["actualMinutes"]}
+                           for key, value in capture["check_ins"].items()}
+                context = build_context(original, set(), results, replan_from=cutoff, now=cutoff,
+                                        first_new_study_id=f"study-{next_id}", reports=reports)
+                actual = validate_proposal(context, profile["preview"]["tool_calls"][0]["arguments"])
+                expected = parse_schedule_rows(profile["preview"]["schedules"])
+                self.assertEqual(actual, expected)
+                self.assertEqual(profile["preview"]["schedules"], profile["saved"]["schedules"])
+                for key in capture["check_ins"]:
+                    self.assertIn(next(r for r in original if r.schedule_id == key), actual)
+                for row in actual:
+                    if row.schedule_type == "study":
+                        self.assertGreaterEqual((row.end_datetime-row.start_datetime).total_seconds()/60, 15)
+
     def test_no_new_short_sessions_and_exact_interval_coverage(self):
         rng = random.Random(28)
         for _ in range(200):

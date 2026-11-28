@@ -837,26 +837,36 @@ All paths below use the existing `/api/v1` prefix.
   `commit` (boolean), `schedule_csv_file`, `schedules`, `weekly_availability`,
   `availability_overrides`, `preparation_start`, `exam_date`, `replan_from`,
   `keep_schedule_ids`, `first_new_study_id`, and `assessment_results`. A
-  commit also requires `previewed_schedules`, the rows the learner confirmed;
-  a preview must omit it.
+  commit also requires `previewed_schedules`, the rows the learner confirmed, and
+  the `preview_token` from that preview; a preview must omit both.
+  `study_reports` maps current study IDs to `{ "status": "done" | "partly" | "missed",
+  "actual_minutes": integer }`. Done/partly need positive minutes; missed needs zero.
+  It may be omitted for older callers, meaning no progress has been reported.
+  Every reported future row must also appear in `keep_schedule_ids`.
   Submit the whole selected quiz in the existing locally scored result format,
   with `assessment_results.certification_id` matching the selected plan. New
   plans retain their certification ID. Older plans with retained study context
   use the original Level 2 certification. The server checks question IDs, content,
   choices, answer keys, possible scores and correctness against that bank.
-  `UNKNOWN: "모르겠음"` is accepted and always incorrect. No model is called.
+  `UNKNOWN: "모르겠음"` is accepted and always incorrect. A preview calls the model.
 
 `commit: false` returns `action: "reassessment_preview"` without changing any
 files. After confirmation, resend the same input with `commit: true`; it returns
 `action: "reassessed"` and atomically updates only the selected owner's CSV.
 Both responses include `schedules`, `schedule_csv`, the same `schedule_csv_file`,
-`availability_snapshot`, `agent_summary` and `tool_calls: []`.
+`availability_snapshot`, `agent_summary` and `preview_token`. Preview also returns
+the accepted proposal in `tool_calls`; commit returns an empty tool trace.
 
-Preview is deterministic and stateless: there is no preview token or server-side
-quiz history. Commit recomputes the result, verifies unchanged source rows
-and retained context, rechecks time, and saves only if the recomputed rows equal
-`previewed_schedules`. A difference, for example after a question-bank edit,
-returns `422 REASSESSMENT_PREVIEW_EXPIRED` and writes nothing. The existing
+Preview is model-generated and read-only. The server validates the proposed
+pieces and signs their rows plus the current plan, progress and diagnostic context.
+Commit verifies the token, unchanged source/context, current bank scores and time;
+it never calls the model a second time. A changed row, progress report, context,
+expired token or changed bank score returns `422 REASSESSMENT_PREVIEW_EXPIRED`
+without writing. Tokens expire after 15 minutes. Set process environment variable
+`APP_REASSESSMENT_SIGNING_KEY` to a stable random secret shared by all backend workers
+when previews must survive process restarts. Without it, the key is process-local
+and a restart requires a new preview. No preview or study-report history is saved.
+The existing
 optimistic storage update rejects concurrent writes; CSV and metadata changes
 yield `409 PLAN_CONFLICT`.
 
@@ -869,11 +879,20 @@ rows keep their IDs; changed pieces receive fresh IDs from `first_new_study_id`,
 which must exceed every current study ID. FE may reserve a higher number for
 retained reports. Preparation dates, exam date and study windows cannot change.
 
-New scores alone determine topic budgets: reserve one minute per topic and split
-the rest by `2 - score/100`, with largest-remainder rounding and weakest-first
-packing. This matches the shared Android/Python reassessment fixtures and does
-not invoke the planner's boundary smoothing. Short topic pieces can occur within
-an existing study session; study session time coverage remains unchanged.
+The model receives each topic's current planned minutes, actual study minutes,
+completed planned work, unmet planned work, revisable minutes and new score.
+Done credits the row's planned work, partly credits up to its scheduled minutes;
+unreported past rows are not inferred to be completed. The model chooses pieces
+inside each revisable interval and records its explanation in the proposal trace.
+The app's `agent_summary` is generated from verified progress/remaining-time data;
+free-form model prose is not shown as a claim about mastery or passing the exam.
+Every topic below 100% on the sample diagnostic must receive future study;
+100%-scoring topics can receive zero. All new pieces must be at least 15 minutes;
+an already shorter original interval stays indivisible. Invalid proposals are
+returned to the model for correction, at most four requests. Failure never falls
+back to the old fixed score formula and never saves a plan. Study reports are
+sent transiently to the backend/model for this user-requested review, not retained
+in server files. Demo remains an explicitly local simulation, not an agent preview.
 
 Errors use the existing error envelope:
 

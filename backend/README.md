@@ -5,9 +5,11 @@ license planner, schedule adjuster, configuration, and developer documentation.
 Run backend commands from this directory. The repository overview is in
 `../README.md`.
 
-The API serves public reassessment questions and supports deterministic preview and commit in
+The API serves public reassessment questions and supports agent-generated previews and signed commits in
 `POST /api/v1/schedules/adjust` with `mode: "reassessment"`. It preserves study
-time coverage while updating future unreported topics from the new quiz scores.
+time coverage while updating future unreported topics using new scores, the existing
+plan and device-reported study progress. Only preview calls the model; confirmation
+verifies a signed `preview_token` and saves exactly the approved rows without resampling.
 See [the FE contract](FRONTEND_INTEGRATION_GUIDE.md#reassessment-during-an-existing-plan)
 for fields, protected rows and errors. The separate 18 reviewed example questions
 are not an official assessment. Live use requires deploying this backend.

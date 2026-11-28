@@ -55,6 +55,9 @@ class LiveReassessmentRepository(
         send(input, commit = true, previewed = previewed)
 
     private suspend fun send(input: ReassessmentInput, commit: Boolean, previewed: List<ScheduleRow>?): ReassessmentOutcome {
+        if (commit && input.previewToken.isNullOrBlank()) {
+            return ReassessmentOutcome.Rejected(ReassessmentFailure.PreviewExpired)
+        }
         val source = input.source
         val file = source.scheduleCsvFile?.takeIf { it.isNotBlank() }
             ?: return ReassessmentOutcome.Failure(ApiError.InvalidInput("서버 계획 파일 정보가 없어요."))
@@ -63,6 +66,10 @@ class LiveReassessmentRepository(
             preparationStart = source.original.preparationStart, examDate = source.original.examDate,
             replanFrom = WireDateTime.format(input.replanFrom), keepScheduleIds = input.keep.sorted(),
             firstNewStudyId = input.firstNewStudyId, assessmentResults = input.assessmentResults(source.original.certificationId),
+            studyReports = source.checkIns.filterKeys { key -> source.current.schedules.any { it.scheduleId == key } }
+                .mapValues { (_, report) -> com.swpp.licenseplanner.data.model.ReassessmentStudyReport(
+                    report.status.name.lowercase(java.util.Locale.ROOT), report.actualMinutes) },
+            previewToken = if (commit) input.previewToken else null,
             previewedSchedules = previewed)
         val body = OneShotBody(ApiJson.encodeToString(ReassessmentRequest.serializer(), request)
             .toRequestBody(LivePlanningRepository.JSON_MEDIA_TYPE))
@@ -76,6 +83,7 @@ class LiveReassessmentRepository(
                     parsed.scheduleCsvFile, parsed.availabilitySnapshot)
                 val problem = when {
                     parsed.action != if (commit) "reassessed" else "reassessment_preview" -> "unexpected reassessment action"
+                    !commit && parsed.previewToken.isNullOrBlank() -> "missing signed agent preview"
                     else -> reassessmentResponseProblem(input, response) ?: "result differs from the preview".takeIf {
                         previewed != null && previewed.associateBy { it.scheduleId } != response.schedules.associateBy { it.scheduleId }
                     }
@@ -84,7 +92,7 @@ class LiveReassessmentRepository(
                     problem != null -> ReassessmentOutcome.Failure(ApiError.InvalidResponse(problem))
                     commit -> ReassessmentOutcome.Committed(response)
                     else -> ReassessmentOutcome.Previewed(Reassessment.preview(source.current.schedules, input.keep,
-                        input.replanFrom, response.schedules))
+                        input.replanFrom, response.schedules).copy(previewToken = parsed.previewToken, rationale = parsed.agentSummary))
                 }
             }
         }
